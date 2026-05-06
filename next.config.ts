@@ -9,9 +9,9 @@ const withSerwist = withSerwistInit({
 });
 
 const nextConfig: NextConfig = {
-  experimental: {
-    // options Next.js 16 à ajouter ici si besoin
-  },
+  turbopack: {},
+  experimental: {},
+  allowedDevOrigins: ['192.168.1.72'],
 };
 
 export default withSerwist(nextConfig);

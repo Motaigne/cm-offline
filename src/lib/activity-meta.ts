@@ -13,13 +13,13 @@ type ActivityMeta = {
 };
 
 export const ACTIVITY_META: Record<ActivityKind, ActivityMeta> = {
-  flight:  { label: 'Vol',         color: '#3B82F6', textColor: '#FFFFFF', order: 1 }, // bleu
+  flight:  { label: 'Vol',         color: '#3B82F6', textColor: '#FFFFFF', order: 8 }, // bleu
   conge:   { label: 'Congés',      color: '#15803D', textColor: '#FFFFFF', order: 2 }, // vert foncé
   off:     { label: 'OFF',         color: '#4ADE80', textColor: '#052E16', order: 3 }, // vert clair
   sol:     { label: 'Sol/Réserve', color: '#EC4899', textColor: '#FFFFFF', order: 4 }, // rose
   medical: { label: 'Visite méd.', color: '#BE185D', textColor: '#FFFFFF', order: 5 }, // rose foncé
   instr:   { label: 'Instruction', color: '#FBCFE8', textColor: '#831843', order: 6 }, // rose clair
-  taf:     { label: 'TAF OFF',     color: '#EAB308', textColor: '#422006', order: 7 }, // jaune
+  taf:     { label: 'TAF',         color: '#EAB308', textColor: '#422006', order: 7 }, // jaune
 };
 
 export const REGIME_LABEL: Record<Regime, string> = {
@@ -34,9 +34,11 @@ export const REGIME_LABEL: Record<Regime, string> = {
 };
 
 export const FONCTION_LABEL: Record<Fonction, string> = {
-  CDB:   'Commandant de Bord',
-  OPL:   'Officier Pilote de Ligne',
-  INSTR: 'Instructeur',
+  CDB:     'Commandant de Bord',
+  OPL:     'Officier Pilote de Ligne',
+  INSTR:   'Instructeur',
+  TRI_CDB: 'TRI CDB',
+  TRI_OPL: 'TRI OPL',
 };
 
 export const BID_LABEL: Record<BidCategory, string> = {

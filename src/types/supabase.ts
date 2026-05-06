@@ -1,5 +1,5 @@
-// Placeholder généré manuellement — à remplacer par `supabase gen types typescript`
-// une fois le projet Supabase distant lié. Correspond au schéma 0001_init.sql.
+// Types générés manuellement à partir du schéma DB réel (2026-04-25)
+// À remplacer par `supabase gen types typescript` une fois le CLI authentifié.
 
 export type Json =
   | string
@@ -22,15 +22,37 @@ export type Database = {
           qualifs_avion: string[];
           instructeur: boolean;
           is_scraper: boolean;
+          is_admin: boolean;
+          classe: number | null;
+          categorie: string | null;
+          echelon: number | null;
+          bonus_atpl: boolean;
+          transport: string | null;
+          aircraft_principal: string | null;
+          cng_pv: number | null;
+          cng_hs: number | null;
           created_at: string;
           updated_at: string;
         };
-        Insert: Omit<
-          Database['public']['Tables']['user_profile']['Row'],
-          'created_at' | 'updated_at' | 'display_name' | 'qualifs_avion' | 'instructeur' | 'is_scraper' | 'base'
-        > &
-          Partial<Pick<Database['public']['Tables']['user_profile']['Row'], 'display_name' | 'qualifs_avion' | 'instructeur' | 'is_scraper' | 'base'>>;
+        Insert: Partial<Database['public']['Tables']['user_profile']['Row']> & {
+          user_id: string;
+          fonction: Database['public']['Enums']['fonction_enum'];
+          regime: Database['public']['Enums']['regime_enum'];
+        };
         Update: Partial<Database['public']['Tables']['user_profile']['Row']>;
+        Relationships: [];
+      };
+      annexe_table: {
+        Row: {
+          slug: string;
+          name: string;
+          description: string | null;
+          data: import('@/types/supabase').Json;
+          updated_at: string;
+        };
+        Insert: { slug: string; name: string; description?: string | null; data: import('@/types/supabase').Json };
+        Update: Partial<Database['public']['Tables']['annexe_table']['Row']>;
+        Relationships: [];
       };
       planning_draft: {
         Row: {
@@ -43,12 +65,12 @@ export type Database = {
           created_at: string;
           updated_at: string;
         };
-        Insert: Omit<
-          Database['public']['Tables']['planning_draft']['Row'],
-          'id' | 'created_at' | 'updated_at' | 'name' | 'is_primary' | 'note'
-        > &
-          Partial<Pick<Database['public']['Tables']['planning_draft']['Row'], 'id' | 'name' | 'is_primary' | 'note'>>;
+        Insert: Partial<Database['public']['Tables']['planning_draft']['Row']> & {
+          user_id: string;
+          target_month: string;
+        };
         Update: Partial<Database['public']['Tables']['planning_draft']['Row']>;
+        Relationships: [];
       };
       planning_item: {
         Row: {
@@ -63,17 +85,14 @@ export type Database = {
           created_at: string;
           updated_at: string;
         };
-        Insert: Omit<
-          Database['public']['Tables']['planning_item']['Row'],
-          'id' | 'created_at' | 'updated_at' | 'bid_category' | 'pairing_instance_id' | 'meta'
-        > &
-          Partial<
-            Pick<
-              Database['public']['Tables']['planning_item']['Row'],
-              'id' | 'bid_category' | 'pairing_instance_id' | 'meta'
-            >
-          >;
+        Insert: Partial<Database['public']['Tables']['planning_item']['Row']> & {
+          draft_id: string;
+          kind: Database['public']['Enums']['activity_kind'];
+          start_date: string;
+          end_date: string;
+        };
         Update: Partial<Database['public']['Tables']['planning_item']['Row']>;
+        Relationships: [];
       };
       pairing_signature: {
         Row: {
@@ -100,7 +119,13 @@ export type Database = {
           h2hc: number | null;
           pv_base: number | null;
           prime: number | null;
+          a81: boolean | null;
+          rest_before_h: number | null;
+          rest_after_h: number | null;
+          tsv_nuit: number | null;
           raw_detail: Json | null;
+          mep_flight: string | null;
+          peq: number | null;
           created_at: string;
         };
         Insert: Partial<Database['public']['Tables']['pairing_signature']['Row']> & {
@@ -120,6 +145,7 @@ export type Database = {
           hdv: number;
         };
         Update: Partial<Database['public']['Tables']['pairing_signature']['Row']>;
+        Relationships: [];
       };
       pairing_instance: {
         Row: {
@@ -138,6 +164,7 @@ export type Database = {
           arrivee_at: string;
         };
         Update: Partial<Database['public']['Tables']['pairing_instance']['Row']>;
+        Relationships: [];
       };
       scrape_snapshot: {
         Row: {
@@ -156,6 +183,7 @@ export type Database = {
           target_month: string;
         };
         Update: Partial<Database['public']['Tables']['scrape_snapshot']['Row']>;
+        Relationships: [];
       };
       taux_app: {
         Row: {
@@ -167,9 +195,14 @@ export type Database = {
           valid_from: string;
           valid_to: string | null;
         };
-        Insert: Omit<Database['public']['Tables']['taux_app']['Row'], 'id' | 'valid_from' | 'valid_to'> &
-          Partial<Pick<Database['public']['Tables']['taux_app']['Row'], 'id' | 'valid_from' | 'valid_to'>>;
+        Insert: Partial<Database['public']['Tables']['taux_app']['Row']> & {
+          rot_code: string;
+          duree_min_h: number;
+          duree_max_h: number;
+          taux: number;
+        };
         Update: Partial<Database['public']['Tables']['taux_app']['Row']>;
+        Relationships: [];
       };
       prorata_dda_off: {
         Row: {
@@ -178,9 +211,12 @@ export type Database = {
           dda_off_max_days: number;
           note: string | null;
         };
-        Insert: Omit<Database['public']['Tables']['prorata_dda_off']['Row'], 'id' | 'note'> &
-          Partial<Pick<Database['public']['Tables']['prorata_dda_off']['Row'], 'id' | 'note'>>;
+        Insert: Partial<Database['public']['Tables']['prorata_dda_off']['Row']> & {
+          total_off_days: number;
+          dda_off_max_days: number;
+        };
         Update: Partial<Database['public']['Tables']['prorata_dda_off']['Row']>;
+        Relationships: [];
       };
       user_af_session: {
         Row: {
@@ -193,12 +229,42 @@ export type Database = {
         };
         Insert: Database['public']['Tables']['user_af_session']['Row'];
         Update: Partial<Database['public']['Tables']['user_af_session']['Row']>;
+        Relationships: [];
+      };
+      allowed_email: {
+        Row: {
+          email: string;
+          added_by: string | null;
+          added_at: string;
+          note: string | null;
+        };
+        Insert: { email: string; added_by?: string | null; note?: string | null };
+        Update: Partial<Database['public']['Tables']['allowed_email']['Row']>;
+        Relationships: [];
+      };
+      auth_log: {
+        Row: {
+          id: string;
+          user_id: string | null;
+          email: string;
+          kind: 'signin_denied' | 'signin_requested' | 'signin_success' | 'signout' | 'db_download';
+          meta: Json | null;
+          created_at: string;
+        };
+        Insert: {
+          email: string;
+          kind: 'signin_denied' | 'signin_requested' | 'signin_success' | 'signout' | 'db_download';
+          user_id?: string | null;
+          meta?: Json | null;
+        };
+        Update: Partial<Database['public']['Tables']['auth_log']['Row']>;
+        Relationships: [];
       };
     };
     Enums: {
       activity_kind: 'flight' | 'conge' | 'off' | 'sol' | 'taf' | 'medical' | 'instr';
       bid_category: 'dda_vol' | 'vol_p' | 'dda_off';
-      fonction_enum: 'CDB' | 'OPL' | 'INSTR';
+      fonction_enum: 'CDB' | 'OPL' | 'INSTR' | 'TRI_CDB' | 'TRI_OPL';
       regime_enum:
         | 'TP'
         | 'TAF7_10_12'
@@ -211,7 +277,16 @@ export type Database = {
       snapshot_status: 'running' | 'success' | 'error';
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      is_email_allowed: {
+        Args: { check_email: string };
+        Returns: boolean;
+      };
+    };
     CompositeTypes: Record<string, never>;
   };
 };
+
+// Convenience aliases
+export type Tables<T extends keyof Database['public']['Tables']> = Database['public']['Tables'][T]['Row'];
+export type Enums<T extends keyof Database['public']['Enums']> = Database['public']['Enums'][T];

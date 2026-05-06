@@ -1,0 +1,115 @@
+import Dexie, { type Table } from 'dexie';
+import type { CalendarItem, Scenario } from '@/app/page';
+import type { RotationSignature } from '@/app/actions/search';
+
+interface StoredDraft {
+  id: string;
+  name: string;
+  target_month: string; // "YYYY-MM"
+}
+
+interface StoredItem extends CalendarItem {
+  draft_id: string;
+}
+
+export interface SyncOp {
+  id?: number;
+  op: 'add' | 'delete' | 'update';
+  payload: string; // JSON
+  created_at: number;
+}
+
+type StoredRotation = RotationSignature & { target_month: string };
+
+class CmDatabase extends Dexie {
+  drafts!:    Table<StoredDraft,    string>;
+  items!:     Table<StoredItem,     string>;
+  sync_queue!:Table<SyncOp,         number>;
+  rotations!: Table<StoredRotation, string>;
+
+  constructor() {
+    super('cm-offline');
+    this.version(1).stores({
+      drafts:     'id, target_month',
+      items:      'id, draft_id',
+      sync_queue: '++id, created_at',
+    });
+    // v2 : cache des rotations pour le panneau de recherche offline
+    this.version(2).stores({
+      rotations: 'id, target_month',
+    });
+  }
+}
+
+export const db = new CmDatabase();
+
+/** Écrase le cache local pour un mois donné avec les données serveur. */
+export async function hydrateDB(scenarios: Scenario[], month: string): Promise<void> {
+  await db.transaction('rw', db.drafts, db.items, async () => {
+    const existing = await db.drafts.where('target_month').equals(month).toArray();
+    const ids = existing.map(d => d.id);
+    if (ids.length) await db.items.where('draft_id').anyOf(ids).delete();
+    await db.drafts.where('target_month').equals(month).delete();
+
+    for (const s of scenarios) {
+      await db.drafts.put({ id: s.id, name: s.name, target_month: month });
+      for (const item of s.items) {
+        await db.items.put({ ...item, draft_id: s.id });
+      }
+    }
+  });
+}
+
+/** Recharge les scénarios depuis IndexedDB (conserve la forme attendue par GanttView). */
+export async function loadFromDB(scenarios: Scenario[]): Promise<Scenario[]> {
+  return Promise.all(
+    scenarios.map(async (s) => {
+      const stored = await db.items.where('draft_id').equals(s.id).toArray();
+      return {
+        id:    s.id,
+        name:  s.name,
+        items: stored.map(({ draft_id: _d, ...item }) => item as CalendarItem),
+      };
+    }),
+  );
+}
+
+export async function hasPendingOps(): Promise<boolean> {
+  return (await db.sync_queue.count()) > 0;
+}
+
+/** Charge les scénarios depuis IndexedDB pour un mois donné. Retourne null si non caché. */
+export async function loadScenariosForMonth(month: string): Promise<Scenario[] | null> {
+  const drafts = await db.drafts.where('target_month').equals(month).toArray();
+  if (drafts.length === 0) return null;
+  return Promise.all(
+    drafts.map(async (d) => {
+      const stored = await db.items.where('draft_id').equals(d.id).toArray();
+      return {
+        id:    d.id,
+        name:  d.name as Scenario['name'],
+        items: stored.map(({ draft_id: _d, ...item }) => item as CalendarItem),
+      };
+    }),
+  );
+}
+
+/** Liste des mois pour lesquels on a des rotations en cache. */
+export async function getCachedMonths(): Promise<string[]> {
+  const keys = await db.rotations.orderBy('target_month').uniqueKeys();
+  return keys as string[];
+}
+
+// ─── Cache rotations (panneau de recherche) ───────────────────────────────────
+
+export async function cacheRotations(sigs: RotationSignature[], month: string): Promise<void> {
+  await db.transaction('rw', db.rotations, async () => {
+    await db.rotations.where('target_month').equals(month).delete();
+    await db.rotations.bulkPut(sigs.map(s => ({ ...s, target_month: month })));
+  });
+}
+
+export async function loadRotationsFromDB(month: string): Promise<RotationSignature[]> {
+  const stored = await db.rotations.where('target_month').equals(month).toArray();
+  return stored.map(({ target_month: _t, ...sig }) => sig as RotationSignature);
+}
