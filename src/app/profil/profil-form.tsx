@@ -4,6 +4,7 @@ import { useState, useMemo, useTransition } from 'react';
 import { saveProfile, type ProfileData } from '@/app/actions/profile';
 import { signOut } from '@/app/actions/auth';
 import { computeFullProfile, KSP, type AnnexeData } from '@/lib/annexe';
+import { useOnlineStatus } from '@/hooks/use-online';
 import type { Database, Tables } from '@/types/supabase';
 
 type FonctionEnum = Database['public']['Enums']['fonction_enum'];
@@ -81,6 +82,7 @@ export function ProfilForm({
   const [saved,     setSaved]     = useState(false);
   const [err,       setErr]       = useState('');
   const [isPending, start]        = useTransition();
+  const isOnline = useOnlineStatus();
 
   // ── Calcul live des éléments de paie ───────────────────────────────────────
   const computed = useMemo(() => {
@@ -122,6 +124,10 @@ export function ProfilForm({
   function handleSave() {
     if (!fonction || !regime) return;
     setErr(''); setSaved(false);
+    if (!isOnline) {
+      setErr("Hors ligne — la sauvegarde du profil nécessite une connexion. Réessaie une fois en ligne.");
+      return;
+    }
     const data: ProfileData = {
       fonction:           fonction as FonctionEnum,
       regime:             regime   as RegimeEnum,
@@ -143,8 +149,13 @@ export function ProfilForm({
         if (res && 'error' in res) setErr(res.error ?? 'Erreur inconnue');
         else { setSaved(true); setTimeout(() => setSaved(false), 3000); }
       } catch (e) {
-        const msg = String(e).slice(0, 300);
-        setErr(`Exception : ${msg}`);
+        // Safari iPad PWA renvoie "TypeError: Load failed" quand le réseau tombe
+        // pendant le fetch du server action. On le présente proprement.
+        if (e instanceof TypeError) {
+          setErr("Connexion perdue pendant l'enregistrement — réessaie une fois reconnecté.");
+        } else {
+          setErr(`Exception : ${String(e).slice(0, 300)}`);
+        }
         console.error('[saveProfile] threw:', e);
       }
     });

@@ -511,17 +511,23 @@ export function GanttView({
       const count = await pendingOpsCount();
       if (count === 0) return;
       setIsSyncing(true);
-      await syncNow();
-      setPendingCount(0);
-      setIsSyncing(false);
-      // Re-fetch les scénarios du mois affiché (pas via router.refresh qui se
-      // base sur la prop `month` SSR — peut différer de currentMonth si l'user
-      // a navigué localement hors ligne).
       try {
+        await syncNow();
+        // Re-fetch les scénarios du mois affiché (pas via router.refresh qui se
+        // base sur la prop `month` SSR — peut différer de currentMonth si l'user
+        // a navigué localement hors ligne).
         const fresh = await getScenariosWithItems(currentMonth);
         setLocalScenarios(fresh);
         await hydrateDB(fresh, currentMonth);
+        setPendingCount(0);
       } catch { /* ignore — le fallback IndexedDB suit */ }
+      finally {
+        // setIsSyncing(false) APRÈS setLocalScenarios pour empêcher l'effet
+        // maybeRefresh ci-dessous de tirer pendant la fenêtre où la prop
+        // `scenarios` SSR est mise à jour par les revalidatePath en cascade
+        // (sinon il écrase localScenarios avec une RSC payload intermédiaire).
+        setIsSyncing(false);
+      }
     }
     doSync();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -532,6 +538,10 @@ export function GanttView({
     // Ignore si l'user a navigué vers un autre mois localement : les `scenarios`
     // (prop SSR) correspondent au mois `month`, pas à `currentMonth`.
     if (currentMonth !== month) return;
+    // Ignore pendant un sync en cours : doSync va setLocalScenarios avec les
+    // données fresh, et la prop `scenarios` SSR peut arriver intermédiaire
+    // (entre 2 revalidatePath). On laisse doSync être autoritatif.
+    if (isSyncing) return;
     async function maybeRefresh() {
       const count = await pendingOpsCount();
       if (count === 0) {
@@ -541,7 +551,7 @@ export function GanttView({
     }
     maybeRefresh();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scenarios]);
+  }, [scenarios, isSyncing]);
 
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
