@@ -19,12 +19,17 @@ export interface ProfileData {
   aircraft_principal: string;
   cng_pv:        number;
   cng_hs:        number;
+  tri_niveau:       number | null;
+  prime_330_count:  number | null;
 }
 
 export async function saveProfile(data: ProfileData) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/login');
+  // En cas de session perdue (cookie expiré côté tunnel/PWA) on retourne une
+  // erreur lisible plutôt qu'un redirect — un redirect depuis une server
+  // action force une navigation iPad vers /login qui peut elle-même échouer.
+  if (!user) return { error: 'Session expirée — recharge la page.' };
 
   const { error } = await supabase.from('user_profile').upsert({
     user_id: user.id,

@@ -8,11 +8,13 @@ type AllowedEmail = Pick<Database['public']['Tables']['allowed_email']['Row'], '
 type AuthLog      = Pick<Database['public']['Tables']['auth_log']['Row'], 'id' | 'email' | 'kind' | 'created_at' | 'meta'>;
 
 const KIND_LABELS: Record<AuthLog['kind'], { label: string; cls: string }> = {
-  signin_denied:    { label: 'Refusé',    cls: 'text-red-500' },
-  signin_requested: { label: 'Demande',   cls: 'text-zinc-500' },
-  signin_success:   { label: 'Connecté',  cls: 'text-emerald-500' },
-  signout:          { label: 'Déconnecté', cls: 'text-zinc-400' },
-  db_download:      { label: 'Download',  cls: 'text-blue-500' },
+  signin_denied:      { label: 'Refusé',     cls: 'text-red-500' },
+  signin_requested:   { label: 'Demande',    cls: 'text-zinc-500' },
+  signin_success:     { label: 'Connecté',   cls: 'text-emerald-500' },
+  signout:            { label: 'Déconnecté', cls: 'text-zinc-400' },
+  db_download:        { label: 'Download',   cls: 'text-blue-500' },
+  release_published:  { label: 'Publication', cls: 'text-violet-500' },
+  release_downloaded: { label: 'Release ↓',  cls: 'text-cyan-500' },
 };
 
 export function WhitelistClient({ emails, logs }: { emails: AllowedEmail[]; logs: AuthLog[] }) {

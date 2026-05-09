@@ -77,6 +77,37 @@ export async function deletePlanningItem(itemId: string) {
 }
 
 /**
+ * Reset complet du planning : supprime tous les items des scénarios donnés
+ * (par défaut A, B, C) pour le mois indiqué — utilisateur courant uniquement.
+ */
+export async function resetPlanningScenarios(
+  month: string,
+  scenarios: ScenarioName[] = ['A', 'B', 'C'],
+) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Non authentifié' };
+
+  const { data: drafts, error: dErr } = await supabase
+    .from('planning_draft')
+    .select('id')
+    .eq('user_id', user.id)
+    .eq('target_month', `${month}-01`)
+    .in('name', scenarios);
+  if (dErr) return { error: dErr.message };
+  if (!drafts?.length) { revalidatePath('/'); return { ok: true, deleted: 0 }; }
+
+  const draftIds = drafts.map(d => d.id);
+  const { error, count } = await supabase
+    .from('planning_item')
+    .delete({ count: 'exact' })
+    .in('draft_id', draftIds);
+  if (error) return { error: error.message };
+  revalidatePath('/');
+  return { ok: true, deleted: count ?? 0 };
+}
+
+/**
  * Décale un mois "YYYY-MM" de `delta` mois.
  */
 function shiftMonth(month: string, delta: number): string {

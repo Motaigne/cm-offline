@@ -17,6 +17,13 @@ export default async function CataloguePage({
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
+  const { data: profile } = await supabase
+    .from('user_profile')
+    .select('is_admin')
+    .eq('user_id', user.id)
+    .single();
+  const isAdmin = profile?.is_admin === true;
+
   // Load available months from snapshots
   const { data: snapshots } = await supabase
     .from('scrape_snapshot')
@@ -68,6 +75,7 @@ export default async function CataloguePage({
           signatures={sigs}
           months={months}
           currentMonth={month}
+          isAdmin={isAdmin}
         />
       </div>
     </div>

@@ -65,3 +65,57 @@ const serwist = new Serwist({
 });
 
 serwist.addEventListeners();
+
+// ─── Web Push (point A2) ────────────────────────────────────────────────
+// Le serveur envoie un payload JSON :
+//   { type: 'release', release_id, target_month, version, title, body }
+// On affiche une notification ; au clic, on ouvre l'app sur la home avec un
+// query param qui dit au front d'afficher le banner « Télécharger v(N) ».
+
+self.addEventListener('push', event => {
+  const evt = event as PushEvent;
+  if (!evt.data) return;
+
+  let data: Record<string, unknown> = {};
+  try { data = evt.data.json() as Record<string, unknown>; }
+  catch { data = { title: 'Mise à jour', body: evt.data.text() }; }
+
+  const title = (data.title as string) ?? 'cm-offline';
+  const body  = (data.body  as string) ?? '';
+
+  evt.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      tag: typeof data.release_id === 'string' ? `release-${data.release_id}` : 'cm-offline',
+      data,
+    }),
+  );
+});
+
+self.addEventListener('notificationclick', event => {
+  const evt = event as NotificationEvent;
+  evt.notification.close();
+  const data = evt.notification.data as { type?: string; release_id?: string; target_month?: string } | null;
+
+  // URL d'ouverture : home avec un flag pour faire surgir le banner release.
+  let target = '/';
+  if (data?.type === 'release' && data.release_id) {
+    target = `/?release=${encodeURIComponent(data.release_id)}`;
+  }
+
+  evt.waitUntil(
+    (async () => {
+      const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      for (const client of all) {
+        if ('focus' in client) {
+          await (client as WindowClient).focus();
+          await (client as WindowClient).navigate(target).catch(() => undefined);
+          return;
+        }
+      }
+      await self.clients.openWindow(target);
+    })(),
+  );
+});

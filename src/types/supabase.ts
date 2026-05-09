@@ -21,8 +21,9 @@ export type Database = {
           regime: Database['public']['Enums']['regime_enum'];
           qualifs_avion: string[];
           instructeur: boolean;
-          is_scraper: boolean;
           is_admin: boolean;
+          tri_niveau: number | null;
+          prime_330_count: number | null;
           classe: number | null;
           categorie: string | null;
           echelon: number | null;
@@ -126,6 +127,7 @@ export type Database = {
           raw_detail: Json | null;
           mep_flight: string | null;
           peq: number | null;
+          activity_number: string | null;
           created_at: string;
         };
         Insert: Partial<Database['public']['Tables']['pairing_signature']['Row']> & {
@@ -247,17 +249,79 @@ export type Database = {
           id: string;
           user_id: string | null;
           email: string;
-          kind: 'signin_denied' | 'signin_requested' | 'signin_success' | 'signout' | 'db_download';
+          kind: 'signin_denied' | 'signin_requested' | 'signin_success' | 'signout' | 'db_download' | 'release_published' | 'release_downloaded';
           meta: Json | null;
           created_at: string;
         };
         Insert: {
           email: string;
-          kind: 'signin_denied' | 'signin_requested' | 'signin_success' | 'signout' | 'db_download';
+          kind: 'signin_denied' | 'signin_requested' | 'signin_success' | 'signout' | 'db_download' | 'release_published' | 'release_downloaded';
           user_id?: string | null;
           meta?: Json | null;
         };
         Update: Partial<Database['public']['Tables']['auth_log']['Row']>;
+        Relationships: [];
+      };
+      monthly_release: {
+        Row: {
+          id: string;
+          target_month: string;
+          snapshot_id: string;
+          version: number;
+          released_at: string;
+          released_by: string | null;
+          notes: string | null;
+        };
+        Insert: {
+          target_month: string;
+          snapshot_id: string;
+          version: number;
+          released_by?: string | null;
+          notes?: string | null;
+        };
+        Update: Partial<Database['public']['Tables']['monthly_release']['Row']>;
+        Relationships: [];
+      };
+      push_subscription: {
+        Row: {
+          id: string;
+          user_id: string;
+          endpoint: string;
+          p256dh: string;
+          auth: string;
+          user_agent: string | null;
+          created_at: string;
+          last_seen: string;
+        };
+        Insert: {
+          user_id: string;
+          endpoint: string;
+          p256dh: string;
+          auth: string;
+          user_agent?: string | null;
+          last_seen?: string;
+        };
+        Update: Partial<Database['public']['Tables']['push_subscription']['Row']>;
+        Relationships: [];
+      };
+      release_download: {
+        Row: {
+          id: string;
+          release_id: string;
+          user_id: string;
+          watermark: string;
+          downloaded_at: string;
+          expires_at: string;
+          user_agent: string | null;
+        };
+        Insert: {
+          release_id: string;
+          user_id: string;
+          watermark: string;
+          expires_at: string;
+          user_agent?: string | null;
+        };
+        Update: Partial<Database['public']['Tables']['release_download']['Row']>;
         Relationships: [];
       };
     };
@@ -281,6 +345,10 @@ export type Database = {
       is_email_allowed: {
         Args: { check_email: string };
         Returns: boolean;
+      };
+      next_release_version: {
+        Args: { month: string };
+        Returns: number;
       };
     };
     CompositeTypes: Record<string, never>;

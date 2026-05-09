@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { PVEI, KSP } from '@/lib/finance';
 import { getRotationsForMonth } from '@/app/actions/search';
 import { cacheRotations, loadRotationsFromDB, getCachedMonths } from '@/lib/local-db';
+import { ReleasePublisher } from './release-publisher';
 
 type Sig = {
   id: string;
@@ -50,11 +51,12 @@ function fmtTime(t: string | null): string {
 }
 
 export function CatalogueTable({
-  signatures: initialSigs, months: initialMonths, currentMonth: initialMonth,
+  signatures: initialSigs, months: initialMonths, currentMonth: initialMonth, isAdmin,
 }: {
   signatures: Sig[];
   months: string[];
   currentMonth: string;
+  isAdmin: boolean;
 }) {
   const [sigs, setSigs]             = useState<Sig[]>(initialSigs);
   const [months, setMonths]         = useState<string[]>(initialMonths);
@@ -166,22 +168,27 @@ export function CatalogueTable({
         <span className="text-xs text-zinc-400 ml-auto">
           {loading ? 'Chargement…' : noCache ? 'Non disponible hors ligne' : `${rows.length} rotation${rows.length > 1 ? 's' : ''}${fromCache ? ' · cache' : ''}`}
         </span>
-        <a
-          href={`/api/export/legacy?month=${currentMonth}&format=slim`}
-          download
-          className="text-xs px-2.5 py-1 rounded border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
-          title="Export CSV format $MMAAAA$ (12 colonnes, M-1→M fusionné)"
-        >
-          Export slim
-        </a>
-        <a
-          href={`/api/export/legacy?month=${currentMonth}&format=full`}
-          download
-          className="text-xs px-2.5 py-1 rounded border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
-          title="Export CSV format MMAAAA (47 colonnes — colonnes dérivées TODO)"
-        >
-          Export full
-        </a>
+        {isAdmin && (
+          <>
+            <a
+              href={`/api/export/legacy?month=${currentMonth}&format=slim`}
+              download
+              className="text-xs px-2.5 py-1 rounded border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+              title="Export CSV format $MMAAAA$ (12 colonnes, M-1→M fusionné)"
+            >
+              Export slim
+            </a>
+            <a
+              href={`/api/export/legacy?month=${currentMonth}&format=full`}
+              download
+              className="text-xs px-2.5 py-1 rounded border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+              title="Export CSV format MMAAAA (47 colonnes — colonnes dérivées TODO)"
+            >
+              Export full
+            </a>
+            <ReleasePublisher month={currentMonth} isAdmin={isAdmin} />
+          </>
+        )}
       </div>
 
       {/* Table */}

@@ -10,7 +10,7 @@ export default async function AnnexePage() {
 
   const { data: profile } = await supabase
     .from('user_profile')
-    .select('is_scraper')
+    .select('is_admin')
     .eq('user_id', user.id)
     .single();
 
@@ -25,7 +25,7 @@ export default async function AnnexePage() {
       <div className="flex-1 overflow-y-auto">
         <AnnexeClient
           tables={tables ?? []}
-          canEdit={profile?.is_scraper ?? false}
+          canEdit={profile?.is_admin ?? false}
         />
       </div>
     </div>

@@ -8,8 +8,8 @@ export async function POST() {
   if (!user) return new Response('Unauthorized', { status: 401 });
 
   const { data: profile } = await supabase
-    .from('user_profile').select('is_scraper').eq('user_id', user.id).single();
-  if (!profile?.is_scraper) return new Response('Forbidden', { status: 403 });
+    .from('user_profile').select('is_admin').eq('user_id', user.id).single();
+  if (!profile?.is_admin) return new Response('Forbidden', { status: 403 });
 
   const { data: rows } = await supabase
     .from('pairing_signature')

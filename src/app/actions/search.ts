@@ -1,6 +1,7 @@
 'use server';
 
 import { createClient } from '@/lib/supabase/server';
+import { fetchAllPaginated } from '@/lib/supabase/paginate';
 import { redirect } from 'next/navigation';
 
 export type RotationInstance = {
@@ -75,11 +76,18 @@ export async function getRotationsForMonth(month: string): Promise<RotationSigna
 
   if (!sigs?.length) return [];
 
-  const { data: instances } = await supabase
-    .from('pairing_instance')
-    .select('id, activity_id, signature_id, depart_date, depart_at, arrivee_at')
-    .in('signature_id', sigs.map(s => s.id))
-    .order('depart_date');
+  const sigIds = sigs.map(s => s.id);
+  const instances = await fetchAllPaginated<{
+    id: string; activity_id: string; signature_id: string;
+    depart_date: string; depart_at: string; arrivee_at: string;
+  }>((from, to) =>
+    supabase
+      .from('pairing_instance')
+      .select('id, activity_id, signature_id, depart_date, depart_at, arrivee_at')
+      .in('signature_id', sigIds)
+      .order('depart_date')
+      .range(from, to),
+  );
 
   const sigMap = new Map<string, RotationSignature>();
   for (const s of sigs) {
@@ -103,7 +111,7 @@ export async function getRotationsForMonth(month: string): Promise<RotationSigna
       instances: [],
     });
   }
-  for (const inst of instances ?? []) {
+  for (const inst of instances) {
     sigMap.get(inst.signature_id)?.instances.push({
       id:          inst.id,
       activity_id: inst.activity_id,

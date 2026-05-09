@@ -6,6 +6,7 @@ import { getAvailableMonths, getRotationsForMonth } from '@/app/actions/search';
 import { getScenariosWithItems } from '@/app/actions/planning';
 import { getCurrentUserIsAdmin } from '@/app/actions/auth';
 import { cacheRotations, hydrateDB } from '@/lib/local-db';
+import { ReleaseBanner } from '@/app/components/release-banner';
 
 const TABS = [
   { label: 'Profil',      href: '/profil'     },
@@ -15,7 +16,7 @@ const TABS = [
   { label: 'Annexe',      href: '/annexe'     },
 ];
 
-const PAGES = ['/', '/catalogue', '/comparatif', '/annexe', '/profil'];
+const PAGES = ['/', '/catalogue', '/comparatif', '/annexe', '/profil', '/login'];
 // Pages qui acceptent ?m=YYYY-MM — à précacher en variantes par mois
 const PAGES_MONTH = ['/', '/catalogue', '/comparatif'];
 const DL_KEY = 'cm-last-download';
@@ -41,7 +42,10 @@ async function precachePage(url: string): Promise<boolean> {
   try {
     const response = await fetch(url, { credentials: 'include', redirect: 'follow', cache: 'reload' });
     if (!response.ok) return false;
-    if (response.url.includes('/login')) return false;
+    // Si l'on demande une page protégée et que le serveur a redirigé vers /login,
+    // ne pas cacher ce contenu sous l'URL d'origine. Mais autoriser le cache
+    // explicite de /login lui-même.
+    if (response.url.includes('/login') && !url.endsWith('/login')) return false;
     const ct = response.headers.get('content-type') ?? 'text/html; charset=utf-8';
     if (!ct.includes('html')) return false;
 
@@ -102,7 +106,15 @@ export function NavBar() {
       const ready = await waitForSWController();
       setSwReady(ready);
       if (ready && navigator.onLine) {
-        for (const url of PAGES) { void precachePage(url); }
+        // Précache toutes les pages "fixes" + les variantes du mois courant
+        // (le mois courant = celui sélectionné dans le calendrier, sinon le
+        // calendrier réel). Évite la page blanche quand l'utilisateur change
+        // d'onglet hors-ligne sans avoir fait le bouton ⬇ complet au préalable.
+        const currentMonth = localStorage.getItem('cm-selected-month')
+          ?? new Date().toISOString().slice(0, 7);
+        const targets: string[] = [...PAGES];
+        for (const p of PAGES_MONTH) targets.push(`${p}?m=${currentMonth}`);
+        for (const url of targets) { void precachePage(url); }
       }
     })();
     void getCurrentUserIsAdmin().then(setIsAdmin).catch(() => setIsAdmin(false));
@@ -236,6 +248,7 @@ export function NavBar() {
           </button>
         </div>
       </nav>
+      <ReleaseBanner />
     </div>
   );
 }

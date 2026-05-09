@@ -3,17 +3,19 @@
 export interface CatAnciennete { categorie: string; echelon: number; coefficient: number; }
 export interface CoefClasse    { role: 'CDB' | 'OPL'; classe: number; coefficient: number; }
 export interface TauxAvion     { avion: string; taux: number; }
-export interface PrimeIncitation   { role: 'CDB' | 'OPL'; type: 'LC' | 'MC'; montant: number; }
-export interface PrimeInstruction  { fonction: string; annee: number; montant: number; }
-export interface TraitementBase    { base_cdb_a1: number; coef_opl: number; note?: string; }
+export interface PrimeIncitation     { role: 'CDB' | 'OPL'; type: 'LC' | 'MC'; montant: number; }
+export interface PrimeInstruction    { fonction: string; annee: number; montant: number; }
+export interface PrimeIncitation330  { seuil: string; mois_max?: number; avions_max?: number; valeur_pvei: number; }
+export interface TraitementBase      { base_cdb_a1: number; coef_opl: number; note?: string; }
 
 export interface AnnexeData {
-  cat_anciennete:    CatAnciennete[];
-  coef_classe:       CoefClasse[];
-  taux_avion:        TauxAvion[];
-  prime_incitation:  PrimeIncitation[];
-  prime_instruction: PrimeInstruction[];
-  traitement_base:   TraitementBase;
+  cat_anciennete:        CatAnciennete[];
+  coef_classe:           CoefClasse[];
+  taux_avion:            TauxAvion[];
+  prime_incitation:      PrimeIncitation[];
+  prime_incitation_330?: PrimeIncitation330[];
+  prime_instruction:     PrimeInstruction[];
+  traitement_base:       TraitementBase;
 }
 
 export const KSP = 1.07;
@@ -66,6 +68,7 @@ export function computeFullProfile(
   primeIncitationType: 'LC' | 'MC',
   primeInstFonction: string | null,
   primeInstAnnee: number | null,
+  prime330Count: number | null,
   a: AnnexeData,
 ) {
   const pvei  = computePVEI(aircraft, fonction, classe, categorie, atpl, a);
@@ -85,9 +88,29 @@ export function computeFullProfile(
     )?.montant ?? 0;
   }
 
+  // Prime A330 — formule : valeur_pvei × PVEI × (nb30e/30) (proratisée selon le régime).
+  // Lookup : on classe les tiers par valeur_pvei décroissante puis on mappe le
+  // count choisi (5 / 7 / 9) à un index :
+  //   count=5 → index 0 (tier le plus généreux, ex: 20 × PVEI)
+  //   count=7 → index 1 (ex: 15 × PVEI)
+  //   count=9 → index 2 (ex: 10 × PVEI)
+  // Hypothèse : la table annexe `prime_incitation_330` contient au moins 3 tiers
+  // dans cet ordre. À ajuster si la donnée évolue (lookup direct par avions_max).
+  let primeA330 = 0;
+  if (prime330Count != null && a.prime_incitation_330?.length) {
+    const tiers = [...a.prime_incitation_330].sort((a, b) => b.valeur_pvei - a.valeur_pvei);
+    const idxByCount: Record<number, number> = { 5: 0, 7: 1, 9: 2 };
+    const idx = idxByCount[prime330Count];
+    const tier = idx !== undefined ? tiers[idx] : undefined;
+    if (tier) {
+      primeA330 = tier.valeur_pvei * pvei * (nb30e / 30);
+    }
+  }
+
   return {
     pvei, ksp: KSP, fixe, fixeTP,
     primeBiTroncon, primeIncitation: pi,
-    primeInstruction, mga, mgaTP, hsSeuil,
+    primeInstruction, primeA330,
+    mga, mgaTP, hsSeuil,
   };
 }

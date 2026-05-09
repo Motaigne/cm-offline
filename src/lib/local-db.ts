@@ -21,11 +21,34 @@ export interface SyncOp {
 
 type StoredRotation = RotationSignature & { target_month: string };
 
+/** Release locale chiffrée (point A2). */
+export interface StoredRelease {
+  /** target_month YYYY-MM-DD — clé primaire (1 release latest par mois). */
+  target_month: string;
+  release_id: string;
+  version: number;
+  released_at: string;
+  notes: string | null;
+  /** AES-GCM IV (base64). */
+  iv: string;
+  /** ciphertext + auth tag (base64). */
+  data: string;
+  /** Clé AES-GCM (base64) — stockée localement pour permettre le déchiffrement offline. */
+  key_b64: string;
+  /** HMAC traçabilité fuite. */
+  watermark: string;
+  /** ISO string — passé cette date la release locale est considérée expirée. */
+  expires_at: string;
+  /** Timestamp local du download (ms). */
+  downloaded_at: number;
+}
+
 class CmDatabase extends Dexie {
   drafts!:    Table<StoredDraft,    string>;
   items!:     Table<StoredItem,     string>;
   sync_queue!:Table<SyncOp,         number>;
   rotations!: Table<StoredRotation, string>;
+  releases!:  Table<StoredRelease,  string>;
 
   constructor() {
     super('cm-offline');
@@ -37,6 +60,10 @@ class CmDatabase extends Dexie {
     // v2 : cache des rotations pour le panneau de recherche offline
     this.version(2).stores({
       rotations: 'id, target_month',
+    });
+    // v3 : releases mensuelles chiffrées (A2)
+    this.version(3).stores({
+      releases: 'target_month, release_id, expires_at',
     });
   }
 }

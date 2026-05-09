@@ -11,6 +11,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import {
   addPlanningItem, deletePlanningItem, updatePlanningItem, getScenariosWithItems,
+  resetPlanningScenarios,
 } from '@/app/actions/planning';
 import { ACTIVITY_META, type ActivityKind } from '@/lib/activity-meta';
 import type { Scenario, CalendarItem } from '@/app/page';
@@ -24,6 +25,7 @@ import { useOnlineStatus } from '@/hooks/use-online';
 import { db, hydrateDB, loadFromDB, hasPendingOps, loadScenariosForMonth, cacheRotations } from '@/lib/local-db';
 import { enqueueAdd, enqueueDelete, enqueueUpdate, syncNow, pendingOpsCount } from '@/lib/sync-service';
 import { getRotationsForMonth } from '@/app/actions/search';
+import { getCurrentUserIsAdmin } from '@/app/actions/auth';
 import { NavBar } from '@/app/components/nav';
 
 type RegimeEnum = Database['public']['Enums']['regime_enum'];
@@ -124,7 +126,16 @@ function prorateForMonth(val: number, departAt: string, arriveeAt: string, year:
 
 // ─── stats + financials ──────────────────────────────────────────────────────
 
-function computeStats(items: CalendarItem[], year: number, mo: number, cngPv = 0, cngHs = 0, regime: RegimeEnum = 'TAF7_10_12') {
+function computeStats(
+  items: CalendarItem[],
+  year: number,
+  mo: number,
+  cngPv = 0,
+  cngHs = 0,
+  regime: RegimeEnum = 'TAF7_10_12',
+  monthlyFixedPrimes = 0,
+  incitActive = false,
+) {
   let onDays = 0, congeDays = 0;
   const flights = items.filter(i => i.kind === 'flight').length;
   let totalHcr = 0, totalPrime = 0, totalTsvNuit = 0;
@@ -153,7 +164,16 @@ function computeStats(items: CalendarItem[], year: number, mo: number, cngPv = 0
   // HS seuil proratisé : 75 × (nb30e_regime - congeDays) / 30
   const nb30eRegime = REGIME_NB30E[regime] ?? NB_30E;
   const nb30eEff    = Math.max(0, nb30eRegime - congeDays);
-  const fin = monthlyFinancialsP(totalHcr, totalPrime, totalTsvNuit, { pvei: PVEI, ksp: KSP, fixe: FIXE_MENSUEL, nb30e: nb30eEff });
+  const finBase = monthlyFinancialsP(totalHcr, totalPrime, totalTsvNuit, { pvei: PVEI, ksp: KSP, fixe: FIXE_MENSUEL, nb30e: nb30eEff });
+  // primes affichées : si incitActive, on additionne bi-tronçon (par vol) +
+  // primes mensuelles fixes. Sinon la colonne +P est masquée et le total
+  // ne contient aucune prime.
+  const primesTotal = incitActive ? finBase.primes + monthlyFixedPrimes : 0;
+  const fin = {
+    ...finBase,
+    primes: primesTotal,
+    total:  finBase.total - finBase.primes + primesTotal,
+  };
   const congeAmount = congeDays * (cngPv + cngHs);
   const brut = fin.total + congeAmount;
   return { flights, onDays, congeDays, totalHcr, totalPrime, totalTsvNuit, fin, congeAmount, brut };
@@ -373,6 +393,7 @@ interface SheetState {
 
 export function GanttView({
   month, scenarios, userName, userRegime, cngPv, cngHs,
+  primeIncitationUnit = 0, primeA330 = 0, primeInstruction = 0,
 }: {
   month: string;
   scenarios: Scenario[];
@@ -380,6 +401,12 @@ export function GanttView({
   userRegime: RegimeEnum;
   cngPv: number;
   cngHs: number;
+  /** Montant unitaire de la prime d'incitation (multiplié par le compteur 0-5). */
+  primeIncitationUnit?: number;
+  /** Prime A330 mensuelle (déjà proratisée au régime). */
+  primeA330?: number;
+  /** Prime mensuelle d'instruction (TRI). */
+  primeInstruction?: number;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -409,6 +436,43 @@ export function GanttView({
   // search / import
   const [searchOpen, setSearchOpen] = useState(false);
   const [scrapeOpen, setScrapeOpen] = useState(false);
+  const [isAdmin,    setIsAdmin]    = useState(false);
+
+  // Compteur prime d'incitation (0-5), persistance localStorage par mois.
+  const [incitCount, setIncitCount] = useState(0);
+
+  // Reset menu + confirmation modale
+  const [resetMenuOpen, setResetMenuOpen] = useState(false);
+  const [resetTarget,   setResetTarget]   = useState<'A' | 'B' | 'C' | 'tout' | null>(null);
+  const [resetting,     setResetting]     = useState(false);
+
+  useEffect(() => {
+    void getCurrentUserIsAdmin().then(setIsAdmin).catch(() => setIsAdmin(false));
+  }, []);
+
+  // Charge le compteur incitation pour le mois courant
+  useEffect(() => {
+    const stored = localStorage.getItem(`cm-incit-${month}`);
+    setIncitCount(stored ? Math.max(0, Math.min(5, parseInt(stored) || 0)) : 0);
+  }, [month]);
+
+  function changeIncit(n: number) {
+    setIncitCount(n);
+    localStorage.setItem(`cm-incit-${month}`, String(n));
+  }
+
+  async function handleReset() {
+    if (!resetTarget) return;
+    setResetting(true);
+    const targets: ('A' | 'B' | 'C')[] = resetTarget === 'tout' ? ['A', 'B', 'C'] : [resetTarget];
+    try {
+      await resetPlanningScenarios(currentMonth, targets);
+      router.refresh();
+      setResetTarget(null);
+    } finally {
+      setResetting(false);
+    }
+  }
 
   // user menu
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -888,7 +952,8 @@ export function GanttView({
           {/* Planning rows */}
           <div className="flex-1 flex flex-col overflow-hidden">
             {localScenarios.map((scenario, idx) => {
-              const stats = computeStats(scenario.items, year, mo, cngPv, cngHs, userRegime);
+              const monthlyFixedPrimes = primeIncitationUnit * incitCount + primeA330 + primeInstruction;
+              const stats = computeStats(scenario.items, year, mo, cngPv, cngHs, userRegime, monthlyFixedPrimes, incitCount >= 1);
               const isLast = idx === localScenarios.length - 1;
               return (
                 <div key={scenario.name}
@@ -920,11 +985,11 @@ export function GanttView({
                       {stats.fin.hs > 0 && (
                         <FinRow label="HS" value={stats.fin.hs}     cls="text-green-500" />
                       )}
-                      {stats.fin.primes > 0 && (
-                        <FinRow label="+P" value={stats.fin.primes} cls="text-amber-500" />
-                      )}
                       {stats.fin.dif > 0 && (
                         <FinRow label="DIF" value={stats.fin.dif}   cls="text-violet-500" />
+                      )}
+                      {stats.fin.primes > 0 && (
+                        <FinRow label="+P" value={stats.fin.primes} cls="text-amber-500" />
                       )}
                       <div className="border-t border-zinc-300 dark:border-zinc-600 my-0.5" />
                       <FinRow label="=" value={stats.fin.total} cls="text-zinc-700 dark:text-zinc-100" bold />
@@ -1003,26 +1068,22 @@ export function GanttView({
 
         {/* Action bar */}
         <div className="flex-shrink-0 flex items-center gap-2 h-14 border-t border-zinc-200 dark:border-zinc-800 px-4 bg-zinc-50 dark:bg-zinc-900 overflow-x-auto">
-          <span className="text-xs text-zinc-400 mr-1 flex-shrink-0">Type actif :</span>
-          {addableKinds.map(k => {
-            const meta = ACTIVITY_META[k];
-            const disabled = k === 'taf' && !tafOk;
-            return (
-              <button key={k} onClick={() => !disabled && setAddKind(k)}
-                disabled={disabled}
-                title={disabled ? 'Non disponible ce mois (régime 10 mois)' : undefined}
+
+          {/* Compteur prime d'incitation 0–5 */}
+          <span className="text-xs text-zinc-400 flex-shrink-0">Prime d'incitation</span>
+          <div className="flex-shrink-0 flex items-center gap-1">
+            {[0, 1, 2, 3, 4, 5].map(n => (
+              <button key={n} onClick={() => changeIncit(n)}
                 className={[
-                  'flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border-2 transition-all',
-                  addKind === k ? 'border-zinc-800 dark:border-zinc-100 scale-105 shadow' : 'border-transparent',
-                  disabled ? 'opacity-30 cursor-not-allowed' : '',
-                ].join(' ')}
-                style={{ backgroundColor: meta.color, color: meta.textColor }}>
-                {meta.label}
-                {k === 'taf' && tafDur ? ` ${tafDur}j` : ''}
+                  'w-7 h-7 rounded-full text-xs font-semibold border-2 transition-all',
+                  incitCount === n
+                    ? 'border-zinc-800 dark:border-zinc-100 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900'
+                    : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:border-zinc-400',
+                ].join(' ')}>
+                {n}
               </button>
-            );
-          })}
-          <span className="text-xs text-zinc-300 dark:text-zinc-600 ml-2 flex-shrink-0">· cliquez un jour pour placer · glissez pour déplacer</span>
+            ))}
+          </div>
 
           {/* Propagation A → B / A → C */}
           <div className="flex-shrink-0 flex items-center gap-1.5 ml-2 pl-2 border-l border-zinc-200 dark:border-zinc-700">
@@ -1047,6 +1108,31 @@ export function GanttView({
             )}
           </div>
 
+          {/* Reset */}
+          <div className="flex-shrink-0 relative ml-2 pl-2 border-l border-zinc-200 dark:border-zinc-700">
+            <button
+              onClick={() => setResetMenuOpen(o => !o)}
+              className="px-2.5 py-1 rounded-full bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-zinc-700 dark:text-zinc-200 text-xs font-semibold transition-colors"
+              title="Réinitialiser un scénario"
+            >
+              Reset
+            </button>
+            {resetMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setResetMenuOpen(false)} />
+                <div className="absolute bottom-full mb-1 left-0 z-40 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-lg py-1 min-w-28">
+                  {(['A', 'B', 'C', 'tout'] as const).map(t => (
+                    <button key={t}
+                      onClick={() => { setResetTarget(t); setResetMenuOpen(false); }}
+                      className="block w-full text-left px-3 py-1.5 text-xs text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-700">
+                      {t === 'tout' ? 'Tout (A + B + C)' : `Scénario ${t}`}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
           <button
             onClick={() => setSearchOpen(true)}
             className="ml-auto flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors"
@@ -1056,17 +1142,46 @@ export function GanttView({
             </svg>
             Rotations
           </button>
-          {/* Import button */}
-          <button
-            onClick={() => setScrapeOpen(true)}
-            className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-zinc-700 hover:bg-zinc-600 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-white text-xs font-semibold transition-colors"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-            </svg>
-            Importer
-          </button>
+          {/* Import button — admins only */}
+          {isAdmin && (
+            <button
+              onClick={() => setScrapeOpen(true)}
+              className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-zinc-700 hover:bg-zinc-600 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-white text-xs font-semibold transition-colors"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              Importer
+            </button>
+          )}
         </div>
+
+        {/* Modale de confirmation reset */}
+        {resetTarget && (
+          <>
+            <div className="fixed inset-0 z-50 bg-black/40" onClick={() => !resetting && setResetTarget(null)} />
+            <div className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-50 max-w-sm mx-auto bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl p-5 space-y-4">
+              <h2 className="font-semibold text-sm">Réinitialiser le planning</h2>
+              <p className="text-sm text-zinc-600 dark:text-zinc-300">
+                Toutes les activités (vols, off, congés, ...) du{' '}
+                {resetTarget === 'tout'
+                  ? <strong>mois entier (A + B + C)</strong>
+                  : <>scénario <strong>{resetTarget}</strong></>}{' '}
+                vont être supprimées. Cette action est irréversible.
+              </p>
+              <div className="flex gap-2">
+                <button onClick={() => setResetTarget(null)} disabled={resetting}
+                  className="flex-1 py-2.5 rounded-xl border border-zinc-300 dark:border-zinc-700 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 disabled:opacity-50">
+                  Annuler
+                </button>
+                <button onClick={handleReset} disabled={resetting}
+                  className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-semibold disabled:opacity-50">
+                  {resetting ? 'Suppression…' : 'Confirmer'}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
 
         {/* Sheet */}
         {sheet && (

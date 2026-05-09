@@ -18,6 +18,7 @@
  * Format français : virgule décimale, valeurs décimales encadrées de guillemets.
  */
 import { createClient } from '@/lib/supabase/server';
+import { fetchAllPaginated } from '@/lib/supabase/paginate';
 import type { Database } from '@/types/supabase';
 
 type SignatureRow = Database['public']['Tables']['pairing_signature']['Row'];
@@ -79,17 +80,16 @@ async function loadSnapshotIdForMonth(supabase: Awaited<ReturnType<typeof create
 async function loadRowsForMonth(supabase: Awaited<ReturnType<typeof createClient>>, month: string): Promise<ExportRow[]> {
   const snapId = await loadSnapshotIdForMonth(supabase, month);
   if (!snapId) return [];
-  const { data: sigs } = await supabase
-    .from('pairing_signature')
-    .select('*')
-    .eq('snapshot_id', snapId);
-  if (!sigs?.length) return [];
-  const { data: insts } = await supabase
-    .from('pairing_instance')
-    .select('*')
-    .in('signature_id', sigs.map(s => s.id));
+  const sigs = await fetchAllPaginated<SignatureRow>((from, to) =>
+    supabase.from('pairing_signature').select('*').eq('snapshot_id', snapId).range(from, to),
+  );
+  if (!sigs.length) return [];
+  const sigIds = sigs.map(s => s.id);
+  const insts = await fetchAllPaginated<InstanceRow>((from, to) =>
+    supabase.from('pairing_instance').select('*').in('signature_id', sigIds).range(from, to),
+  );
   const sigById = new Map(sigs.map(s => [s.id, s]));
-  return (insts ?? []).map(inst => ({
+  return insts.map(inst => ({
     signature: sigById.get(inst.signature_id)!,
     instance:  inst,
     spillover: false,

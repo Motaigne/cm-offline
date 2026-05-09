@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
+import { fetchAllPaginated } from '@/lib/supabase/paginate';
 import { redirect } from 'next/navigation';
 import { NavBar } from '@/app/components/nav';
 import { ComparatifClient } from './comparatif-client';
@@ -38,16 +39,22 @@ export default async function ComparatifPage({
 
   // Instances pour toutes les signatures (dates + timestamps)
   const sigIds = (sigs ?? []).map(s => s.id);
-  const { data: instances } = sigIds.length
-    ? await supabase
-        .from('pairing_instance')
-        .select('id, signature_id, depart_date, depart_at, arrivee_at')
-        .in('signature_id', sigIds)
-        .order('depart_date')
-    : { data: null };
+  const instances = sigIds.length
+    ? await fetchAllPaginated<{
+        id: string; signature_id: string;
+        depart_date: string; depart_at: string; arrivee_at: string;
+      }>((from, to) =>
+        supabase
+          .from('pairing_instance')
+          .select('id, signature_id, depart_date, depart_at, arrivee_at')
+          .in('signature_id', sigIds)
+          .order('depart_date')
+          .range(from, to),
+      )
+    : [];
 
   const instMap = new Map<string, { id: string; depart_date: string; depart_at: string; arrivee_at: string }[]>();
-  for (const inst of instances ?? []) {
+  for (const inst of instances) {
     if (!instMap.has(inst.signature_id)) instMap.set(inst.signature_id, []);
     instMap.get(inst.signature_id)!.push(inst);
   }

@@ -58,3 +58,12 @@ public/worker-*.js.map
 .idea/
 
 .vercel
+
+# Claude Code local workspace (settings, scheduled tasks)
+.claude/
+
+# Cloudflared tunnel binary/log (dev only)
+cloudflared
+
+# Personal sources : PDFs métier AF + notes de session (NE PAS COMMITER)
+sources/

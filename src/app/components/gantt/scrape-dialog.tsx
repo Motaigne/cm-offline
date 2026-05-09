@@ -3,15 +3,13 @@
 import { useState, useEffect, useRef } from 'react';
 import type { ScrapeEvent } from '@/lib/scraper/types';
 
-type Partial = { processed: number; total: number };
-
 type Phase =
   | { name: 'idle' }
   | { name: 'analyzing' }
-  | { name: 'ready'; total_instances: number; unique_sigs: number; partial: Partial | null }
+  | { name: 'ready'; total_instances: number; unique_sigs: number; in_db: number; missing: number }
   | { name: 'scraping'; current: number; total: number; rotation: string }
   | { name: 'done'; snapshot_id: string; signatures: number; instances: number }
-  | { name: 'stopped'; current: number; total: number; resumable: boolean }
+  | { name: 'stopped'; current: number; total: number }
   | { name: 'error'; message: string };
 
 export function ScrapeDialog({
@@ -36,7 +34,13 @@ export function ScrapeDialog({
     setUserId(localStorage.getItem('af_userid') ?? '');
   }, []);
 
-  const canEdit = phase.name === 'idle' || phase.name === 'ready' || phase.name === 'stopped' || phase.name === 'error' || phase.name === 'done';
+  const canEdit =
+    phase.name === 'idle' ||
+    phase.name === 'ready' ||
+    phase.name === 'stopped' ||
+    phase.name === 'error' ||
+    phase.name === 'done';
+
   const canAnalyze = !!cookie && !!sn && !!userId && canEdit;
 
   function reset() {
@@ -52,9 +56,9 @@ export function ScrapeDialog({
 
     try {
       const res = await fetch('/api/scrape/preview', {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ month, cookie, sn, userId }),
+        body:    JSON.stringify({ month, cookie, sn, userId }),
       });
       if (!res.ok) {
         const msg = await res.text().catch(() => String(res.status));
@@ -63,27 +67,28 @@ export function ScrapeDialog({
       }
       const data = await res.json();
       setPhase({
-        name: 'ready',
+        name:            'ready',
         total_instances: data.total_instances,
-        unique_sigs: data.unique_sigs,
-        partial: data.partial ?? null,
+        unique_sigs:     data.unique_sigs,
+        in_db:           data.in_db,
+        missing:         data.missing,
       });
     } catch (err) {
       setPhase({ name: 'error', message: String(err) });
     }
   }
 
-  async function startScrape(resume = false) {
+  async function startScrape() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     setPhase({ name: 'scraping', current: 0, total: 0, rotation: 'Démarrage…' });
 
     try {
       const res = await fetch('/api/scrape', {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ month, cookie, sn, userId, resume }),
-        signal: ctrl.signal,
+        body:    JSON.stringify({ month, cookie, sn, userId }),
+        signal:  ctrl.signal,
       });
 
       if (!res.ok || !res.body) {
@@ -109,9 +114,19 @@ export function ScrapeDialog({
             const event: ScrapeEvent = JSON.parse(line.slice(6));
             if (event.type === 'progress') {
               lastProgress = { current: event.current, total: event.total };
-              setPhase({ name: 'scraping', current: event.current, total: event.total, rotation: event.rotation });
+              setPhase({
+                name:     'scraping',
+                current:  event.current,
+                total:    event.total,
+                rotation: event.rotation,
+              });
             } else if (event.type === 'done') {
-              setPhase({ name: 'done', snapshot_id: event.snapshot_id, signatures: event.signatures, instances: event.instances });
+              setPhase({
+                name:        'done',
+                snapshot_id: event.snapshot_id,
+                signatures:  event.signatures,
+                instances:   event.instances,
+              });
               onDone();
             } else if (event.type === 'error') {
               setPhase({ name: 'error', message: event.message });
@@ -120,16 +135,16 @@ export function ScrapeDialog({
         }
       }
 
-      // Stream ended without a done/error event (e.g. server closed mid-way)
+      // Stream coupé sans event final.
       setPhase(prev => prev.name === 'scraping'
-        ? { name: 'stopped', current: lastProgress.current, total: lastProgress.total, resumable: lastProgress.current > 0 }
+        ? { name: 'stopped', current: lastProgress.current, total: lastProgress.total }
         : prev);
 
     } catch (err: any) {
       if (err?.name === 'AbortError') {
         setPhase(prev => prev.name === 'scraping'
-          ? { name: 'stopped', current: prev.current, total: prev.total, resumable: prev.current > 0 }
-          : { name: 'stopped', current: 0, total: 0, resumable: false });
+          ? { name: 'stopped', current: prev.current, total: prev.total }
+          : { name: 'stopped', current: 0, total: 0 });
       } else {
         setPhase({ name: 'error', message: String(err) });
       }
@@ -211,16 +226,18 @@ export function ScrapeDialog({
           )}
 
           {phase.name === 'ready' && (
-            <div className="bg-zinc-50 dark:bg-zinc-800 rounded-xl p-3 text-sm">
+            <div className="bg-zinc-50 dark:bg-zinc-800 rounded-xl p-3 text-sm space-y-1">
               <p className="text-zinc-700 dark:text-zinc-200 font-medium">
                 {phase.unique_sigs} rotations uniques · {phase.total_instances} dates
               </p>
-              {phase.partial ? (
-                <p className="text-amber-600 dark:text-amber-400 text-xs mt-1">
-                  ⏸ Téléchargement précédent interrompu : {phase.partial.processed}/{phase.partial.total} déjà reçues. Reprendre pour continuer là où vous vous étiez arrêté.
+              {phase.missing > 0 ? (
+                <p className="text-amber-600 dark:text-amber-400 text-xs">
+                  {phase.in_db} déjà en DB · <strong>{phase.missing}</strong> à télécharger
                 </p>
               ) : (
-                <p className="text-zinc-400 text-xs mt-0.5">Confirmer pour lancer le scraping complet</p>
+                <p className="text-emerald-600 dark:text-emerald-400 text-xs">
+                  ✓ Tout est déjà en DB ({phase.in_db}/{phase.unique_sigs})
+                </p>
               )}
             </div>
           )}
@@ -229,7 +246,7 @@ export function ScrapeDialog({
             <div className="bg-zinc-50 dark:bg-zinc-800 rounded-xl p-3 space-y-2 text-xs">
               <p className="text-zinc-600 dark:text-zinc-300 truncate">
                 {phase.current < phase.total
-                  ? <><span className="font-mono">{phase.rotation}</span></>
+                  ? <span className="font-mono">{phase.rotation}</span>
                   : '✓ Tous les détails récupérés'
                 }
                 <span className="text-zinc-400 ml-1">({phase.current}/{phase.total})</span>
@@ -246,7 +263,7 @@ export function ScrapeDialog({
           {phase.name === 'done' && (
             <div className="bg-green-50 dark:bg-green-900/20 rounded-xl p-3 text-sm">
               <p className="text-green-700 dark:text-green-400 font-medium">
-                ✓ {phase.signatures} rotations · {phase.instances} dates importées
+                ✓ DB du mois : {phase.signatures} rotations · {phase.instances} dates
               </p>
             </div>
           )}
@@ -254,7 +271,7 @@ export function ScrapeDialog({
           {phase.name === 'stopped' && (
             <div className="bg-amber-50 dark:bg-amber-900/20 rounded-xl p-3 text-sm">
               <p className="text-amber-700 dark:text-amber-400">
-                Arrêté à {phase.current}/{phase.total}
+                Arrêté à {phase.current}/{phase.total}. Relancer l'analyse pour reprendre.
               </p>
             </div>
           )}
@@ -277,6 +294,7 @@ export function ScrapeDialog({
                   Analyser
                 </button>
               )}
+
               {phase.name === 'ready' && (
                 <>
                   <button
@@ -285,38 +303,32 @@ export function ScrapeDialog({
                   >
                     Annuler
                   </button>
-                  {phase.partial ? (
+                  {phase.missing > 0 ? (
                     <button
-                      onClick={() => startScrape(true)}
-                      className="flex-1 py-3 rounded-xl bg-amber-600 text-white text-sm font-semibold hover:bg-amber-700 active:bg-amber-800 transition-colors"
+                      onClick={startScrape}
+                      className="flex-1 py-3 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 active:bg-blue-800 transition-colors"
                     >
-                      Reprendre
+                      Télécharger {phase.missing}
                     </button>
                   ) : (
                     <button
-                      onClick={() => startScrape(false)}
-                      className="flex-1 py-3 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 active:bg-blue-800 transition-colors"
+                      onClick={onClose}
+                      className="flex-1 py-3 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 active:bg-emerald-800 transition-colors"
                     >
-                      Confirmer
+                      Fermer
                     </button>
                   )}
                 </>
               )}
+
               {(phase.name === 'stopped' || phase.name === 'error') && (
                 <>
-                  {phase.name === 'stopped' && phase.resumable && (
-                    <button
-                      onClick={() => startScrape(true)}
-                      className="flex-1 py-3 rounded-xl bg-amber-600 text-white text-sm font-semibold hover:bg-amber-700 active:bg-amber-800 transition-colors"
-                    >
-                      Reprendre
-                    </button>
-                  )}
                   <button
-                    onClick={reset}
-                    className="flex-1 py-3 rounded-xl border border-zinc-300 dark:border-zinc-700 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+                    onClick={analyze}
+                    disabled={!canAnalyze}
+                    className="flex-1 py-3 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 active:bg-blue-800 disabled:opacity-40 transition-colors"
                   >
-                    Recommencer
+                    Réanalyser
                   </button>
                   <button
                     onClick={onClose}

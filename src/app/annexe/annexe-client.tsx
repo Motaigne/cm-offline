@@ -137,13 +137,15 @@ function PrimeIncitationCard({ table, canEdit }: { table: AnnexeRow; canEdit: bo
 }
 
 function PrimeIncitation330Card({ table, canEdit }: { table: AnnexeRow; canEdit: boolean }) {
-  const all = table.data as { seuil: string; mois_max?: number; valeur_pvei: number }[];
-  const rows = all
-    .filter(r => r.mois_max !== undefined)
-    .sort((a, b) => (b.mois_max ?? 0) - (a.mois_max ?? 0));
+  const all = table.data as { seuil: string; mois_max?: number; avions_max?: number; valeur_pvei: number }[];
+  // Tri par valeur_pvei descendante (tier le plus généreux en haut).
+  const rows = [...all].sort((a, b) => b.valeur_pvei - a.valeur_pvei);
   return (
     <Card title="Prime d'incitation 330" table={table} canEdit={canEdit}>
-      <MiniTable headers={['Seuil', 'PVEI ×']} rows={rows.map(r => [r.seuil, r.valeur_pvei])} />
+      <MiniTable
+        headers={['Seuil', 'PVEI ×']}
+        rows={rows.map(r => [r.seuil.replace(/\bmois\b/g, 'avions'), r.valeur_pvei])}
+      />
     </Card>
   );
 }

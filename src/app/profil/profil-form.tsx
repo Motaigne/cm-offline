@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useTransition } from 'react';
 import { saveProfile, type ProfileData } from '@/app/actions/profile';
+import { signOut } from '@/app/actions/auth';
 import { computeFullProfile, KSP, type AnnexeData } from '@/lib/annexe';
 import type { Database, Tables } from '@/types/supabase';
 
@@ -71,6 +72,11 @@ export function ProfilForm({
   const [aircraft,  setAircraft]  = useState(initialData?.aircraft_principal  ?? 'A335');
   const [cngPv,     setCngPv]     = useState(String(initialData?.cng_pv       ?? 0));
   const [cngHs,     setCngHs]     = useState(String(initialData?.cng_hs       ?? 0));
+  const [triNiveau,   setTriNiveau]   = useState<string>(initialData?.tri_niveau != null ? String(initialData.tri_niveau) : '');
+  const [prime330Count, setPrime330Count] = useState<number | null>(initialData?.prime_330_count ?? null);
+
+  const isTri    = fonction === 'TRI_OPL' || fonction === 'TRI_CDB';
+  const prime330 = prime330Count != null;
 
   const [saved,     setSaved]     = useState(false);
   const [err,       setErr]       = useState('');
@@ -90,6 +96,13 @@ export function ProfilForm({
     const cl    = parseInt(classe)   || 2;
     const ech   = parseInt(echelon)  || 4;
 
+    // Mapping fonction profil → clé de la table prime_instruction
+    // (ICPL = TRI CDB côté annexe ; TRI OPL = TRI_OPL)
+    const primeInstFonction = fonction === 'TRI_OPL' ? 'TRI_OPL'
+      : fonction === 'TRI_CDB' ? 'ICPL'
+      : null;
+    const primeInstAnnee = (isTri && triNiveau !== '') ? parseInt(triNiveau) : null;
+
     return computeFullProfile(
       aircraft,
       fonction,
@@ -99,11 +112,12 @@ export function ProfilForm({
       bonusAtpl,
       nb30e,
       'LC',
-      null,
-      null,
+      primeInstFonction,
+      primeInstAnnee,
+      prime330Count,
       annexe as AnnexeData,
     );
-  }, [annexe, fonction, regime, aircraft, classe, categorie, echelon, bonusAtpl]);
+  }, [annexe, fonction, regime, aircraft, classe, categorie, echelon, bonusAtpl, isTri, triNiveau, prime330Count]);
 
   function handleSave() {
     if (!fonction || !regime) return;
@@ -120,11 +134,19 @@ export function ProfilForm({
       aircraft_principal: aircraft,
       cng_pv:             parseFloat(cngPv) || 0,
       cng_hs:             parseFloat(cngHs) || 0,
+      tri_niveau:         isTri && triNiveau !== '' ? parseInt(triNiveau) : null,
+      prime_330_count:    prime330Count,
     };
     start(async () => {
-      const res = await saveProfile(data);
-      if (res && 'error' in res) setErr(res.error ?? 'Erreur inconnue');
-      else { setSaved(true); setTimeout(() => setSaved(false), 3000); }
+      try {
+        const res = await saveProfile(data);
+        if (res && 'error' in res) setErr(res.error ?? 'Erreur inconnue');
+        else { setSaved(true); setTimeout(() => setSaved(false), 3000); }
+      } catch (e) {
+        const msg = String(e).slice(0, 300);
+        setErr(`Exception : ${msg}`);
+        console.error('[saveProfile] threw:', e);
+      }
     });
   }
 
@@ -142,6 +164,18 @@ export function ProfilForm({
             </button>
           ))}
         </div>
+        {isTri && (
+          <div className="mt-3">
+            <label className="block text-xs text-zinc-500 mb-1">Niveau d'instruction</label>
+            <div className="flex flex-wrap gap-2">
+              {['1', '2', '3', '4', '5'].map(n => (
+                <button key={n} type="button" onClick={() => setTriNiveau(n)} className={pill(triNiveau === n)}>
+                  {n === '5' ? '≥ 5' : n}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </Section>
 
       {/* Régime */}
@@ -188,6 +222,36 @@ export function ProfilForm({
             </button>
           ))}
         </div>
+        <label className="flex items-center gap-2 cursor-pointer select-none mt-3">
+          <input
+            type="checkbox"
+            checked={prime330}
+            onChange={e => setPrime330Count(e.target.checked ? 9 : null)}
+            className="w-4 h-4 rounded"
+          />
+          <span className="text-sm">Prime A330</span>
+        </label>
+        {prime330 && (
+          <div className="mt-3">
+            <label className="block text-xs text-zinc-500 mb-1">Nombre d'avions sur la flotte</label>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { count: 9, label: '< 9' },
+                { count: 7, label: '< 7' },
+                { count: 5, label: '< 5' },
+              ].map(({ count, label }) => (
+                <button
+                  key={count}
+                  type="button"
+                  onClick={() => setPrime330Count(count)}
+                  className={pill(prime330Count === count)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </Section>
 
       {/* Congés */}
@@ -239,20 +303,44 @@ export function ProfilForm({
           </p>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {/* ligne 1 */}
-            <ValueCard label="PVEI"                value={`${computed.pvei.toFixed(2)} €/h`}          color="blue"   />
-            <ValueCard label="K.S.P"               value={KSP.toFixed(2)}                             color="zinc"   />
-            <ValueCard label="Seuil HS"            value={`${computed.hsSeuil.toFixed(2)} h`}         color="green"  />
+            <ValueCard label="PVEI"     value={`${computed.pvei.toFixed(2)} €/h`}  color="blue"
+              formula="Avion × (ATPL + Classe) × CAT" />
+            <ValueCard label="K.S.P"    value={KSP.toFixed(2)}                     color="zinc" />
+            <ValueCard label="Seuil HS" value={`${computed.hsSeuil.toFixed(2)} h`} color="green"
+              formula="75 − 2,5 × congés − 2,5 × (30 − 30e)" />
             {/* ligne 2 */}
-            <ValueCard label="MGA"                 value={`${computed.mga.toFixed(2)} €`}             color="violet" />
-            <ValueCard label="Traitement fixe"     value={`${computed.fixe.toFixed(2)} €`}            color="zinc"   />
-            <ValueCard label="Prime bi-tronçon"    value={`${computed.primeBiTroncon.toFixed(2)} €`}  color="amber"  />
+            <ValueCard label="MGA"              value={`${computed.mga.toFixed(2)} €`}            color="violet"
+              formula="T.Fixe + 85 × 30e × PVEI" />
+            <ValueCard label="Traitement fixe"  value={`${computed.fixe.toFixed(2)} €`}           color="zinc"
+              formula="Fixe × Coef(FO/CDB) × Echelon × 30e" />
+            <ValueCard label="Prime bi-tronçon" value={`${computed.primeBiTroncon.toFixed(2)} €`} color="amber"
+              formula="2,5 × PVEI (sans KSP)" />
             {/* ligne 3 */}
             <ValueCard label="MGA temps plein"     value={`${computed.mgaTP.toFixed(2)} €`}           color="violet" />
             <ValueCard label="T. Fixe temps plein" value={`${computed.fixeTP.toFixed(2)} €`}          color="zinc"   />
             <ValueCard label="Prime d'incitation"  value={`${computed.primeIncitation.toFixed(2)} €`} color="amber"  />
+            {/* ligne 4 (conditionnelle) */}
+            {isTri && computed.primeInstruction > 0 && (
+              <ValueCard label="Prime mensuelle d'instruction"
+                value={`${computed.primeInstruction.toFixed(2)} €`} color="amber" />
+            )}
+            {prime330 && computed.primeA330 > 0 && (
+              <ValueCard label="Prime A330"
+                value={`${computed.primeA330.toFixed(2)} €`} color="amber" />
+            )}
           </div>
         </div>
       )}
+
+      {/* Se déconnecter */}
+      <form action={signOut} className="pt-4 border-t border-zinc-200 dark:border-zinc-700">
+        <button
+          type="submit"
+          className="w-full rounded-lg border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-2.5 text-sm font-semibold hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+        >
+          Se déconnecter
+        </button>
+      </form>
     </div>
   );
 }
@@ -276,11 +364,14 @@ const colorMap: Record<string, string> = {
   zinc:   'text-zinc-800 dark:text-zinc-100',
 };
 
-function ValueCard({ label, value, color = 'zinc' }: { label: string; value: string; color?: string }) {
+function ValueCard({ label, value, color = 'zinc', formula }: { label: string; value: string; color?: string; formula?: string }) {
   return (
     <div className="bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 px-3 py-2.5">
       <p className="text-[10px] font-medium text-zinc-400 uppercase tracking-wide leading-none mb-1">{label}</p>
       <p className={`text-sm font-semibold font-mono ${colorMap[color] ?? colorMap.zinc}`}>{value}</p>
+      {formula && (
+        <p className="text-[9px] text-zinc-400 dark:text-zinc-500 italic mt-0.5 leading-tight">{formula}</p>
+      )}
     </div>
   );
 }

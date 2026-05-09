@@ -28,20 +28,45 @@ function sleep(ms: number) {
 
 function monthBounds(month: string) {
   const [y, m] = month.split('-').map(Number);
-  // Nouvelle logique (point C) : la DB du mois M ne contient QUE les rotations
-  // qui décollent en M. On restreint donc l'intervalle de départ au mois M.
+  // La DB de M ne contient QUE les rotations qui décollent en M.
+  // L'API CrewBidd exclut implicitement les rotations dont des éléments dépassent
+  // `scheduledDepartureDateTo`. Une fenêtre étroite (M+1) coupe certaines variantes
+  // d'horaire en fin de mois. On élargit donc à fin M+2 — le filtre client
+  // (pipeline.ts) restreint ensuite aux décollages en M.
   return {
-    scheduledArrivalAfterDate:  Date.UTC(y, m - 1, 1),                  // 1st of target month
-    scheduledDepartureDateFrom: Date.UTC(y, m - 1, 1),                  // 1st of target month
-    scheduledDepartureDateTo:   Date.UTC(y, m, 0, 23, 59, 59, 999),     // last day of target month
+    scheduledArrivalAfterDate:  Date.UTC(y, m - 1, 1),                    // 1st of M
+    scheduledDepartureDateFrom: Date.UTC(y, m - 1, 1),                    // 1st of M
+    scheduledDepartureDateTo:   Date.UTC(y, m + 2, 0, 23, 59, 59, 999),   // last day of M+2
   };
+}
+
+/**
+ * Convertit `YYYY-MM-DD` en bornes UTC start-of-day/end-of-day.
+ */
+function dayBounds(from: string, to: string) {
+  const [fy, fm, fd] = from.split('-').map(Number);
+  const [ty, tm, td] = to.split('-').map(Number);
+  return {
+    scheduledArrivalAfterDate:  Date.UTC(fy, fm - 1, fd),
+    scheduledDepartureDateFrom: Date.UTC(fy, fm - 1, fd),
+    scheduledDepartureDateTo:   Date.UTC(ty, tm - 1, td, 23, 59, 59, 999),
+  };
+}
+
+export interface FetchPairingsOptions {
+  /** Surcharge la fenêtre par défaut (mois M complet) — utilisé pour backfill ciblé. */
+  windowFrom?: string; // YYYY-MM-DD
+  windowTo?:   string; // YYYY-MM-DD
 }
 
 export async function fetchAllPairings(
   month: string,
   cfg: CrewBiddConfig,
+  opts: FetchPairingsOptions = {},
 ): Promise<PairingSummary[]> {
-  const dates = monthBounds(month);
+  const dates = (opts.windowFrom && opts.windowTo)
+    ? dayBounds(opts.windowFrom, opts.windowTo)
+    : monthBounds(month);
   const hdrs  = headers(cfg);
   const PAGE  = 500;
   const results: PairingSummary[] = [];

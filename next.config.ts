@@ -10,7 +10,20 @@ const withSerwist = withSerwistInit({
 
 const nextConfig: NextConfig = {
   turbopack: {},
-  experimental: {},
+  experimental: {
+    serverActions: {
+      // Tunnel cloudflared pour test PWA iPad — Next.js exige que l'Origin
+      // matche le Host pour les server actions (anti-CSRF). Le tunnel renvoie
+      // un Host différent (localhost) du domaine public (trycloudflare.com),
+      // ce qui faisait échouer toute mutation profile.
+      allowedOrigins: [
+        'drag-temporarily-convention-lopez.trycloudflare.com',
+        '*.trycloudflare.com',
+        'localhost:3000',
+        '192.168.1.72:3000',
+      ],
+    },
+  },
   allowedDevOrigins: ['192.168.1.72'],
 };
 
