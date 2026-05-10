@@ -210,7 +210,13 @@ function computeStats(
   // HS seuil proratisé : 75 × (nb30e_regime - congeDays) / 30
   const nb30eRegime = REGIME_NB30E[regime] ?? NB_30E;
   const nb30eEff    = Math.max(0, nb30eRegime - congeDays);
-  const finBase = monthlyFinancialsP(totalHcr, totalPrime, totalTsvNuit, { pvei: PVEI, ksp: KSP, fixe: FIXE_MENSUEL, nb30e: nb30eEff });
+  // En juillet/août pour TAF*_10_12 : pilote off, MGA passe en temps plein.
+  // On boost fixe (× 30/nb30e) + nb30e=30 pour que monthlyFinancialsP calcule
+  // mga_TP = fixe_TP + 85×PVEI, et donc DIF compense jusqu'au temps plein.
+  const fullPrime = isFullPrimeMonth(regime, mo);
+  const fixeForFin  = fullPrime && nb30eRegime > 0 ? FIXE_MENSUEL * 30 / nb30eRegime : FIXE_MENSUEL;
+  const nb30eForFin = fullPrime ? 30 : nb30eEff;
+  const finBase = monthlyFinancialsP(totalHcr, totalPrime, totalTsvNuit, { pvei: PVEI, ksp: KSP, fixe: fixeForFin, nb30e: nb30eForFin });
   // PRIME = bi-tronçon (sommée par vol via finBase.primes) + primes mensuelles
   // fixes (incit + A330 + instruction + Mai + Noël). monthlyFixedPrimes est calculé
   // en amont avec proration régime + boost 100% en juillet/août pour TAF*_10_12.
@@ -1112,8 +1118,7 @@ export function GanttView({
                       {stats.totalA81 > 0 && (
                         <>
                           <div className="border-t border-dashed border-emerald-300 dark:border-emerald-700/40 my-0.5" />
-                          <FinRow label="A81 brut" value={stats.totalA81}    cls="text-emerald-600 dark:text-emerald-400" bold />
-                          <FinRow label="A81 net"  value={stats.totalA81Net} cls="text-emerald-700 dark:text-emerald-300" />
+                          <FinRow label="A81" value={stats.totalA81} cls="text-emerald-600 dark:text-emerald-400" bold />
                           <div className="flex items-baseline justify-between gap-0.5">
                             <span className="text-[7.5px] font-mono leading-none text-emerald-600/70 dark:text-emerald-400/60">
                               {stats.cumulJoursRunning.toFixed(1)}/{stats.plafondJours}j

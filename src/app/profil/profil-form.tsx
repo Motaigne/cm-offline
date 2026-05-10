@@ -76,6 +76,7 @@ export function ProfilForm({
   const [triNiveau,   setTriNiveau]   = useState<string>(initialData?.tri_niveau != null ? String(initialData.tri_niveau) : '');
   const [prime330Count, setPrime330Count] = useState<number | null>(initialData?.prime_330_count ?? null);
   const [valeurJour,  setValeurJour]  = useState(String(initialData?.valeur_jour ?? 600));
+  const [tmi,         setTmi]         = useState<number>(initialData?.tmi ?? 41);
 
   const isTri    = fonction === 'TRI_OPL' || fonction === 'TRI_CDB';
   const prime330 = prime330Count != null;
@@ -144,6 +145,7 @@ export function ProfilForm({
       tri_niveau:         isTri && triNiveau !== '' ? parseInt(triNiveau) : null,
       prime_330_count:    prime330Count,
       valeur_jour:        parseFloat(valeurJour) || 600,
+      tmi:                tmi,
     };
     start(async () => {
       try {
@@ -303,7 +305,7 @@ export function ProfilForm({
         </div>
       </Section>
 
-      {/* Article 81 — valeur jour */}
+      {/* Article 81 — valeur jour + TMI */}
       <Section label="Article 81 — Valeur jour">
         <div className="flex items-center gap-3">
           <input type="number" step="1" min={0} value={valeurJour}
@@ -312,6 +314,16 @@ export function ProfilForm({
           <span className="text-xs text-zinc-500">
             € / jour — base de la prime de séjour défiscalisée (défaut 600).
           </span>
+        </div>
+        <div className="mt-3">
+          <label className="block text-xs text-zinc-500 mb-1">TMI (Taux Marginal d&apos;Imposition)</label>
+          <div className="flex flex-wrap gap-2">
+            {[45, 41, 30, 11, 0].map(t => (
+              <button key={t} type="button" onClick={() => setTmi(t)} className={pill(tmi === t)}>
+                {t} %
+              </button>
+            ))}
+          </div>
         </div>
       </Section>
 
@@ -350,7 +362,8 @@ export function ProfilForm({
             <ValueCard label="Prime bi-tronçon" value={`${computed.primeBiTroncon.toFixed(2)} €`} color="amber"
               formula="2,5 × PVEI (sans KSP)" />
             {/* ligne 3 */}
-            <ValueCard label="MGA temps plein"     value={`${computed.mgaTP.toFixed(2)} €`}           color="violet" />
+            <ValueCard label="MGA temps plein"     value={`${computed.mgaTP.toFixed(2)} €`}           color="violet"
+              formula="T.Fixe + 85 × PVEI" />
             <ValueCard label="T. Fixe temps plein" value={`${computed.fixeTP.toFixed(2)} €`}          color="zinc"   />
             <ValueCard label="Prime d'incitation"  value={`${computed.primeIncitation.toFixed(2)} €`} color="amber"  />
             {/* ligne 4 (conditionnelle) */}
