@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { getScenariosWithItems } from '@/app/actions/planning';
 import { loadAnnexe } from '@/app/actions/annexe';
 import { getYearA81CumulBefore } from '@/app/actions/article81';
+import { getMonthlyIrMfEuros } from '@/app/actions/ir-mf';
 import { GanttView } from '@/app/components/gantt/gantt-view';
 import { computeFullProfile, type AnnexeData } from '@/lib/annexe';
 import { REGIME_NB30E } from '@/lib/finance';
@@ -49,11 +50,12 @@ export default async function Home({
   if (!profile) redirect('/profil');
 
   const [y, mo] = month.split('-').map(Number);
-  const [scenarios, annexe, { data: a81Row }, a81Cumul] = await Promise.all([
+  const [scenarios, annexe, { data: a81Row }, a81Cumul, irMfMonth] = await Promise.all([
     getScenariosWithItems(month),
     loadAnnexe(),
     supabase.from('annexe_table').select('data').eq('slug', 'article_81').single(),
     getYearA81CumulBefore(y, mo),
+    getMonthlyIrMfEuros(month),
   ]);
   const article81Data: Article81Data | null = (a81Row?.data as Article81Data | null) ?? null;
   const valeurJour = Number(profile.valeur_jour ?? 600);
@@ -114,6 +116,7 @@ export default async function Home({
       article81Data={article81Data}
       valeurJour={valeurJour}
       a81CumulBefore={a81Cumul.byScenarioBefore}
+      irMfByScenario={irMfMonth.byScenario}
     />
   );
 }

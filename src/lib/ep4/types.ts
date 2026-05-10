@@ -67,6 +67,12 @@ export interface Ep4Rotation {
   IR: number;
   /** Menus Frais (subset de IR pour les slots survenus en escale ≥ 3h). */
   MF: number;
+  /** IR converti en € via la table annexe ir_mf_rates par escale. */
+  IR_eur: number;
+  /** MF converti en € (= 20% IR de l'escale). */
+  MF_eur: number;
+  /** Escales pour lesquelles aucun taux n'a été trouvé en annexe. */
+  IR_missingRateEscales: string[];
   tempsSej: number;
   tauxApp: number | null;
   /** Somme des tsv_n_ser_m. */

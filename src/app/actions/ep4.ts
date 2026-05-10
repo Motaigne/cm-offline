@@ -5,21 +5,27 @@ import { redirect } from 'next/navigation';
 import type { PairingDetail } from '@/lib/scraper/types';
 import type { Ep4Rotation, TauxAppRow } from '@/lib/ep4';
 import { buildEp4Rotation } from '@/lib/ep4';
+import type { IrMfRate } from '@/lib/ir-rates';
 
 export type Ep4DetailResponse =
-  | { raw_detail: PairingDetail; taux: TauxAppRow[] }
+  | { raw_detail: PairingDetail; taux: TauxAppRow[]; irRates: IrMfRate[] }
   | { error: string };
 
-/** Charge le raw_detail JSONB d'une signature + la table taux_app pour
- *  alimenter buildEp4Rotation côté client. Auth user requis. */
+/** Charge le raw_detail JSONB d'une signature + la table taux_app + ir_mf_rates
+ *  pour alimenter buildEp4Rotation côté client. Auth user requis. */
 export async function getEp4Detail(sigId: string): Promise<Ep4DetailResponse> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Non authentifié' };
 
-  const [{ data: sig, error: sigErr }, { data: taux, error: tauxErr }] = await Promise.all([
+  const [
+    { data: sig, error: sigErr },
+    { data: taux, error: tauxErr },
+    { data: irRow },
+  ] = await Promise.all([
     supabase.from('pairing_signature').select('raw_detail').eq('id', sigId).single(),
     supabase.from('taux_app').select('rot_code, duree_min_h, duree_max_h, taux'),
+    supabase.from('annexe_table').select('data').eq('slug', 'ir_mf_rates').single(),
   ]);
 
   if (sigErr || !sig)         return { error: sigErr?.message ?? 'Signature introuvable' };
@@ -29,6 +35,7 @@ export async function getEp4Detail(sigId: string): Promise<Ep4DetailResponse> {
   return {
     raw_detail: sig.raw_detail as unknown as PairingDetail,
     taux: (taux ?? []) as TauxAppRow[],
+    irRates: ((irRow?.data ?? []) as unknown as IrMfRate[]),
   };
 }
 
@@ -115,11 +122,13 @@ export async function getEp4ForMonth(month: string): Promise<Ep4MonthResponse | 
     .in('id', sigIds);
   const sigById = new Map((sigs ?? []).map(s => [s.id, s]));
 
-  // 5. Charge taux_app
-  const { data: taux } = await supabase
-    .from('taux_app')
-    .select('rot_code, duree_min_h, duree_max_h, taux');
+  // 5. Charge taux_app + ir_mf_rates
+  const [{ data: taux }, { data: irRow }] = await Promise.all([
+    supabase.from('taux_app').select('rot_code, duree_min_h, duree_max_h, taux'),
+    supabase.from('annexe_table').select('data').eq('slug', 'ir_mf_rates').single(),
+  ]);
   const tauxRows = (taux ?? []) as TauxAppRow[];
+  const irRates  = ((irRow?.data ?? []) as unknown as IrMfRate[]);
 
   // 6. Construit la réponse — un Ep4Rotation par flight item
   const result: Ep4MonthResponse = {
@@ -145,7 +154,7 @@ export async function getEp4ForMonth(month: string): Promise<Ep4MonthResponse | 
       sig.raw_detail as unknown as PairingDetail,
       sig.rotation_code ?? '',
       sig.zone,
-      y, m, tauxRows,
+      y, m, tauxRows, irRates,
     );
 
     result.scenarios.find(s => s.name === scenarioName)!.flights.push({

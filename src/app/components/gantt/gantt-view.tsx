@@ -452,6 +452,7 @@ export function GanttView({
   primeIncitationUnit = 0, primeA330 = 0, primeInstruction = 0,
   article81Data = null, valeurJour = 600,
   a81CumulBefore = { A: 0, B: 0, C: 0 },
+  irMfByScenario,
 }: {
   month: string;
   scenarios: Scenario[];
@@ -471,6 +472,9 @@ export function GanttView({
   valeurJour?: number;
   /** Cumul tSej24 par scénario depuis Jan jusqu'au mois précédent (pour plafond annuel). */
   a81CumulBefore?: Record<'A' | 'B' | 'C', number>;
+  /** Totaux IR/MF (compte + €) par scénario pour le mois courant — pré-calculés
+   *  côté serveur via raw_detail (cf. getMonthlyIrMfEuros). */
+  irMfByScenario?: Record<'A' | 'B' | 'C', { ir: number; mf: number; ir_eur: number; mf_eur: number; skipped: number }>;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -1127,6 +1131,13 @@ export function GanttView({
                               <span className="text-[7.5px] font-bold leading-none text-amber-500">PLAFOND</span>
                             )}
                           </div>
+                        </>
+                      )}
+                      {irMfByScenario && (irMfByScenario[scenario.name]?.ir_eur > 0 || irMfByScenario[scenario.name]?.mf_eur > 0) && (
+                        <>
+                          <div className="border-t border-dashed border-orange-300 dark:border-orange-700/40 my-0.5" />
+                          <FinRow label="IR" value={irMfByScenario[scenario.name].ir_eur} cls="text-orange-600 dark:text-orange-400" bold />
+                          <FinRow label="MF" value={irMfByScenario[scenario.name].mf_eur} cls="text-orange-700 dark:text-orange-300" />
                         </>
                       )}
                     </div>

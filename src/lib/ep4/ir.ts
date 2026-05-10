@@ -5,12 +5,16 @@
 //     "soit en vol soit en escale" pendant ≥ 1h, en heure locale.
 //   - Chaque créneau (jour, type) ne peut ouvrir droit qu'à 1 indemnité (dédup).
 //   - MF = 20% de l'IR (montant), versée seulement si l'escale d'origine est
-//     ≥ 3h. On expose ici les COMPTES IR et MF — la conversion € est faite
-//     en aval (avec le tableau "TABLEAU RECAPITULATIF…IR…2026" en annexe).
+//     ≥ 3h.
 //   - "En vol" = fenêtre TSVP du leg = [dep - 1h15, arr + 15min].
 //   - "En escale" = entre le end_ms du service i et le begin_ms du service i+1.
+//
+// On track aussi l'escale d'origine de chaque slot pour permettre le calcul €
+// via lookupIrMfRate (chaque escale a son propre tarif AF).
 
 import type { PairingDetail } from '@/lib/scraper/types';
+import type { IrMfRate } from '@/lib/ir-rates';
+import { lookupIrMfRate } from '@/lib/ir-rates';
 
 const HOUR_MS = 3_600_000;
 const DAY_MS  = 86_400_000;
@@ -31,13 +35,20 @@ function localDayKey(localMs: number): string {
   return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2,'0')}-${String(dt.getUTCDate()).padStart(2,'0')}`;
 }
 
-/** Marque les créneaux IR/MF couverts par un intervalle local donné. */
+interface SlotInfo {
+  /** Code escale d'origine (= station où la couverture a lieu). */
+  escale: string;
+  isMfEligible: boolean;
+}
+
+/** Marque les créneaux IR/MF couverts par un intervalle local donné, en
+ *  attribuant l'escale d'origine pour le lookup tarif. */
 function addSlots(
   intervalLocalStartMs: number,
   intervalLocalEndMs: number,
+  escale: string,
   isMfEligible: boolean,
-  irSlots: Set<string>,
-  mfSlots: Set<string>,
+  irSlotsMap: Map<string, SlotInfo>,
 ): void {
   if (intervalLocalEndMs <= intervalLocalStartMs) return;
   let dayStart = Math.floor(intervalLocalStartMs / DAY_MS) * DAY_MS;
@@ -50,8 +61,14 @@ function addSlots(
         Math.min(intervalLocalEndMs, slotEnd) - Math.max(intervalLocalStartMs, slotStart));
       if (overlap >= MIN_OVERLAP_MS) {
         const key = `${dayKey}|${slot.name}`;
-        irSlots.add(key);
-        if (isMfEligible) mfSlots.add(key);
+        // Si déjà présent : garder la version la plus généreuse (escale-based + MF si éligible)
+        const existing = irSlotsMap.get(key);
+        if (!existing) {
+          irSlotsMap.set(key, { escale, isMfEligible });
+        } else if (isMfEligible && !existing.isMfEligible) {
+          // Upgrade : escale longue prioritaire sur TSVP
+          irSlotsMap.set(key, { escale, isMfEligible: true });
+        }
       }
     }
     dayStart += DAY_MS;
@@ -59,23 +76,31 @@ function addSlots(
 }
 
 export interface IrMfResult {
+  /** Compte total IR (= nombre de créneaux uniques couverts). */
   ir: number;
+  /** Compte total MF (= subset où l'escale était ≥ 3h). */
   mf: number;
   /** Détail des slots couverts pour debug. */
   irSlots: string[];
   mfSlots: string[];
+  /** Conversion en euros via les taux annexe (par escale). */
+  ir_eur: number;
+  mf_eur: number;
+  /** Liste des escales pour lesquelles aucun taux n'a été trouvé. */
+  missingRateEscales: string[];
 }
 
-export function computeIRandMF(detail: PairingDetail): IrMfResult {
-  const irSlots = new Set<string>();
-  const mfSlots = new Set<string>();
+export function computeIRandMF(detail: PairingDetail, rates: IrMfRate[] = []): IrMfResult {
+  const slotsMap = new Map<string, SlotInfo>();
 
-  // Aplatissement en services ordonnés
+  // Aplatissement en services ordonnés (en gardant codes DEP/ARR pour escale)
   const services = [...(detail.flightDuty ?? [])]
     .map(d => ({
       begin_ms: d.schBeginDate,
       end_ms:   d.schEndDate,
       legs: (d.dutyLegAssociation ?? []).flatMap(dla => (dla.legs ?? []).map(l => ({
+        dep: l.departureStationCode,
+        arr: l.arrivalStationCode,
         dep_ms: l.scheduledDepartureDate,
         arr_ms: l.scheduledArrivalDate,
         dep_utc_offset_h: parseFloat(l.schDepStationCodeTz) || 0,
@@ -84,12 +109,13 @@ export function computeIRandMF(detail: PairingDetail): IrMfResult {
     }))
     .sort((a, b) => a.begin_ms - b.begin_ms);
 
-  // 1. Fenêtres TSVP par leg (en vol — pas MF-éligible)
+  // 1. Fenêtres TSVP par leg (en vol — pas MF-éligible).
+  // Escale d'origine = destination du leg (= où le pilote arrive ou prépare son arrivée).
   for (const svc of services) {
     for (const leg of svc.legs) {
       const localStart = (leg.dep_ms - TSVP_PRE_MS)  + leg.dep_utc_offset_h * HOUR_MS;
       const localEnd   = (leg.arr_ms + TSVP_POST_MS) + leg.dep_utc_offset_h * HOUR_MS;
-      addSlots(localStart, localEnd, false, irSlots, mfSlots);
+      addSlots(localStart, localEnd, leg.arr, false, slotsMap);
     }
   }
 
@@ -101,19 +127,43 @@ export function computeIRandMF(detail: PairingDetail): IrMfResult {
     const escaleEnd   = next.begin_ms;
     const duration = escaleEnd - escaleStart;
     if (duration <= 0) continue;
-    // Heure locale = ARR offset du dernier leg du service précédent (= station de séjour)
+    // Heure locale + escale = dernier leg du service précédent (= station de séjour)
     const lastLegPrev = prev.legs[prev.legs.length - 1];
     const offsetH = lastLegPrev?.arr_utc_offset_h ?? 0;
+    const escale  = lastLegPrev?.arr ?? '';
     const localStart = escaleStart + offsetH * HOUR_MS;
     const localEnd   = escaleEnd   + offsetH * HOUR_MS;
     const isMfEligible = duration >= MF_ESCALE_MIN_MS;
-    addSlots(localStart, localEnd, isMfEligible, irSlots, mfSlots);
+    addSlots(localStart, localEnd, escale, isMfEligible, slotsMap);
+  }
+
+  // 3. Compute totals + lookup € via rates
+  let ir = 0, mf = 0, ir_eur = 0, mf_eur = 0;
+  const missingSet = new Set<string>();
+  const irSlotsList: string[] = [];
+  const mfSlotsList: string[] = [];
+  for (const [key, info] of slotsMap) {
+    ir += 1;
+    irSlotsList.push(`${key}@${info.escale}`);
+    if (info.isMfEligible) {
+      mf += 1;
+      mfSlotsList.push(`${key}@${info.escale}`);
+    }
+    const rate = lookupIrMfRate(rates, info.escale);
+    if (rate) {
+      ir_eur += rate.ir_eur;
+      if (info.isMfEligible) mf_eur += rate.mf_eur;
+    } else if (info.escale) {
+      missingSet.add(info.escale);
+    }
   }
 
   return {
-    ir: irSlots.size,
-    mf: mfSlots.size,
-    irSlots: [...irSlots].sort(),
-    mfSlots: [...mfSlots].sort(),
+    ir, mf,
+    irSlots: irSlotsList.sort(),
+    mfSlots: mfSlotsList.sort(),
+    ir_eur: Math.round(ir_eur * 100) / 100,
+    mf_eur: Math.round(mf_eur * 100) / 100,
+    missingRateEscales: [...missingSet].sort(),
   };
 }

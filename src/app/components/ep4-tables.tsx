@@ -87,7 +87,7 @@ export function Ep4Tables({ ep4, year, month }: {
           <table className="text-[11px] font-mono w-max border-collapse">
             <thead>
               <tr className="bg-zinc-50 dark:bg-zinc-800 text-zinc-500 border-b border-zinc-200 dark:border-zinc-700">
-                {['Service','Tronçon','TME','CMT','HCV','HCVmoisM','HCT','HCA','H1','H2HC','rtHDV','HV100r','HCVr','H1r','H2HCr','Prime','deadHead','IR','MF','tempsSej','Zone','tauxApp']
+                {['Service','Tronçon','TME','CMT','HCV','HCVmoisM','HCT','HCA','H1','H2HC','rtHDV','HV100r','HCVr','H1r','H2HCr','Prime','deadHead','IR','IR €','MF','MF €','tempsSej','Zone','tauxApp']
                   .map(h => <Th key={h}>{h}</Th>)}
               </tr>
             </thead>
@@ -117,7 +117,9 @@ export function Ep4Tables({ ep4, year, month }: {
                     <Td>{isFirstLegOfRot ? String(ep4.Prime)          : ''}</Td>
                     <Td>{leg.dead_head ? '1' : ''}</Td>
                     <Td>{isFirstLegOfRot ? String(ep4.IR)             : ''}</Td>
+                    <Td>{isFirstLegOfRot ? fmt(ep4.IR_eur)            : ''}</Td>
                     <Td>{isFirstLegOfRot ? String(ep4.MF)             : ''}</Td>
+                    <Td>{isFirstLegOfRot ? fmt(ep4.MF_eur)            : ''}</Td>
                     <Td>{isFirstLegOfRot ? fmt(ep4.tempsSej)          : ''}</Td>
                     <Td>{isFirstLegOfRot ? (ep4.zone ?? '')           : ''}</Td>
                     <Td>{isFirstLegOfRot && ep4.tauxApp != null ? fmt(ep4.tauxApp) : ''}</Td>

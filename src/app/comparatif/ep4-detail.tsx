@@ -26,7 +26,7 @@ export function Ep4Detail({
       .then(res => {
         if (cancelled) return;
         if ('error' in res) { setError(res.error); return; }
-        setEp4(buildEp4Rotation(res.raw_detail, rotationCode, zone, year, month, res.taux));
+        setEp4(buildEp4Rotation(res.raw_detail, rotationCode, zone, year, month, res.taux, res.irRates));
       })
       .catch(e => { if (!cancelled) setError(String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });

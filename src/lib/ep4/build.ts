@@ -7,6 +7,7 @@
 // Mapping validé le 2026-05-07, voir project_lot5_ep4_plan.md mémoire.
 
 import type { PairingDetail } from '@/lib/scraper/types';
+import type { IrMfRate } from '@/lib/ir-rates';
 import type { Ep4Leg, Ep4Service, Ep4Rotation, TauxAppRow } from './types';
 import { tsvNuitJ, tsvNuitJ1 } from './night';
 import { computeIRandMF } from './ir';
@@ -177,6 +178,7 @@ export function buildEp4Rotation(
   year: number,
   month: number,
   taux: TauxAppRow[],
+  irRates: IrMfRate[] = [],
 ): Ep4Rotation {
   const rawServices = extractServices(detail);
   const pv0 = detail.pairingValue?.[0];
@@ -286,9 +288,12 @@ export function buildEp4Rotation(
 
   const ONm = computeOnM(debut_vol_ms, fin_vol_ms, ON, year, month);
 
-  const irMf = computeIRandMF(detail);
+  const irMf = computeIRandMF(detail, irRates);
   const IR = irMf.ir;
   const MF = irMf.mf;
+  const IR_eur = irMf.ir_eur;
+  const MF_eur = irMf.mf_eur;
+  const IR_missingRateEscales = irMf.missingRateEscales;
 
   const Prime = computePrime(rawServices);
 
@@ -305,7 +310,7 @@ export function buildEp4Rotation(
     HDV, HC, ON, TDV_total,
     TA: r2(TA), HCA,
     H2HC, H2HCr, H2HC_initial, H2HCr_initial,
-    rtHDV, ONm, Prime, IR, MF, tempsSej, tauxApp,
+    rtHDV, ONm, Prime, IR, MF, IR_eur, MF_eur, IR_missingRateEscales, tempsSej, tauxApp,
     tsv_n_rot_m,
     debut_vol_ms, fin_vol_ms,
     utc_arr_first_service,
