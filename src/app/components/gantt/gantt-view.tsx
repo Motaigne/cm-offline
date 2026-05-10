@@ -446,6 +446,11 @@ export function GanttView({
   const [resetTarget,   setResetTarget]   = useState<'A' | 'B' | 'C' | 'tout' | null>(null);
   const [resetting,     setResetting]     = useState(false);
 
+  // Token de navigation : invalide les fetches en vol quand on navigue vers un autre mois
+  const navTokenRef = useRef(0);
+  // Mois en cours de pré-cache (dédup pour éviter 4-6 calls Supabase concurrents)
+  const preCacheInFlightRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     void getCurrentUserIsAdmin().then(setIsAdmin).catch(() => setIsAdmin(false));
   }, []);
@@ -569,37 +574,54 @@ export function GanttView({
   // ── Navigation mois (client-side, pas de router.push) ───────────────────────
 
   async function preCacheMonthBg(m: string) {
+    if (preCacheInFlightRef.current.has(m)) return;
+    preCacheInFlightRef.current.add(m);
     try {
       const [scs, rots] = await Promise.all([getScenariosWithItems(m), getRotationsForMonth(m)]);
       await hydrateDB(scs, m);
       await cacheRotations(rots, m);
     } catch { /* ignore — arrière-plan */ }
+    finally {
+      preCacheInFlightRef.current.delete(m);
+    }
   }
 
   async function changeMonth(newMonth: string) {
+    const myToken = ++navTokenRef.current;
     setNoCache(false);
     setCurrentMonth(newMonth);
     localStorage.setItem('cm-selected-month', newMonth);
     window.history.replaceState(null, '', `/?m=${newMonth}`);
-    setMonthLoading(true);
+
+    // 1. Cache-first : affichage immédiat depuis IndexedDB si dispo
+    const cached = await loadScenariosForMonth(newMonth);
+    if (myToken !== navTokenRef.current) return;
+    if (cached) {
+      setLocalScenarios(cached);
+      setMonthLoading(false);
+    } else {
+      setMonthLoading(true);
+    }
+
+    // 2. Refresh réseau (background si on avait du cache, bloquant sinon)
+    if (!navigator.onLine) {
+      if (!cached) { setNoCache(true); setLocalScenarios([]); }
+      setMonthLoading(false);
+      return;
+    }
+
     try {
-      if (navigator.onLine) {
-        const scs = await getScenariosWithItems(newMonth);
-        setLocalScenarios(scs);
-        await hydrateDB(scs, newMonth);
-        // Pré-cache silencieux des mois adjacents
-        void preCacheMonthBg(shiftMonth(newMonth, 1));
-        void preCacheMonthBg(shiftMonth(newMonth, -1));
-      } else {
-        const cached = await loadScenariosForMonth(newMonth);
-        if (cached) { setLocalScenarios(cached); }
-        else         { setNoCache(true); setLocalScenarios([]); }
-      }
+      const scs = await getScenariosWithItems(newMonth);
+      if (myToken !== navTokenRef.current) return;
+      setLocalScenarios(scs);
+      await hydrateDB(scs, newMonth);
+      setMonthLoading(false);
+      // Pré-cache silencieux des mois adjacents
+      void preCacheMonthBg(shiftMonth(newMonth, 1));
+      void preCacheMonthBg(shiftMonth(newMonth, -1));
     } catch {
-      const cached = await loadScenariosForMonth(newMonth);
-      if (cached) { setLocalScenarios(cached); }
-      else         { setNoCache(true); setLocalScenarios([]); }
-    } finally {
+      if (myToken !== navTokenRef.current) return;
+      if (!cached) { setNoCache(true); setLocalScenarios([]); }
       setMonthLoading(false);
     }
   }
