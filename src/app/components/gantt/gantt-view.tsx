@@ -20,6 +20,8 @@ import type { Database } from '@/types/supabase';
 import { SearchPanel } from './search-panel';
 import { ScrapeDialog } from './scrape-dialog';
 import { rotationValue, monthlyFinancialsP, PRIME_BITRONCON, PVEI, KSP, FIXE_MENSUEL, NB_30E, REGIME_NB30E } from '@/lib/finance';
+import { computeArticle81 } from '@/lib/article81';
+import type { Article81Data } from '@/lib/article81';
 import { createClient } from '@/lib/supabase/client';
 import { useOnlineStatus } from '@/hooks/use-online';
 import { db, hydrateDB, loadFromDB, hasPendingOps, loadScenariosForMonth, cacheRotations } from '@/lib/local-db';
@@ -141,10 +143,12 @@ function computeStats(
   cngHs = 0,
   regime: RegimeEnum = 'TAF7_10_12',
   monthlyFixedPrimes = 0,
+  article81Data: Article81Data | null = null,
+  valeurJour = 600,
 ) {
   let onDays = 0, congeDays = 0;
   const flights = items.filter(i => i.kind === 'flight').length;
-  let totalHcr = 0, totalPrime = 0, totalTsvNuit = 0;
+  let totalHcr = 0, totalPrime = 0, totalTsvNuit = 0, totalA81 = 0;
   for (const item of items) {
     const clip = clipItem(item, year, mo);
     if (clip) {
@@ -166,6 +170,17 @@ function computeStats(
     totalHcr     += hcr;
     totalPrime   += typeof m.prime === 'number' ? (m.prime as number) : 0;
     totalTsvNuit += tsvNuit;
+
+    // Article 81 : prorata mois pour les vols à cheval
+    const tempsSej = typeof m.temps_sej === 'number' ? m.temps_sej as number : null;
+    const zone     = typeof m.zone      === 'string' ? m.zone      as string : null;
+    if (tempsSej != null && zone) {
+      const a81 = computeArticle81({ tSej: tempsSej, zone, valeurJour, data: article81Data });
+      const montant = (departAt && arriveeAt)
+        ? prorateForMonth(a81.montantPrimeSej, departAt, arriveeAt, year, mo)
+        : a81.montantPrimeSej;
+      totalA81 += montant;
+    }
   }
   // HS seuil proratisé : 75 × (nb30e_regime - congeDays) / 30
   const nb30eRegime = REGIME_NB30E[regime] ?? NB_30E;
@@ -182,7 +197,7 @@ function computeStats(
   };
   const congeAmount = congeDays * (cngPv + cngHs);
   const brut = fin.total + congeAmount;
-  return { flights, onDays, congeDays, totalHcr, totalPrime, totalTsvNuit, fin, congeAmount, brut };
+  return { flights, onDays, congeDays, totalHcr, totalPrime, totalTsvNuit, fin, congeAmount, brut, totalA81 };
 }
 
 // ─── FinRow ──────────────────────────────────────────────────────────────────
@@ -400,6 +415,7 @@ interface SheetState {
 export function GanttView({
   month, scenarios, userName, userRegime, cngPv, cngHs,
   primeIncitationUnit = 0, primeA330 = 0, primeInstruction = 0,
+  article81Data = null, valeurJour = 600,
 }: {
   month: string;
   scenarios: Scenario[];
@@ -413,6 +429,10 @@ export function GanttView({
   primeA330?: number;
   /** Prime mensuelle d'instruction (TRI). */
   primeInstruction?: number;
+  /** Matrice Article 81 (taux de séjour par zone × durée). */
+  article81Data?: Article81Data | null;
+  /** Valeur jour (€) pour Article 81 — depuis profil. */
+  valeurJour?: number;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -1009,7 +1029,7 @@ export function GanttView({
                 primeIncitationUnit * incitCount
                 + (primeA330 + primeInstruction) * a330InstrBoost
                 + primeMai + primeNoel;
-              const stats = computeStats(scenario.items, year, mo, cngPv, cngHs, userRegime, monthlyFixedPrimes);
+              const stats = computeStats(scenario.items, year, mo, cngPv, cngHs, userRegime, monthlyFixedPrimes, article81Data, valeurJour);
               const isLast = idx === localScenarios.length - 1;
               return (
                 <div key={scenario.name}
@@ -1054,6 +1074,12 @@ export function GanttView({
                           <FinRow label="+cg" value={stats.congeAmount} cls="text-pink-500" />
                           <div className="border-t border-dashed border-zinc-300 dark:border-zinc-600 my-0.5" />
                           <FinRow label="BRUT" value={stats.brut} cls="text-emerald-600 dark:text-emerald-400" bold />
+                        </>
+                      )}
+                      {stats.totalA81 > 0 && (
+                        <>
+                          <div className="border-t border-dashed border-emerald-300 dark:border-emerald-700/40 my-0.5" />
+                          <FinRow label="A81" value={stats.totalA81} cls="text-emerald-600 dark:text-emerald-400" bold />
                         </>
                       )}
                     </div>

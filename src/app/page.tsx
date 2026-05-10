@@ -5,6 +5,7 @@ import { loadAnnexe } from '@/app/actions/annexe';
 import { GanttView } from '@/app/components/gantt/gantt-view';
 import { computeFullProfile, type AnnexeData } from '@/lib/annexe';
 import { REGIME_NB30E } from '@/lib/finance';
+import type { Article81Data } from '@/lib/article81';
 import type { ActivityKind, BidCategory } from '@/lib/activity-meta';
 import type { ScenarioName } from '@/app/actions/planning';
 
@@ -46,10 +47,13 @@ export default async function Home({
     .single();
   if (!profile) redirect('/profil');
 
-  const [scenarios, annexe] = await Promise.all([
+  const [scenarios, annexe, { data: a81Row }] = await Promise.all([
     getScenariosWithItems(month),
     loadAnnexe(),
+    supabase.from('annexe_table').select('data').eq('slug', 'article_81').single(),
   ]);
+  const article81Data: Article81Data | null = (a81Row?.data as Article81Data | null) ?? null;
+  const valeurJour = Number(profile.valeur_jour ?? 600);
 
   // Calcul des primes mensuelles fixes (incitation + A330 + instruction).
   // - primeIncitationUnit : montant pour 1 prime (le calendrier multiplie par
@@ -104,6 +108,8 @@ export default async function Home({
       primeIncitationUnit={primes.primeIncitationUnit}
       primeA330={primes.primeA330}
       primeInstruction={primes.primeInstruction}
+      article81Data={article81Data}
+      valeurJour={valeurJour}
     />
   );
 }
