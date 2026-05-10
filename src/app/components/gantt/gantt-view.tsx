@@ -78,6 +78,13 @@ function isTafAvailable(regime: RegimeEnum, month: string): boolean {
   return false;
 }
 
+// TAF*_10_12 : en juillet/août le pilote est off, mais A330 et Instruction
+// passent à 100% (× 30/nb30e) au lieu de la proration mensuelle habituelle.
+function isFullPrimeMonth(regime: RegimeEnum, mo: number): boolean {
+  if (regime === 'TAF7_10_12' || regime === 'TAF10_10_12') return mo === 7 || mo === 8;
+  return false;
+}
+
 // ─── overlap detection ───────────────────────────────────────────────────────
 
 function hasOverlap(
@@ -134,7 +141,6 @@ function computeStats(
   cngHs = 0,
   regime: RegimeEnum = 'TAF7_10_12',
   monthlyFixedPrimes = 0,
-  incitActive = false,
 ) {
   let onDays = 0, congeDays = 0;
   const flights = items.filter(i => i.kind === 'flight').length;
@@ -165,10 +171,10 @@ function computeStats(
   const nb30eRegime = REGIME_NB30E[regime] ?? NB_30E;
   const nb30eEff    = Math.max(0, nb30eRegime - congeDays);
   const finBase = monthlyFinancialsP(totalHcr, totalPrime, totalTsvNuit, { pvei: PVEI, ksp: KSP, fixe: FIXE_MENSUEL, nb30e: nb30eEff });
-  // primes affichées : si incitActive, on additionne bi-tronçon (par vol) +
-  // primes mensuelles fixes. Sinon la colonne +P est masquée et le total
-  // ne contient aucune prime.
-  const primesTotal = incitActive ? finBase.primes + monthlyFixedPrimes : 0;
+  // PRIME = bi-tronçon (sommée par vol via finBase.primes) + primes mensuelles
+  // fixes (incit + A330 + instruction + Mai + Noël). monthlyFixedPrimes est calculé
+  // en amont avec proration régime + boost 100% en juillet/août pour TAF*_10_12.
+  const primesTotal = finBase.primes + monthlyFixedPrimes;
   const fin = {
     ...finBase,
     primes: primesTotal,
@@ -986,8 +992,18 @@ export function GanttView({
           {/* Planning rows */}
           <div className="flex-1 flex flex-col overflow-hidden">
             {localScenarios.map((scenario, idx) => {
-              const monthlyFixedPrimes = primeIncitationUnit * incitCount + primeA330 + primeInstruction;
-              const stats = computeStats(scenario.items, year, mo, cngPv, cngHs, userRegime, monthlyFixedPrimes, incitCount >= 1);
+              // Mai et Noël : placeholders à 0 — port Python à venir (instructions.md AUTRE MODIFICATION).
+              const primeMai = 0;
+              const primeNoel = 0;
+              // En juillet/août pour TAF*_10_12, A330 + Instruction passent à 100%
+              // (× 30/nb30e pour annuler la proration appliquée en amont).
+              const nb30eRegime = REGIME_NB30E[userRegime] ?? NB_30E;
+              const a330InstrBoost = isFullPrimeMonth(userRegime, mo) && nb30eRegime > 0 ? 30 / nb30eRegime : 1;
+              const monthlyFixedPrimes =
+                primeIncitationUnit * incitCount
+                + (primeA330 + primeInstruction) * a330InstrBoost
+                + primeMai + primeNoel;
+              const stats = computeStats(scenario.items, year, mo, cngPv, cngHs, userRegime, monthlyFixedPrimes);
               const isLast = idx === localScenarios.length - 1;
               return (
                 <div key={scenario.name}

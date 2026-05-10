@@ -81,11 +81,13 @@ export function computeFullProfile(
   const mgaTP = fixeTP + 85 * pvei;
   const hsSeuil = 75 * (nb30e / 30);
 
+  // Prime instruction : proratisée par nb30e/30 comme A330 (CCT pilote).
   let primeInstruction = 0;
   if (primeInstFonction && primeInstAnnee) {
-    primeInstruction = a.prime_instruction.find(
+    const montant = a.prime_instruction.find(
       r => r.fonction === primeInstFonction && r.annee === primeInstAnnee
     )?.montant ?? 0;
+    primeInstruction = montant * (nb30e / 30);
   }
 
   // Prime A330 — formule : valeur_pvei × PVEI × (nb30e/30) (proratisée selon le régime).
