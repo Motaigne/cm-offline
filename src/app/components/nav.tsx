@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { getAvailableMonths, getRotationsForMonth } from '@/app/actions/search';
 import { getScenariosWithItems } from '@/app/actions/planning';
@@ -100,12 +100,19 @@ export function NavBar() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [forceOffline, setForceOffline] = useForceOffline();
   const [syncStatus, setSyncStatus] = useState<'' | 'sync' | 'ok' | 'err'>('');
+  const [, startToggleTransition] = useTransition();
 
   async function handleToggleOffline() {
     const next = !forceOffline;
-    setForceOffline(next);
+    // useTransition : marque la mise à jour comme "non-urgente" → React peut
+    // interrompre/différer le re-render des consumers de useOnlineStatus
+    // (gantt-view notamment), ce qui réduit la latence perçue au clic.
+    startToggleTransition(() => {
+      setForceOffline(next);
+    });
     if (!next) {
-      // On vient de repasser ON : sync et refresh
+      // On vient de repasser ON : sync et refresh (pas dans la transition,
+      // c'est un effet de bord async qu'on veut visible)
       try {
         if (await pendingOpsCount() > 0) {
           setSyncStatus('sync');
