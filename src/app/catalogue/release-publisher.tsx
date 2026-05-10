@@ -11,19 +11,21 @@ interface Release {
 }
 
 export function ReleasePublisher({ month, isAdmin }: { month: string; isAdmin: boolean }) {
-  const [releases, setReleases] = useState<Release[]>([]);
-  const [showForm, setShowForm] = useState(false);
-  const [notes, setNotes]       = useState('');
-  const [busy, setBusy]         = useState(false);
-  const [msg, setMsg]           = useState('');
+  const [releases, setReleases]       = useState<Release[]>([]);
+  const [lastScrapeAt, setLastScrape] = useState<string | null>(null);
+  const [showForm, setShowForm]       = useState(false);
+  const [notes, setNotes]             = useState('');
+  const [busy, setBusy]               = useState(false);
+  const [msg, setMsg]                 = useState('');
 
   const refresh = useCallback(async () => {
     if (!isAdmin) return;
     try {
       const res = await fetch(`/api/admin/release?month=${month}`);
       if (!res.ok) return;
-      const j = await res.json() as { releases: Release[] };
+      const j = await res.json() as { releases: Release[]; lastScrapeAt: string | null };
       setReleases(j.releases);
+      setLastScrape(j.lastScrapeAt);
     } catch { /* ignore */ }
   }, [month, isAdmin]);
 
@@ -33,6 +35,8 @@ export function ReleasePublisher({ month, isAdmin }: { month: string; isAdmin: b
 
   const latest = releases[0];
   const nextVersion = (latest?.version ?? 0) + 1;
+  const hasNew = !latest
+    || (!!lastScrapeAt && new Date(lastScrapeAt) > new Date(latest.released_at));
 
   async function handlePublish() {
     if (busy) return;
@@ -64,9 +68,14 @@ export function ReleasePublisher({ month, isAdmin }: { month: string; isAdmin: b
   return (
     <div className="flex items-center gap-2">
       <button
-        onClick={() => setShowForm(s => !s)}
-        className="text-xs px-2.5 py-1 rounded border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/60 transition-colors font-medium"
-        title={latest ? `Dernière release : v${latest.version}` : 'Aucune release publiée'}
+        onClick={() => hasNew && setShowForm(s => !s)}
+        disabled={!hasNew}
+        className="text-xs px-2.5 py-1 rounded border transition-colors font-medium disabled:cursor-not-allowed border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 hover:enabled:bg-violet-100 dark:hover:enabled:bg-violet-900/60 disabled:opacity-40"
+        title={
+          !hasNew
+            ? `DB inchangée depuis la v${latest?.version ?? 0} (${latest ? new Date(latest.released_at).toLocaleDateString('fr-FR') : '—'})`
+            : latest ? `Dernière release : v${latest.version}` : 'Aucune release publiée'
+        }
       >
         Publier v{nextVersion}
       </button>

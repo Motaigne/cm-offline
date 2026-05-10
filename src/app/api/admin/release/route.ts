@@ -174,5 +174,14 @@ export async function GET(req: Request) {
 
   if (error) return new Response(error.message, { status: 500 });
 
-  return Response.json({ releases: data ?? [] });
+  const { data: snap } = await supabase
+    .from('scrape_snapshot')
+    .select('started_at')
+    .eq('target_month', `${month}-01`)
+    .eq('status', 'success')
+    .order('started_at', { ascending: false })
+    .limit(1)
+    .single();
+
+  return Response.json({ releases: data ?? [], lastScrapeAt: snap?.started_at ?? null });
 }
