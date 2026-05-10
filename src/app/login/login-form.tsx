@@ -9,7 +9,7 @@ type Message = { type: 'success' | 'error'; text: string };
 export function LoginForm({ urlError }: { urlError?: string }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [mode, setMode] = useState<Mode>('magic');
+  const [mode, setMode] = useState<Mode>('password');
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<Message | null>(
     urlError ? { type: 'error', text: 'Lien de connexion invalide ou expiré.' } : null
@@ -116,7 +116,7 @@ export function LoginForm({ urlError }: { urlError?: string }) {
               onClick={() => { setMode('magic'); setMessage(null); }}
               className="rounded-md border border-zinc-300 px-4 py-2 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
             >
-              Lien magique
+              Nouveau compte
             </button>
           </>
         )}
