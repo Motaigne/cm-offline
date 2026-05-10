@@ -170,7 +170,16 @@ export function ProfilForm({
       <Section label="Fonction">
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {FONCTIONS.map(({ value, label }) => (
-            <button key={value} type="button" onClick={() => setFonction(value)} className={pill(fonction === value)}>
+            <button key={value} type="button"
+              onClick={() => {
+                setFonction(value);
+                // Auto-sélection du niveau 1 quand on bascule sur TRI : sinon
+                // primeInstruction reste à 0 et la prime n'apparaît pas.
+                if ((value === 'TRI_OPL' || value === 'TRI_CDB') && triNiveau === '') {
+                  setTriNiveau('1');
+                }
+              }}
+              className={pill(fonction === value)}>
               {label}
             </button>
           ))}
