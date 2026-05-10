@@ -1,11 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { getAvailableMonths, getRotationsForMonth } from '@/app/actions/search';
 import { getScenariosWithItems } from '@/app/actions/planning';
 import { getCurrentUserIsAdmin } from '@/app/actions/auth';
 import { cacheRotations, hydrateDB } from '@/lib/local-db';
+import { syncNow, pendingOpsCount } from '@/lib/sync-service';
+import { useForceOffline } from '@/hooks/use-online';
 import { ReleaseBanner } from '@/app/components/release-banner';
 
 const TABS = [
@@ -90,11 +92,34 @@ async function clearAllCaches(): Promise<void> {
 
 export function NavBar() {
   const path = usePathname();
+  const router = useRouter();
   const [downloading, setDownloading] = useState(false);
   const [dlStatus, setDlStatus] = useState('');
   const [dlDone, setDlDone] = useState(false);
   const [swReady, setSwReady] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [forceOffline, setForceOffline] = useForceOffline();
+  const [syncStatus, setSyncStatus] = useState<'' | 'sync' | 'ok' | 'err'>('');
+
+  async function handleToggleOffline() {
+    const next = !forceOffline;
+    setForceOffline(next);
+    if (!next) {
+      // On vient de repasser ON : sync et refresh
+      try {
+        if (await pendingOpsCount() > 0) {
+          setSyncStatus('sync');
+          await syncNow();
+          setSyncStatus('ok');
+          setTimeout(() => setSyncStatus(''), 2500);
+        }
+        router.refresh();
+      } catch {
+        setSyncStatus('err');
+        setTimeout(() => setSyncStatus(''), 3000);
+      }
+    }
+  }
 
   useEffect(() => {
     const last = localStorage.getItem(DL_KEY);
@@ -226,6 +251,23 @@ export function NavBar() {
           </a>
         )}
         <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
+          <button
+            onClick={handleToggleOffline}
+            title={forceOffline
+              ? 'Mode hors-ligne forcé — cliquer pour revenir en ligne (resync auto)'
+              : 'En ligne — cliquer pour forcer hors-ligne (utile sur wifi qui filtre)'}
+            className={[
+              'px-3 h-8 flex items-center gap-1.5 text-sm font-medium rounded transition-colors whitespace-nowrap',
+              forceOffline
+                ? 'bg-amber-600 hover:bg-amber-500 text-white'
+                : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800',
+            ].join(' ')}
+          >
+            <span>{forceOffline ? '✈ OFF' : 'ON'}</span>
+            {syncStatus === 'sync' && <span className="text-[10px] animate-pulse">sync…</span>}
+            {syncStatus === 'ok'   && <span className="text-[10px] text-emerald-300">✓</span>}
+            {syncStatus === 'err'  && <span className="text-[10px] text-red-300">!</span>}
+          </button>
           <span title={swReady ? 'Service worker actif' : 'Service worker en attente'} className={`text-xs ${swReady ? 'text-emerald-500' : 'text-amber-500'}`}>
             {swReady ? '●' : '○'}
           </span>

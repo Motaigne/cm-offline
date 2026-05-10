@@ -2,22 +2,57 @@
 
 import { useState, useEffect } from 'react';
 
+const STORAGE_KEY = 'cm-force-offline';
+const EVENT_NAME  = 'cm-force-offline-change';
+
+function readForceOffline(): boolean {
+  if (typeof window === 'undefined') return false;
+  return localStorage.getItem(STORAGE_KEY) === '1';
+}
+
+/** Online "effectif" : navigator.onLine ET pas de force-offline manuel.
+ *  Toujours initialiser à `true` pour aligner SSR + premier rendu client. */
 export function useOnlineStatus(): boolean {
-  // Toujours initialiser à `true` pour que le rendu SSR et le premier rendu client
-  // soient identiques (évite l'hydration mismatch). On lit l'état réel après mount.
   const [online, setOnline] = useState<boolean>(true);
 
   useEffect(() => {
-    setOnline(navigator.onLine);
-    const up = () => setOnline(true);
-    const dn = () => setOnline(false);
-    window.addEventListener('online', up);
-    window.addEventListener('offline', dn);
+    function update() {
+      setOnline(navigator.onLine && !readForceOffline());
+    }
+    update();
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
+    window.addEventListener(EVENT_NAME, update);
     return () => {
-      window.removeEventListener('online', up);
-      window.removeEventListener('offline', dn);
+      window.removeEventListener('online', update);
+      window.removeEventListener('offline', update);
+      window.removeEventListener(EVENT_NAME, update);
     };
   }, []);
 
   return online;
+}
+
+/** Permet à l'UI (NavBar) de forcer le mode offline manuellement.
+ *  Persisté dans localStorage. La modification émet un événement custom pour
+ *  que useOnlineStatus se mette à jour partout. */
+export function useForceOffline(): [boolean, (v: boolean) => void] {
+  const [forceOffline, setForceOfflineState] = useState<boolean>(false);
+
+  useEffect(() => {
+    setForceOfflineState(readForceOffline());
+    function update() {
+      setForceOfflineState(readForceOffline());
+    }
+    window.addEventListener(EVENT_NAME, update);
+    return () => window.removeEventListener(EVENT_NAME, update);
+  }, []);
+
+  function setForceOffline(v: boolean) {
+    if (v) localStorage.setItem(STORAGE_KEY, '1');
+    else   localStorage.removeItem(STORAGE_KEY);
+    window.dispatchEvent(new Event(EVENT_NAME));
+  }
+
+  return [forceOffline, setForceOffline];
 }
