@@ -92,6 +92,7 @@ function RotationCard({
       rest_before_h: sig.rest_before_h,
       rest_after_h:  sig.rest_after_h,
       tsv_nuit:      sig.tsv_nuit,
+      temps_sej:     sig.temps_sej,
       depart_at:     inst.depart_at,
       arrivee_at:    inst.arrivee_at,
     };

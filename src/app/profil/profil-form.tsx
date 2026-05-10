@@ -75,6 +75,7 @@ export function ProfilForm({
   const [cngHs,     setCngHs]     = useState(String(initialData?.cng_hs       ?? 0));
   const [triNiveau,   setTriNiveau]   = useState<string>(initialData?.tri_niveau != null ? String(initialData.tri_niveau) : '');
   const [prime330Count, setPrime330Count] = useState<number | null>(initialData?.prime_330_count ?? null);
+  const [valeurJour,  setValeurJour]  = useState(String(initialData?.valeur_jour ?? 600));
 
   const isTri    = fonction === 'TRI_OPL' || fonction === 'TRI_CDB';
   const prime330 = prime330Count != null;
@@ -142,6 +143,7 @@ export function ProfilForm({
       cng_hs:             parseFloat(cngHs) || 0,
       tri_niveau:         isTri && triNiveau !== '' ? parseInt(triNiveau) : null,
       prime_330_count:    prime330Count,
+      valeur_jour:        parseFloat(valeurJour) || 600,
     };
     start(async () => {
       try {
@@ -298,6 +300,18 @@ export function ProfilForm({
               {t || '—'}
             </button>
           ))}
+        </div>
+      </Section>
+
+      {/* Article 81 — valeur jour */}
+      <Section label="Article 81 — Valeur jour">
+        <div className="flex items-center gap-3">
+          <input type="number" step="1" min={0} value={valeurJour}
+            onChange={e => setValeurJour(e.target.value)} placeholder="600"
+            className={`${input} w-28 text-center font-mono`} />
+          <span className="text-xs text-zinc-500">
+            € / jour — base de la prime de séjour défiscalisée (défaut 600).
+          </span>
         </div>
       </Section>
 

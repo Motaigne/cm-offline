@@ -21,6 +21,7 @@ export interface ProfileData {
   cng_hs:        number;
   tri_niveau:       number | null;
   prime_330_count:  number | null;
+  valeur_jour:      number;
 }
 
 export async function saveProfile(data: ProfileData) {

@@ -24,6 +24,7 @@ export type Database = {
           is_admin: boolean;
           tri_niveau: number | null;
           prime_330_count: number | null;
+          valeur_jour: number;
           classe: number | null;
           categorie: string | null;
           echelon: number | null;
