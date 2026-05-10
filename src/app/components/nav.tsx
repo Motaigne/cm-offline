@@ -11,14 +11,15 @@ import { ReleaseBanner } from '@/app/components/release-banner';
 const TABS = [
   { label: 'Profil',      href: '/profil'     },
   { label: 'Calendrier',  href: '/'           },
+  { label: 'EP4',         href: '/ep4'        },
   { label: 'Catalogue',   href: '/catalogue'  },
   { label: 'Comparatif',  href: '/comparatif' },
   { label: 'Annexe',      href: '/annexe'     },
 ];
 
-const PAGES = ['/', '/catalogue', '/comparatif', '/annexe', '/profil', '/login'];
+const PAGES = ['/', '/ep4', '/catalogue', '/comparatif', '/annexe', '/profil', '/login'];
 // Pages qui acceptent ?m=YYYY-MM — à précacher en variantes par mois
-const PAGES_MONTH = ['/', '/catalogue', '/comparatif'];
+const PAGES_MONTH = ['/', '/ep4', '/catalogue', '/comparatif'];
 const DL_KEY = 'cm-last-download';
 
 async function waitForSWController(): Promise<boolean> {
