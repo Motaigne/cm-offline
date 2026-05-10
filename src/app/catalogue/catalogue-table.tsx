@@ -5,6 +5,8 @@ import { PVEI, KSP } from '@/lib/finance';
 import { getRotationsForMonth } from '@/app/actions/search';
 import { cacheRotations, loadRotationsFromDB, getCachedMonths } from '@/lib/local-db';
 import { ReleasePublisher } from './release-publisher';
+import { computeArticle81 } from '@/lib/article81';
+import type { Article81Data } from '@/lib/article81';
 
 type Sig = {
   id: string;
@@ -23,9 +25,10 @@ type Sig = {
   a81: boolean | null;
   heure_debut: string | null;
   heure_fin: string | null;
+  temps_sej: number | null;
 };
 
-type SortKey = 'rotation_code' | 'zone' | 'aircraft_code' | 'nb_on_days' | 'hc' | 'hcr_crew' | 'pv_h' | 'prime' | 'total_eur' | 'heure_debut' | 'heure_fin';
+type SortKey = 'rotation_code' | 'zone' | 'aircraft_code' | 'nb_on_days' | 'hc' | 'hcr_crew' | 'pv_h' | 'prime' | 'total_eur' | 'heure_debut' | 'heure_fin' | 'a81_brut' | 'a81_jour';
 type SortDir = 'asc' | 'desc';
 
 const MONTH_FR = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
@@ -42,6 +45,7 @@ function rotToSig(s: Awaited<ReturnType<typeof getRotationsForMonth>>[0]): Sig {
     first_layover: s.first_layover, layovers: s.layovers,
     rest_before_h: s.rest_before_h, rest_after_h: s.rest_after_h, a81: s.a81,
     heure_debut: s.heure_debut, heure_fin: s.heure_fin,
+    temps_sej: s.temps_sej ?? null,
   };
 }
 
@@ -52,11 +56,14 @@ function fmtTime(t: string | null): string {
 
 export function CatalogueTable({
   signatures: initialSigs, months: initialMonths, currentMonth: initialMonth, isAdmin,
+  article81Data, valeurJour,
 }: {
   signatures: Sig[];
   months: string[];
   currentMonth: string;
   isAdmin: boolean;
+  article81Data: Article81Data | null;
+  valeurJour: number;
 }) {
   const [sigs, setSigs]             = useState<Sig[]>(initialSigs);
   const [months, setMonths]         = useState<string[]>(initialMonths);
@@ -112,7 +119,16 @@ export function CatalogueTable({
         const montantPv = pvH * PVEI * KSP;
         const primeBT  = prime * 2.5 * PVEI;
         const totalEur = montantPv + primeBT;
-        return { ...s, pv_h: pvH, total_eur: totalEur, montant_pv: montantPv, prime_bt: primeBT };
+        // Article 81 — montant prime séjour + montant/jour, lookup zone × tSej en annexe
+        const a81 = (s.temps_sej != null && s.zone)
+          ? computeArticle81({ tSej: Number(s.temps_sej), zone: s.zone, valeurJour, data: article81Data })
+          : null;
+        return {
+          ...s,
+          pv_h: pvH, total_eur: totalEur, montant_pv: montantPv, prime_bt: primeBT,
+          a81_brut: a81?.montantPrimeSej ?? 0,
+          a81_jour: a81?.montantPrimeSejJour ?? 0,
+        };
       })
       .filter(s => !q || [s.rotation_code, s.zone, s.aircraft_code, s.first_layover].some(v => v?.toLowerCase().includes(q)))
       .sort((a, b) => {
@@ -208,13 +224,15 @@ export function CatalogueTable({
               <Col k="pv_h">PV (h)</Col>
               <Col k="prime">Prime</Col>
               <Col k="total_eur">Total €</Col>
+              <Col k="a81_brut">A81 €</Col>
+              <Col k="a81_jour">A81 / j</Col>
               <th className="px-2 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Escale</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={13} className="px-4 py-8 text-center text-zinc-400 text-sm">
+                <td colSpan={15} className="px-4 py-8 text-center text-zinc-400 text-sm">
                   {months.length === 0 ? 'Aucun scraping disponible — importez d\'abord des rotations.' : 'Aucun résultat.'}
                 </td>
               </tr>
@@ -239,6 +257,12 @@ export function CatalogueTable({
                 </td>
                 <td className="px-2 py-1.5 font-mono font-bold text-zinc-900 dark:text-zinc-50 whitespace-nowrap">
                   {Math.round(s.total_eur)} €
+                </td>
+                <td className="px-2 py-1.5 font-mono text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                  {s.a81_brut > 0 ? `${Math.round(s.a81_brut)} €` : '—'}
+                </td>
+                <td className="px-2 py-1.5 font-mono text-emerald-700/70 dark:text-emerald-300/70 whitespace-nowrap">
+                  {s.a81_jour > 0 ? `${Math.round(s.a81_jour)} €` : '—'}
                 </td>
                 <td className="px-2 py-1.5 text-zinc-500 text-xs">{s.first_layover ?? '—'}</td>
               </tr>

@@ -1,40 +1,37 @@
+// TSV nuit — formule officielle AF appliquée par service (et non par leg).
+// Source : 6_codeRot_v7.py:49-59 (déjà portée dans src/lib/ep4/night.ts).
+// Le TSV démarre 1h avant le block départ et finit 30 min après le block
+// arrivée (= 1.5h padding total), couvert par les +1.5 dans les formules.
+
 import type { PairingDetail } from './types';
+import { tsvNuitJ, tsvNuitJ1 } from '@/lib/ep4/night';
 
-// TSV nuit : portion de chaque tronçon entre 18h00 et 06h00
-// heure locale de l'escale de départ (source : feuille EP4 Google Sheet)
-function legNightHours(depMs: number, arrMs: number, tzStr: string): number {
-  const tz      = parseFloat(tzStr);
-  const HOUR_MS = 3_600_000;
-  const DAY_MS  = 86_400_000;
-  const localDep = depMs + tz * HOUR_MS;
-  const localArr = arrMs + tz * HOUR_MS;
-  const dayStart = Math.floor(localDep / DAY_MS) * DAY_MS;
+const HOUR_MS = 3_600_000;
 
-  let total = 0;
-  for (let d = dayStart; d <= localArr; d += DAY_MS) {
-    const nightStart = d + 18 * HOUR_MS;
-    const nightEnd   = d + 30 * HOUR_MS; // 06h00 lendemain
-    const from = Math.max(localDep, nightStart);
-    const to   = Math.min(localArr, nightEnd);
-    if (to > from) total += (to - from) / HOUR_MS;
-  }
-  return total;
+function decimalUtcHour(ms: number): number {
+  const d = new Date(ms);
+  return d.getUTCHours() + d.getUTCMinutes() / 60;
+}
+
+function adjustHour(h: number): number {
+  return ((h % 24) + 24) % 24;
 }
 
 export function computeTsvNuit(detail: PairingDetail): number {
   let total = 0;
-  for (const duty of detail.flightDuty) {
-    for (const dla of duty.dutyLegAssociation) {
-      for (const leg of dla.legs) {
-        if (leg.scheduledDepartureDate && leg.scheduledArrivalDate && leg.schDepStationCodeTz) {
-          total += legNightHours(
-            leg.scheduledDepartureDate,
-            leg.scheduledArrivalDate,
-            leg.schDepStationCodeTz,
-          );
-        }
-      }
-    }
+  for (const duty of detail.flightDuty ?? []) {
+    const legs = (duty.dutyLegAssociation ?? []).flatMap(d => d.legs ?? []);
+    if (legs.length === 0) continue;
+    legs.sort((a, b) => a.scheduledDepartureDate - b.scheduledDepartureDate);
+
+    const firstLeg = legs[0];
+    const lastLeg  = legs[legs.length - 1];
+
+    const utcOffset = parseFloat(firstLeg.schDepStationCodeTz) || 0;
+    const dep_loc   = adjustHour(decimalUtcHour(firstLeg.scheduledDepartureDate) + utcOffset);
+    const block     = (lastLeg.scheduledArrivalDate - firstLeg.scheduledDepartureDate) / HOUR_MS;
+
+    total += tsvNuitJ(dep_loc, block) + tsvNuitJ1(dep_loc, block);
   }
-  return total;
+  return Math.round(total * 100) / 100;
 }

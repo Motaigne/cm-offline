@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { NavBar } from '@/app/components/nav';
 import { Ep4Tables } from '@/app/components/ep4-tables';
 import { getEp4ForMonth, type Ep4MonthResponse } from '@/app/actions/ep4';
+import { useOnlineStatus } from '@/hooks/use-online';
 
 const MONTH_FR = ['Janvier','Février','Mars','Avril','Mai','Juin',
                   'Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
@@ -19,6 +20,7 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
   const [data, setData]       = useState<Ep4MonthResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
+  const isOnline = useOnlineStatus();
 
   // Restaure le dernier mois sélectionné dans le calendrier au premier mount
   useEffect(() => {
@@ -32,16 +34,30 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
     setLoading(true); setError(null); setData(null);
     window.history.replaceState(null, '', `/ep4?m=${month}`);
     localStorage.setItem('cm-selected-month', month);
+
+    // EP4 nécessite un fetch raw_detail server-side — pas de cache offline
+    // pour l'instant. On affiche un message plus clair que le TypeError brut.
+    if (!isOnline) {
+      setError('offline');
+      setLoading(false);
+      return;
+    }
+
     getEp4ForMonth(month)
       .then(res => {
         if (cancelled) return;
         if ('error' in res) { setError(res.error); return; }
         setData(res);
       })
-      .catch(e => { if (!cancelled) setError(String(e)); })
+      .catch(e => {
+        if (cancelled) return;
+        // Sur iPad PWA, "TypeError: Load failed" = network coupé pendant le fetch
+        if (e instanceof TypeError) setError('offline');
+        else setError(String(e));
+      })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [month]);
+  }, [month, isOnline]);
 
   const [y, mo] = month.split('-').map(Number);
 
@@ -64,11 +80,19 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
       </header>
 
       <main className="flex-1 p-4 space-y-6 max-w-[1400px] w-full mx-auto">
-        {error && (
+        {error === 'offline' ? (
+          <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-xl p-4 text-sm text-amber-700 dark:text-amber-400">
+            <p className="font-semibold">📵 EP4 indisponible hors ligne</p>
+            <p className="text-xs mt-1 opacity-80">
+              Cette page nécessite une connexion (calculs EP4 server-side via raw_detail).
+              Repasse en ligne ou attends d&apos;être connecté pour voir les feuilles d&apos;activité.
+            </p>
+          </div>
+        ) : error ? (
           <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-xl p-4 text-sm text-red-700 dark:text-red-400">
             Erreur EP4 : {error}
           </div>
-        )}
+        ) : null}
 
         {data && data.scenarios.every(s => s.flights.length === 0) && (
           <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-6 text-center text-sm text-zinc-400">

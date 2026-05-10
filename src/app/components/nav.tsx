@@ -257,16 +257,16 @@ export function NavBar() {
               ? 'Mode hors-ligne forcé — cliquer pour revenir en ligne (resync auto)'
               : 'En ligne — cliquer pour forcer hors-ligne (utile sur wifi qui filtre)'}
             className={[
-              'px-3 h-8 flex items-center gap-1.5 text-sm font-medium rounded transition-colors whitespace-nowrap',
+              'px-3 h-8 flex items-center gap-1.5 text-sm font-semibold rounded transition-colors whitespace-nowrap',
               forceOffline
                 ? 'bg-amber-600 hover:bg-amber-500 text-white'
-                : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800',
+                : 'bg-emerald-600 hover:bg-emerald-500 text-white',
             ].join(' ')}
           >
-            <span>{forceOffline ? '✈ OFF' : 'ON'}</span>
+            <span>{forceOffline ? 'OFF' : 'ON'}</span>
             {syncStatus === 'sync' && <span className="text-[10px] animate-pulse">sync…</span>}
-            {syncStatus === 'ok'   && <span className="text-[10px] text-emerald-300">✓</span>}
-            {syncStatus === 'err'  && <span className="text-[10px] text-red-300">!</span>}
+            {syncStatus === 'ok'   && <span className="text-[10px]">✓</span>}
+            {syncStatus === 'err'  && <span className="text-[10px]">!</span>}
           </button>
           <span title={swReady ? 'Service worker actif' : 'Service worker en attente'} className={`text-xs ${swReady ? 'text-emerald-500' : 'text-amber-500'}`}>
             {swReady ? '●' : '○'}

@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { NavBar } from '@/app/components/nav';
 import { CatalogueTable } from './catalogue-table';
+import type { Article81Data } from '@/lib/article81';
 
 export default async function CataloguePage({
   searchParams,
@@ -19,10 +20,16 @@ export default async function CataloguePage({
 
   const { data: profile } = await supabase
     .from('user_profile')
-    .select('is_admin')
+    .select('is_admin, valeur_jour')
     .eq('user_id', user.id)
     .single();
   const isAdmin = profile?.is_admin === true;
+  const valeurJour = Number(profile?.valeur_jour ?? 600);
+
+  const { data: a81Row } = await supabase
+    .from('annexe_table')
+    .select('data').eq('slug', 'article_81').single();
+  const article81Data: Article81Data | null = (a81Row?.data as Article81Data | null) ?? null;
 
   // Load available months from snapshots
   const { data: snapshots } = await supabase
@@ -40,7 +47,7 @@ export default async function CataloguePage({
   const { data: rawSigs } = snapshot
     ? await supabase
         .from('pairing_signature')
-        .select('id, rotation_code, zone, aircraft_code, hc, hcr_crew, tsv_nuit, prime, nb_on_days, first_layover, layovers, rest_before_h, rest_after_h, a81, heure_debut, heure_fin')
+        .select('id, rotation_code, zone, aircraft_code, hc, hcr_crew, tsv_nuit, prime, nb_on_days, first_layover, layovers, rest_before_h, rest_after_h, a81, heure_debut, heure_fin, temps_sej')
         .eq('snapshot_id', snapshot.id)
         .order('hcr_crew', { ascending: false })
     : { data: null };
@@ -76,6 +83,8 @@ export default async function CataloguePage({
           months={months}
           currentMonth={month}
           isAdmin={isAdmin}
+          article81Data={article81Data}
+          valeurJour={valeurJour}
         />
       </div>
     </div>
