@@ -57,7 +57,7 @@ export async function POST(req: Request) {
   }
 
   // Signatures existantes du snapshot
-  const sigs = await fetchAllPaginated<{ id: string; activity_number: string; rest_before_h: number | null; rest_after_h: number | null }>(
+  const sigs = await fetchAllPaginated<{ id: string; activity_number: string | null; rest_before_h: number | null; rest_after_h: number | null }>(
     (from, to) => supabase
       .from('pairing_signature')
       .select('id, activity_number, rest_before_h, rest_after_h')
@@ -68,6 +68,7 @@ export async function POST(req: Request) {
   let updated = 0, unchanged = 0, missing = 0;
 
   for (const sig of sigs) {
+    if (!sig.activity_number) { missing++; continue; }
     const rest = restMap.get(sig.activity_number);
     if (!rest) { missing++; continue; }
 
