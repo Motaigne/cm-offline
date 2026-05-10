@@ -3,6 +3,7 @@ import { fetchAllPaginated } from '@/lib/supabase/paginate';
 import { redirect } from 'next/navigation';
 import { NavBar } from '@/app/components/nav';
 import { ComparatifClient } from './comparatif-client';
+import type { Article81Data } from '@/lib/article81';
 
 export default async function ComparatifPage({
   searchParams,
@@ -17,6 +18,14 @@ export default async function ComparatifPage({
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
+
+  // Article 81 : matrice annexe + valeur_jour profil (en parallèle)
+  const [{ data: a81Row }, { data: profileRow }] = await Promise.all([
+    supabase.from('annexe_table').select('data').eq('slug', 'article_81').single(),
+    supabase.from('user_profile').select('valeur_jour').eq('user_id', user.id).single(),
+  ]);
+  const article81Data: Article81Data | null = (a81Row?.data as Article81Data | null) ?? null;
+  const valeurJour = Number(profileRow?.valeur_jour ?? 600);
 
   // Snapshots disponibles
   const { data: snapshots } = await supabase
@@ -101,6 +110,8 @@ export default async function ComparatifPage({
           signatures={dedupedSigs}
           months={months}
           currentMonth={month}
+          article81Data={article81Data}
+          valeurJour={valeurJour}
         />
       </div>
     </div>

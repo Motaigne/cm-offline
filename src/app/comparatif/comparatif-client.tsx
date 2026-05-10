@@ -6,6 +6,8 @@ import { getRotationsForMonth } from '@/app/actions/search';
 import { cacheRotations, loadRotationsFromDB, getCachedMonths } from '@/lib/local-db';
 import type { RotationSignature } from '@/app/actions/search';
 import { Ep4Detail } from './ep4-detail';
+import { computeArticle81 } from '@/lib/article81';
+import type { Article81Data } from '@/lib/article81';
 
 type SigInstance = {
   id: string;
@@ -96,10 +98,13 @@ function rotToSig(s: RotationSignature): Sig {
 
 export function ComparatifClient({
   signatures: initialSigs, months: initialMonths, currentMonth: initialMonth,
+  article81Data, valeurJour,
 }: {
   signatures: Sig[];
   months: string[];
   currentMonth: string;
+  article81Data: Article81Data | null;
+  valeurJour: number;
 }) {
   const [sigs, setSigs]           = useState<Sig[]>(initialSigs);
   const [months, setMonths]       = useState<string[]>(initialMonths);
@@ -168,6 +173,16 @@ export function ComparatifClient({
     const pvPrime   = montantPv + primeBT;
     return { tsvNuit, pvNuit, pvTotal, montantPv, primeBT, pvPrime };
   }, [sig]);
+
+  const a81 = useMemo(() => {
+    if (!sig?.temps_sej || !sig.zone) return null;
+    return computeArticle81({
+      tSej: Number(sig.temps_sej),
+      zone: sig.zone,
+      valeurJour,
+      data: article81Data,
+    });
+  }, [sig, valeurJour, article81Data]);
 
   return (
     <div className="max-w-4xl mx-auto p-4 space-y-4">
@@ -380,6 +395,30 @@ export function ComparatifClient({
             Calculs avec PVEI&nbsp;=&nbsp;{PVEI}&nbsp;€/h · KSP&nbsp;=&nbsp;{KSP} · Prime bi-tronçon&nbsp;=&nbsp;{(2.5 * PVEI).toFixed(2)}&nbsp;€
             <span className="ml-2 text-zinc-300 dark:text-zinc-500">(modifiables dans /profil)</span>
           </div>
+
+          {/* Article 81 — défiscalisation par rotation */}
+          {a81 && (
+            <div className="bg-white dark:bg-zinc-900 rounded-xl border border-emerald-200 dark:border-emerald-900/50 overflow-hidden">
+              <div className="px-4 py-2 bg-emerald-50 dark:bg-emerald-950/30 border-b border-emerald-100 dark:border-emerald-900/40 flex items-center justify-between">
+                <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 uppercase tracking-wide">
+                  Article 81 — Prime de séjour défiscalisée
+                </p>
+                <span className="text-[10px] text-emerald-600/70 dark:text-emerald-400/70">
+                  zone {a81.zone} · valeur jour {valeurJour}€
+                </span>
+              </div>
+              <table className="w-full text-sm">
+                <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                  <Row label="tSej"                  db={fmt(a81.tSej, 2) + ' h'}                                                  calc={fmt(a81.tSej, 2) + ' h'}                                                          formula="Temps entre 1er atterrissage et dernier décollage" />
+                  <Row label="tSej + 15 min"         db={fmt(a81.tSej + 15/60, 2) + ' h'}                                          calc={fmt(a81.tSej + 15/60, 2) + ' h'}                                                  formula="+15 min réglementaires (TSVP marge)" />
+                  <Row label="tSej24"                db={a81.tSej24 > 0 ? `${a81.tSej24.toFixed(1)} j` : '—'}                       calc={a81.tSej24 > 0 ? `${a81.tSej24.toFixed(1)} j` : '—'}                                formula="ceil((tSej + 15min) / 24, 0.5) — 0 si < 24 h" />
+                  <Row label="tauxSej"               db={a81.tauxSej != null ? `${(a81.tauxSej * 100).toFixed(0)} %` : '—'}        calc={a81.tauxSej != null ? `${(a81.tauxSej * 100).toFixed(0)} %` : '—'}                  formula={`Lookup matrice (zone ${a81.zone} × seuil ${(a81.tSej + 15/60).toFixed(2)}h)`} />
+                  <Row label="Montant prime séjour" db="—"                                                                          calc={`${Math.round(a81.montantPrimeSej).toLocaleString('fr-FR')} €`}                       formula="valeurJour × tauxSej × tSej24" highlight />
+                  <Row label="Montant / jour"        db="—"                                                                          calc={`${Math.round(a81.montantPrimeSejJour).toLocaleString('fr-FR')} €`}                   formula="valeurJour × tauxSej (montant pour 1 jour)" />
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* Détail EP4 — feuille horaire + feuille décompte (port du pipeline Python) */}
           <Ep4Detail
