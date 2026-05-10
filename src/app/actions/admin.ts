@@ -3,6 +3,9 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
+import { fetchAllPaginated } from '@/lib/supabase/paginate';
+import { computeTsvNuit } from '@/lib/scraper/tsv-nuit';
+import type { PairingDetail } from '@/lib/scraper/types';
 
 async function ensureAdmin() {
   const supabase = await createClient();
@@ -72,4 +75,39 @@ export async function setUserScraperRole(userId: string, isScraper: boolean) {
   if (error) return { error: error.message };
   revalidatePath('/admin/whitelist');
   return { success: true };
+}
+
+/** Recompute signature.tsv_nuit pour toutes les signatures avec raw_detail
+ *  en utilisant la nouvelle formule per-service alignée EP4 (tsv-nuit.ts).
+ *  Évite un re-scrape complet — read+write DB only. */
+export async function backfillTsvNuit() {
+  const supabase = await ensureAdmin();
+  const sigs = await fetchAllPaginated<{ id: string; raw_detail: unknown; tsv_nuit: number | null }>((from, to) =>
+    supabase
+      .from('pairing_signature')
+      .select('id, raw_detail, tsv_nuit')
+      .not('raw_detail', 'is', null)
+      .range(from, to),
+  );
+
+  let updated = 0, unchanged = 0, errors = 0;
+  for (const s of sigs) {
+    if (!s.raw_detail) continue;
+    let newVal: number;
+    try {
+      newVal = computeTsvNuit(s.raw_detail as unknown as PairingDetail);
+    } catch {
+      errors++;
+      continue;
+    }
+    const oldVal = Number(s.tsv_nuit ?? 0);
+    if (Math.abs(newVal - oldVal) < 0.01) { unchanged++; continue; }
+    const { error } = await supabase
+      .from('pairing_signature')
+      .update({ tsv_nuit: newVal })
+      .eq('id', s.id);
+    if (error) errors++;
+    else      updated++;
+  }
+  return { total: sigs.length, updated, unchanged, errors };
 }

@@ -51,7 +51,12 @@ export function useForceOffline(): [boolean, (v: boolean) => void] {
   function setForceOffline(v: boolean) {
     if (v) localStorage.setItem(STORAGE_KEY, '1');
     else   localStorage.removeItem(STORAGE_KEY);
-    window.dispatchEvent(new Event(EVENT_NAME));
+    // Mise à jour synchrone du local state → bouton (couleur) instantané.
+    // Le dispatchEvent qui propage à tous les autres consumers est différé
+    // d'une tick → React peut peindre le frame du clic avant d'attaquer la
+    // cascade de re-render (gantt-view, etc.).
+    setForceOfflineState(v);
+    setTimeout(() => window.dispatchEvent(new Event(EVENT_NAME)), 0);
   }
 
   return [forceOffline, setForceOffline];

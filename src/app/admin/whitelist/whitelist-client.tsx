@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { addAllowedEmail, removeAllowedEmail, setUserScraperRole } from '@/app/actions/admin';
+import { addAllowedEmail, removeAllowedEmail, setUserScraperRole, backfillTsvNuit } from '@/app/actions/admin';
 import type { Database } from '@/types/supabase';
 
 type AllowedEmail = Pick<Database['public']['Tables']['allowed_email']['Row'], 'email' | 'added_at' | 'note'>;
@@ -24,6 +24,21 @@ export function WhitelistClient({ emails, logs, profiles }: { emails: AllowedEma
   const [err,      setErr]      = useState('');
   const [isPending, start]      = useTransition();
   const [profileList, setProfileList] = useState(profiles);
+
+  const [backfillStatus, setBackfillStatus] = useState<string>('');
+
+  function handleBackfillTsvNuit() {
+    if (!window.confirm('Recalculer tsv_nuit pour toutes les signatures avec raw_detail ?\n\nFormule alignée sur EP4 (per-service avec padding 1.5h). Pas de re-scrape AF, juste DB read+write.')) return;
+    setBackfillStatus('en cours…');
+    start(async () => {
+      try {
+        const res = await backfillTsvNuit();
+        setBackfillStatus(`✓ ${res.updated} mises à jour · ${res.unchanged} inchangées · ${res.errors} erreurs · ${res.total} totales`);
+      } catch (e) {
+        setBackfillStatus(`! ${String(e)}`);
+      }
+    });
+  }
 
   function handleToggleScraper(userId: string, current: boolean) {
     const next = !current;
@@ -59,6 +74,24 @@ export function WhitelistClient({ emails, logs, profiles }: { emails: AllowedEma
 
   return (
     <div className="space-y-6">
+
+      {/* Outils admin */}
+      <section className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-4">
+        <h2 className="text-sm font-semibold mb-1">Outils</h2>
+        <p className="text-[11px] text-zinc-400 mb-3">Maintenance DB.</p>
+        <div className="flex items-center gap-3 flex-wrap">
+          <button
+            onClick={handleBackfillTsvNuit}
+            disabled={isPending}
+            className="px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold disabled:opacity-40 transition-colors"
+          >
+            Recalculer tsv_nuit (formule EP4)
+          </button>
+          {backfillStatus && (
+            <span className="text-xs text-zinc-500 dark:text-zinc-400 font-mono">{backfillStatus}</span>
+          )}
+        </div>
+      </section>
 
       {/* Scrapers : toggle per profile */}
       <section className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800">
