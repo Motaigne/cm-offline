@@ -19,16 +19,17 @@ export async function POST(req: Request) {
 
   const { data: profile } = await supabase
     .from('user_profile')
-    .select('is_admin')
+    .select('is_admin, is_scraper')
     .eq('user_id', user.id)
     .single();
 
-  if (!profile?.is_admin) {
+  if (!profile?.is_admin && !profile?.is_scraper) {
     return new Response('Profil non autorisé à scraper', { status: 403 });
   }
+  const isAdmin = !!profile.is_admin;
 
   const body = await req.json().catch(() => null);
-  const { month, cookie, sn, userId, windowFrom, windowTo } = body ?? {};
+  const { month, cookie, sn, userId, windowFrom, windowTo, maxRotations } = body ?? {};
 
   if (!month || !cookie || !sn || !userId) {
     return new Response('Champs manquants : month, cookie, sn, userId', { status: 400 });
@@ -54,6 +55,15 @@ export async function POST(req: Request) {
       }
 
       try {
+        // Limite 50 rotations max pour les non-admin scrapers (cap appliqué
+        // dans le pipeline). Les admins sont libres.
+        let effectiveMax: number | undefined;
+        if (typeof maxRotations === 'number' && maxRotations > 0) {
+          effectiveMax = isAdmin ? maxRotations : Math.min(maxRotations, 50);
+        } else if (!isAdmin) {
+          effectiveMax = 50;
+        }
+
         for await (const event of runScrape({
           month,
           cookie,
@@ -62,6 +72,7 @@ export async function POST(req: Request) {
           supabaseUserId: user.id,
           windowFrom,
           windowTo,
+          maxRotations: effectiveMax,
         })) {
           emit(event);
         }

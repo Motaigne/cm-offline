@@ -49,3 +49,27 @@ export async function removeAllowedEmail(email: string) {
   revalidatePath('/admin/whitelist');
   return { success: true };
 }
+
+/** Liste tous les profils inscrits avec leurs droits — pour l'admin de
+ *  gestion des scrapers. */
+export async function listUserProfiles() {
+  const supabase = await ensureAdmin();
+  const { data, error } = await supabase
+    .from('user_profile')
+    .select('user_id, display_name, is_admin, is_scraper')
+    .order('display_name');
+  if (error) return { error: error.message };
+  return { profiles: data ?? [] };
+}
+
+/** Active/désactive le rôle is_scraper sur un profil utilisateur. */
+export async function setUserScraperRole(userId: string, isScraper: boolean) {
+  const supabase = await ensureAdmin();
+  const { error } = await supabase
+    .from('user_profile')
+    .update({ is_scraper: isScraper })
+    .eq('user_id', userId);
+  if (error) return { error: error.message };
+  revalidatePath('/admin/whitelist');
+  return { success: true };
+}

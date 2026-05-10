@@ -89,6 +89,23 @@ export async function getCurrentUserIsAdmin(): Promise<boolean> {
   return Boolean(data?.is_admin);
 }
 
+/** Renvoie { is_admin, is_scraper } pour l'utilisateur connecté. Utilisé pour
+ *  ouvrir le bouton Importer aux scrapers non-admin. */
+export async function getCurrentUserScrapeRights(): Promise<{ is_admin: boolean; is_scraper: boolean }> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { is_admin: false, is_scraper: false };
+  const { data } = await supabase
+    .from('user_profile')
+    .select('is_admin, is_scraper')
+    .eq('user_id', user.id)
+    .single();
+  return {
+    is_admin:   Boolean(data?.is_admin),
+    is_scraper: Boolean(data?.is_scraper),
+  };
+}
+
 export async function signOut() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();

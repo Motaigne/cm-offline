@@ -27,6 +27,11 @@ export default async function WhitelistAdminPage() {
     .order('created_at', { ascending: false })
     .limit(100);
 
+  const { data: profiles } = await supabase
+    .from('user_profile')
+    .select('user_id, display_name, is_admin, is_scraper')
+    .order('display_name');
+
   return (
     <div className="flex flex-col min-h-screen bg-zinc-50 dark:bg-zinc-950">
       <NavBar />
@@ -40,7 +45,7 @@ export default async function WhitelistAdminPage() {
           </p>
         </div>
 
-        <WhitelistClient emails={emails ?? []} logs={logs ?? []} />
+        <WhitelistClient emails={emails ?? []} logs={logs ?? []} profiles={profiles ?? []} />
       </main>
     </div>
   );

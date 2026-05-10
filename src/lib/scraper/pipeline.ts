@@ -53,6 +53,9 @@ export interface ScrapeParams {
   /** Surcharge la fenêtre de search CrewBidd (YYYY-MM-DD) — utile pour backfill ciblé. */
   windowFrom?: string;
   windowTo?:   string;
+  /** Limite le nombre de rotations à fetcher dans ce run. Plafonné côté API à
+   *  50 pour les non-admin. undefined = tout télécharger. */
+  maxRotations?: number;
 }
 
 type SupabaseClient = Awaited<ReturnType<typeof createClient>>;
@@ -147,12 +150,12 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
 
   const { data: profile } = await supabase
     .from('user_profile')
-    .select('is_admin')
+    .select('is_admin, is_scraper')
     .eq('user_id', params.supabaseUserId)
     .single();
 
-  if (!profile?.is_admin) {
-    yield { type: 'error', message: 'Profil non autorisé à scraper (is_admin = false)' };
+  if (!profile?.is_admin && !profile?.is_scraper) {
+    yield { type: 'error', message: 'Profil non autorisé à scraper' };
     return;
   }
 
@@ -212,16 +215,22 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
       missingKeys.push(k);
     }
 
+    // Cap maxRotations (cf. ScrapeParams) — coupe la liste des manquants en
+    // tête. Les rotations exclues seront récupérées au prochain run.
+    const cappedMissing = (params.maxRotations != null && params.maxRotations > 0)
+      ? missingKeys.slice(0, params.maxRotations)
+      : missingKeys;
+
     yield {
       type: 'start',
       total_instances: allPairings.length,
       unique_sigs:     allKeys.length,
     };
 
-    // Phase 3 — fetch detail uniquement pour les manquantes
+    // Phase 3 — fetch detail uniquement pour les manquantes (cappées)
     let processedSigs = 0;
 
-    for (const activityNumber of missingKeys) {
+    for (const activityNumber of cappedMissing) {
       const instances = sigMap.get(activityNumber)!;
       const repr      = instances[0];
       const rotCode   = buildRotationCode(repr);
@@ -229,7 +238,7 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
       yield {
         type: 'progress',
         current: ++processedSigs,
-        total:   missingKeys.length,
+        total:   cappedMissing.length,
         rotation: rotCode,
       };
 

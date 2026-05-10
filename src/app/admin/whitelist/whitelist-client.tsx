@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { addAllowedEmail, removeAllowedEmail } from '@/app/actions/admin';
+import { addAllowedEmail, removeAllowedEmail, setUserScraperRole } from '@/app/actions/admin';
 import type { Database } from '@/types/supabase';
 
 type AllowedEmail = Pick<Database['public']['Tables']['allowed_email']['Row'], 'email' | 'added_at' | 'note'>;
 type AuthLog      = Pick<Database['public']['Tables']['auth_log']['Row'], 'id' | 'email' | 'kind' | 'created_at' | 'meta'>;
+type UserProfile  = { user_id: string; display_name: string | null; is_admin: boolean; is_scraper: boolean };
 
 const KIND_LABELS: Record<AuthLog['kind'], { label: string; cls: string }> = {
   signin_denied:      { label: 'Refusé',     cls: 'text-red-500' },
@@ -17,11 +18,26 @@ const KIND_LABELS: Record<AuthLog['kind'], { label: string; cls: string }> = {
   release_downloaded: { label: 'Release ↓',  cls: 'text-cyan-500' },
 };
 
-export function WhitelistClient({ emails, logs }: { emails: AllowedEmail[]; logs: AuthLog[] }) {
+export function WhitelistClient({ emails, logs, profiles }: { emails: AllowedEmail[]; logs: AuthLog[]; profiles: UserProfile[] }) {
   const [newEmail, setNewEmail] = useState('');
   const [newNote,  setNewNote]  = useState('');
   const [err,      setErr]      = useState('');
   const [isPending, start]      = useTransition();
+  const [profileList, setProfileList] = useState(profiles);
+
+  function handleToggleScraper(userId: string, current: boolean) {
+    const next = !current;
+    // Optimistic
+    setProfileList(prev => prev.map(p => p.user_id === userId ? { ...p, is_scraper: next } : p));
+    start(async () => {
+      const res = await setUserScraperRole(userId, next);
+      if (res?.error) {
+        setErr(res.error);
+        // Revert
+        setProfileList(prev => prev.map(p => p.user_id === userId ? { ...p, is_scraper: current } : p));
+      }
+    });
+  }
 
   function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -42,7 +58,54 @@ export function WhitelistClient({ emails, logs }: { emails: AllowedEmail[]; logs
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div className="space-y-6">
+
+      {/* Scrapers : toggle per profile */}
+      <section className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800">
+        <header className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800">
+          <h2 className="text-sm font-semibold">Scrapers ({profileList.filter(p => p.is_scraper || p.is_admin).length} actifs)</h2>
+          <p className="text-[11px] text-zinc-400 mt-0.5">
+            Les admins peuvent toujours scraper. Les scrapers non-admin sont limités à 50 rotations par run.
+          </p>
+        </header>
+        <ul className="divide-y divide-zinc-100 dark:divide-zinc-800 max-h-[40vh] overflow-y-auto">
+          {profileList.length === 0 && (
+            <li className="px-4 py-6 text-center text-sm text-zinc-400">Aucun profil enregistré.</li>
+          )}
+          {profileList.map(p => (
+            <li key={p.user_id} className="flex items-center justify-between px-4 py-2 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
+              <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                <span className="font-medium text-zinc-800 dark:text-zinc-100 truncate">
+                  {p.display_name || <span className="text-zinc-400 italic">sans nom</span>}
+                </span>
+                {p.is_admin && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 font-semibold">
+                    ADMIN
+                  </span>
+                )}
+              </div>
+              {p.is_admin ? (
+                <span className="text-[11px] text-zinc-400">scraper auto (admin)</span>
+              ) : (
+                <button
+                  onClick={() => handleToggleScraper(p.user_id, p.is_scraper)}
+                  disabled={isPending}
+                  className={[
+                    'px-3 py-1 rounded-full text-xs font-semibold transition-colors disabled:opacity-40',
+                    p.is_scraper
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                      : 'bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-zinc-600 dark:text-zinc-300',
+                  ].join(' ')}
+                >
+                  {p.is_scraper ? '✓ Scraper' : 'Inactif'}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {/* Liste des emails autorisés */}
       <section className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800">
         <header className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800">
@@ -131,6 +194,7 @@ export function WhitelistClient({ emails, logs }: { emails: AllowedEmail[]; logs
           })}
         </ul>
       </section>
+      </div>
     </div>
   );
 }

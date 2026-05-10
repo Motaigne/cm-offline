@@ -2,6 +2,9 @@
 
 import { useState, useEffect, useRef } from 'react';
 import type { ScrapeEvent } from '@/lib/scraper/types';
+import { getCurrentUserScrapeRights } from '@/app/actions/auth';
+
+const NON_ADMIN_CAP = 50;
 
 type Phase =
   | { name: 'idle' }
@@ -26,13 +29,18 @@ export function ScrapeDialog({
   const [sn,     setSn]     = useState('');
   const [userId, setUserId] = useState('');
   const [phase,  setPhase]  = useState<Phase>({ name: 'idle' });
+  const [maxRotations, setMaxRotations] = useState<string>(''); // vide = tout (cappé serveur)
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     setSn(localStorage.getItem('af_sn') ?? '');
     setUserId(localStorage.getItem('af_userid') ?? '');
+    void getCurrentUserScrapeRights().then(r => setIsAdmin(r.is_admin)).catch(() => {});
   }, []);
+
+  const effectiveCap = isAdmin ? Infinity : NON_ADMIN_CAP;
 
   const canEdit =
     phase.name === 'idle' ||
@@ -83,11 +91,16 @@ export function ScrapeDialog({
     abortRef.current = ctrl;
     setPhase({ name: 'scraping', current: 0, total: 0, rotation: 'Démarrage…' });
 
+    const parsedMax = parseInt(maxRotations, 10);
+    const maxParam = !isNaN(parsedMax) && parsedMax > 0
+      ? Math.min(parsedMax, effectiveCap === Infinity ? parsedMax : effectiveCap)
+      : undefined;
+
     try {
       const res = await fetch('/api/scrape', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ month, cookie, sn, userId }),
+        body:    JSON.stringify({ month, cookie, sn, userId, maxRotations: maxParam }),
         signal:  ctrl.signal,
       });
 
@@ -226,7 +239,7 @@ export function ScrapeDialog({
           )}
 
           {phase.name === 'ready' && (
-            <div className="bg-zinc-50 dark:bg-zinc-800 rounded-xl p-3 text-sm space-y-1">
+            <div className="bg-zinc-50 dark:bg-zinc-800 rounded-xl p-3 text-sm space-y-2">
               <p className="text-zinc-700 dark:text-zinc-200 font-medium">
                 {phase.unique_sigs} rotations uniques · {phase.total_instances} dates
               </p>
@@ -238,6 +251,24 @@ export function ScrapeDialog({
                 <p className="text-emerald-600 dark:text-emerald-400 text-xs">
                   ✓ Tout est déjà en DB ({phase.in_db}/{phase.unique_sigs})
                 </p>
+              )}
+              {phase.missing > 0 && (
+                <div className="flex items-center gap-2 text-xs pt-1 border-t border-zinc-200 dark:border-zinc-700">
+                  <label className="text-zinc-500">Max rotations à scraper :</label>
+                  <input
+                    type="number" min={1}
+                    max={isAdmin ? phase.missing : Math.min(phase.missing, NON_ADMIN_CAP)}
+                    value={maxRotations}
+                    onChange={e => setMaxRotations(e.target.value)}
+                    placeholder={String(isAdmin ? phase.missing : Math.min(phase.missing, NON_ADMIN_CAP))}
+                    className="w-16 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-center font-mono"
+                  />
+                  <span className="text-zinc-400">
+                    / {phase.missing}{!isAdmin && phase.missing > NON_ADMIN_CAP && (
+                      <span className="text-amber-600 ml-1">(plafond {NON_ADMIN_CAP} non-admin)</span>
+                    )}
+                  </span>
+                </div>
               )}
             </div>
           )}
@@ -303,14 +334,19 @@ export function ScrapeDialog({
                   >
                     Annuler
                   </button>
-                  {phase.missing > 0 ? (
-                    <button
-                      onClick={startScrape}
-                      className="flex-1 py-3 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 active:bg-blue-800 transition-colors"
-                    >
-                      Télécharger {phase.missing}
-                    </button>
-                  ) : (
+                  {phase.missing > 0 ? (() => {
+                    const parsed = parseInt(maxRotations, 10);
+                    const cap = isAdmin ? phase.missing : Math.min(phase.missing, NON_ADMIN_CAP);
+                    const willDownload = !isNaN(parsed) && parsed > 0 ? Math.min(parsed, cap) : cap;
+                    return (
+                      <button
+                        onClick={startScrape}
+                        className="flex-1 py-3 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 active:bg-blue-800 transition-colors"
+                      >
+                        Télécharger {willDownload}
+                      </button>
+                    );
+                  })() : (
                     <button
                       onClick={onClose}
                       className="flex-1 py-3 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 active:bg-emerald-800 transition-colors"

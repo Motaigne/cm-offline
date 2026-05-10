@@ -27,7 +27,7 @@ import { useOnlineStatus } from '@/hooks/use-online';
 import { db, hydrateDB, loadFromDB, hasPendingOps, loadScenariosForMonth, cacheRotations } from '@/lib/local-db';
 import { enqueueAdd, enqueueDelete, enqueueUpdate, syncNow, pendingOpsCount } from '@/lib/sync-service';
 import { getRotationsForMonth } from '@/app/actions/search';
-import { getCurrentUserIsAdmin } from '@/app/actions/auth';
+import { getCurrentUserScrapeRights } from '@/app/actions/auth';
 import { NavBar } from '@/app/components/nav';
 
 type RegimeEnum = Database['public']['Enums']['regime_enum'];
@@ -505,6 +505,7 @@ export function GanttView({
   const [searchOpen, setSearchOpen] = useState(false);
   const [scrapeOpen, setScrapeOpen] = useState(false);
   const [isAdmin,    setIsAdmin]    = useState(false);
+  const [canScrape,  setCanScrape]  = useState(false);
 
   // Compteur prime d'incitation (0-5), persistance localStorage par mois.
   const [incitCount, setIncitCount] = useState(0);
@@ -522,7 +523,9 @@ export function GanttView({
   const preCacheInFlightRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    void getCurrentUserIsAdmin().then(setIsAdmin).catch(() => setIsAdmin(false));
+    void getCurrentUserScrapeRights()
+      .then(r => { setIsAdmin(r.is_admin); setCanScrape(r.is_admin || r.is_scraper); })
+      .catch(() => { setIsAdmin(false); setCanScrape(false); });
   }, []);
 
   // Charge le compteur incitation pour le mois courant
@@ -1279,8 +1282,8 @@ export function GanttView({
             </svg>
             Rotations
           </button>
-          {/* Import button — admins only */}
-          {isAdmin && (
+          {/* Import button — admins + scrapers */}
+          {canScrape && (
             <button
               onClick={() => setScrapeOpen(true)}
               className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-zinc-700 hover:bg-zinc-600 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-white text-xs font-semibold transition-colors"

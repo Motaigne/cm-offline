@@ -30,11 +30,11 @@ export async function POST(req: Request) {
 
   const { data: profile } = await supabase
     .from('user_profile')
-    .select('is_admin')
+    .select('is_admin, is_scraper')
     .eq('user_id', user.id)
     .single();
 
-  if (!profile?.is_admin) {
+  if (!profile?.is_admin && !profile?.is_scraper) {
     return new Response('Profil non autorisé à scraper', { status: 403 });
   }
 

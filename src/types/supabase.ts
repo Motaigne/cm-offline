@@ -22,6 +22,7 @@ export type Database = {
           qualifs_avion: string[];
           instructeur: boolean;
           is_admin: boolean;
+          is_scraper: boolean;
           tri_niveau: number | null;
           prime_330_count: number | null;
           valeur_jour: number;
