@@ -443,6 +443,8 @@ export function GanttView({
 
   // Reset menu + confirmation modale
   const [resetMenuOpen, setResetMenuOpen] = useState(false);
+  const [resetMenuPos,  setResetMenuPos]  = useState<{ left: number; bottom: number } | null>(null);
+  const resetButtonRef                    = useRef<HTMLButtonElement>(null);
   const [resetTarget,   setResetTarget]   = useState<'A' | 'B' | 'C' | 'tout' | null>(null);
   const [resetting,     setResetting]     = useState(false);
 
@@ -1141,28 +1143,25 @@ export function GanttView({
           </div>
 
           {/* Reset */}
-          <div className="flex-shrink-0 relative ml-2 pl-2 border-l border-zinc-200 dark:border-zinc-700">
+          <div className="flex-shrink-0 ml-2 pl-2 border-l border-zinc-200 dark:border-zinc-700">
             <button
-              onClick={() => setResetMenuOpen(o => !o)}
+              ref={resetButtonRef}
+              onClick={() => {
+                if (resetMenuOpen) { setResetMenuOpen(false); return; }
+                const rect = resetButtonRef.current?.getBoundingClientRect();
+                if (rect) {
+                  setResetMenuPos({
+                    left: rect.left,
+                    bottom: window.innerHeight - rect.top + 4,
+                  });
+                }
+                setResetMenuOpen(true);
+              }}
               className="px-2.5 py-1 rounded-full bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-zinc-700 dark:text-zinc-200 text-xs font-semibold transition-colors"
               title="Réinitialiser un scénario"
             >
               Reset
             </button>
-            {resetMenuOpen && (
-              <>
-                <div className="fixed inset-0 z-30" onClick={() => setResetMenuOpen(false)} />
-                <div className="absolute bottom-full mb-1 left-0 z-40 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-lg py-1 min-w-28">
-                  {(['A', 'B', 'C', 'tout'] as const).map(t => (
-                    <button key={t}
-                      onClick={() => { setResetTarget(t); setResetMenuOpen(false); }}
-                      className="block w-full text-left px-3 py-1.5 text-xs text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-700">
-                      {t === 'tout' ? 'Tout (A + B + C)' : `Scénario ${t}`}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
           </div>
 
           <button
@@ -1187,6 +1186,25 @@ export function GanttView({
             </button>
           )}
         </div>
+
+        {/* Reset dropdown — rendu en fixed pour échapper au clipping de l'action bar (overflow-x-auto) */}
+        {resetMenuOpen && resetMenuPos && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setResetMenuOpen(false)} />
+            <div
+              className="fixed z-50 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-lg py-1 min-w-28"
+              style={{ left: resetMenuPos.left, bottom: resetMenuPos.bottom }}
+            >
+              {(['A', 'B', 'C', 'tout'] as const).map(t => (
+                <button key={t}
+                  onClick={() => { setResetTarget(t); setResetMenuOpen(false); }}
+                  className="block w-full text-left px-3 py-1.5 text-xs text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-700">
+                  {t === 'tout' ? 'Tout (A + B + C)' : `Scénario ${t}`}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
 
         {/* Modale de confirmation reset */}
         {resetTarget && (
