@@ -19,6 +19,8 @@ export interface PairingSummary {
     creditedHour: number;
     paidCreditedTime: number;
     flightTime: number;
+    restBeforeHaulDuration: number;
+    restPostHaulDuration: number;
   };
 }
 

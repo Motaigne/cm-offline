@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useState, useTransition, useEffect } from 'react';
 import { addAllowedEmail, removeAllowedEmail, setUserScraperRole, backfillTsvNuit } from '@/app/actions/admin';
 import type { Database } from '@/types/supabase';
 
@@ -26,6 +26,46 @@ export function WhitelistClient({ emails, logs, profiles }: { emails: AllowedEma
   const [profileList, setProfileList] = useState(profiles);
 
   const [backfillStatus, setBackfillStatus] = useState<string>('');
+
+  // Backfill RPC (rest_before_h / rest_after_h)
+  const [showRpcForm, setShowRpcForm]   = useState(false);
+  const [rpcMonth,  setRpcMonth]        = useState('');
+  const [rpcCookie, setRpcCookie]       = useState('');
+  const [rpcSn,     setRpcSn]           = useState('');
+  const [rpcUserId, setRpcUserId]       = useState('');
+  const [rpcStatus, setRpcStatus]       = useState('');
+  const [rpcBusy,   setRpcBusy]         = useState(false);
+
+  useEffect(() => {
+    setRpcSn(localStorage.getItem('af_sn') ?? '');
+    setRpcUserId(localStorage.getItem('af_userid') ?? '');
+    // Mois courant par défaut
+    const now = new Date();
+    setRpcMonth(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
+  }, []);
+
+  async function handleBackfillRpc() {
+    if (!rpcCookie || !rpcSn || !rpcUserId) return;
+    localStorage.setItem('af_sn', rpcSn);
+    localStorage.setItem('af_userid', rpcUserId);
+    setRpcBusy(true);
+    setRpcStatus('1 requête pairingsearch en cours…');
+    try {
+      const res = await fetch('/api/admin/backfill-rest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ month: rpcMonth, cookie: rpcCookie, sn: rpcSn, userId: rpcUserId }),
+      });
+      if (!res.ok) { setRpcStatus(`! ${await res.text()}`); return; }
+      const j = await res.json() as { updated: number; unchanged: number; missing: number; total: number };
+      setRpcStatus(`✓ ${j.updated} mises à jour · ${j.unchanged} inchangées · ${j.missing} absentes search · ${j.total} totales`);
+      setShowRpcForm(false);
+    } catch (e) {
+      setRpcStatus(`! ${String(e)}`);
+    } finally {
+      setRpcBusy(false);
+    }
+  }
 
   function handleBackfillTsvNuit() {
     if (!window.confirm('Recalculer tsv_nuit pour toutes les signatures avec raw_detail ?\n\nFormule alignée sur EP4 (per-service avec padding 1.5h). Pas de re-scrape AF, juste DB read+write.')) return;
@@ -90,7 +130,60 @@ export function WhitelistClient({ emails, logs, profiles }: { emails: AllowedEma
           {backfillStatus && (
             <span className="text-xs text-zinc-500 dark:text-zinc-400 font-mono">{backfillStatus}</span>
           )}
+
+          {/* Backfill RPC */}
+          <button
+            onClick={() => { setShowRpcForm(s => !s); setRpcStatus(''); }}
+            className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold transition-colors"
+          >
+            Backfill RPC (repos avant/après)
+          </button>
         </div>
+
+        {showRpcForm && (
+          <div className="mt-3 p-3 rounded-lg border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/30 space-y-2">
+            <p className="text-[11px] text-sky-700 dark:text-sky-300">
+              1 requête pairingsearch → mise à jour rest_before_h / rest_after_h sur le dernier snapshot success du mois.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[10px] text-zinc-500 mb-0.5">Mois (YYYY-MM)</label>
+                <input value={rpcMonth} onChange={e => setRpcMonth(e.target.value)}
+                  className="w-full text-xs rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-zinc-500 mb-0.5">SN</label>
+                <input value={rpcSn} onChange={e => setRpcSn(e.target.value)}
+                  className="w-full text-xs rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-zinc-500 mb-0.5">User ID</label>
+                <input value={rpcUserId} onChange={e => setRpcUserId(e.target.value)}
+                  className="w-full text-xs rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-zinc-500 mb-0.5">Cookie AF</label>
+                <input value={rpcCookie} onChange={e => setRpcCookie(e.target.value)} type="password"
+                  placeholder="JSESSIONID=…"
+                  className="w-full text-xs rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1" />
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleBackfillRpc}
+                disabled={rpcBusy || !rpcCookie || !rpcSn || !rpcUserId}
+                className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold disabled:opacity-40 transition-colors"
+              >
+                {rpcBusy ? '…' : 'Lancer'}
+              </button>
+              {rpcStatus && (
+                <span className={`text-[11px] font-mono ${rpcStatus.startsWith('✓') ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500'}`}>
+                  {rpcStatus}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Scrapers : toggle per profile */}

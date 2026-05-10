@@ -252,9 +252,8 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
       const tempsSej    = detail ? computeTempsSej(detail) : 0;
       const prime       = detail ? computePrime(detail) : 0;
       const tsvNuit     = detail ? computeTsvNuit(detail) : 0;
-      const pv0         = detail?.pairingValue?.[0];
-      const restBeforeH = pv0?.restBeforeHaulDuration ?? null;
-      const restAfterH  = pv0?.restPostHaulDuration   ?? null;
+      const restBeforeH = repr.pairingDetail.restBeforeHaulDuration ?? null;
+      const restAfterH  = repr.pairingDetail.restPostHaulDuration   ?? null;
 
       const firstDuty  = detail?.flightDuty?.[0];
       const lastDuty   = detail?.flightDuty?.[detail.flightDuty.length - 1];

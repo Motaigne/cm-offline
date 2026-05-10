@@ -114,11 +114,13 @@ export async function fetchAllPairings(
         beginDutyDate:      r.beginDutyDate  ?? r.scheduledBeginDutyDate  ?? 0,
         endDutyDate:        r.endDutyDate    ?? r.scheduledEndDutyDate    ?? 0,
         pairingDetail: {
-          nbOnDays:         r.pairingDetail?.nbOnDays         ?? 0,
-          workedFlightTime: r.pairingDetail?.workedFlightTime ?? 0,
-          creditedHour:     r.pairingDetail?.creditedHour     ?? 0,
-          paidCreditedTime: r.pairingDetail?.paidCreditedTime ?? 0,
-          flightTime:       r.pairingDetail?.flightTime       ?? 0,
+          nbOnDays:               r.pairingDetail?.nbOnDays               ?? 0,
+          workedFlightTime:       r.pairingDetail?.workedFlightTime       ?? 0,
+          creditedHour:           r.pairingDetail?.creditedHour           ?? 0,
+          paidCreditedTime:       r.pairingDetail?.paidCreditedTime       ?? 0,
+          flightTime:             r.pairingDetail?.flightTime             ?? 0,
+          restBeforeHaulDuration: r.pairingDetail?.restBeforeHaulDuration ?? 0,
+          restPostHaulDuration:   r.pairingDetail?.restPostHaulDuration   ?? 0,
         },
       });
     }
