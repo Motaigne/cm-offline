@@ -20,7 +20,7 @@ import type { Database } from '@/types/supabase';
 import { SearchPanel } from './search-panel';
 import { ScrapeDialog } from './scrape-dialog';
 import { rotationValue, monthlyFinancialsP, PRIME_BITRONCON, PVEI, KSP, FIXE_MENSUEL, NB_30E, REGIME_NB30E } from '@/lib/finance';
-import { computeArticle81 } from '@/lib/article81';
+import { computeArticle81, computeTSej24, getPlafondJours } from '@/lib/article81';
 import type { Article81Data } from '@/lib/article81';
 import { createClient } from '@/lib/supabase/client';
 import { useOnlineStatus } from '@/hooks/use-online';
@@ -145,10 +145,13 @@ function computeStats(
   monthlyFixedPrimes = 0,
   article81Data: Article81Data | null = null,
   valeurJour = 600,
+  a81CumulBefore = 0,
 ) {
   let onDays = 0, congeDays = 0;
   const flights = items.filter(i => i.kind === 'flight').length;
-  let totalHcr = 0, totalPrime = 0, totalTsvNuit = 0, totalA81 = 0;
+  let totalHcr = 0, totalPrime = 0, totalTsvNuit = 0;
+  // 1ère passe : agrégats simples sur les non-flights + collect des flights pour A81
+  const flightItems: CalendarItem[] = [];
   for (const item of items) {
     const clip = clipItem(item, year, mo);
     if (clip) {
@@ -156,6 +159,7 @@ function computeStats(
       if (item.kind === 'conge')  congeDays += clip.end - clip.start + 1;
     }
     if (item.kind !== 'flight') continue;
+    flightItems.push(item);
     const m = item.meta && typeof item.meta === 'object' && !Array.isArray(item.meta)
       ? item.meta as Record<string, unknown> : null;
     if (!m) continue;
@@ -170,18 +174,39 @@ function computeStats(
     totalHcr     += hcr;
     totalPrime   += typeof m.prime === 'number' ? (m.prime as number) : 0;
     totalTsvNuit += tsvNuit;
+  }
 
-    // Article 81 : prorata mois pour les vols à cheval
+  // 2e passe : Article 81 avec plafond annuel — sort chronologique pour appliquer
+  // le cap "tant que cumulJours ≤ plafond". Cumul = tSej24 entier de la rotation
+  // (pas proratisé), montant = montantPrimeSej proratisé au mois.
+  const plafondJours = getPlafondJours(regime);
+  let cumulJoursRunning = a81CumulBefore;
+  let totalA81 = 0;
+  const sortedFlights = [...flightItems].sort((a, b) => a.start_date.localeCompare(b.start_date));
+  for (const item of sortedFlights) {
+    const m = item.meta && typeof item.meta === 'object' && !Array.isArray(item.meta)
+      ? item.meta as Record<string, unknown> : null;
+    if (!m) continue;
     const tempsSej = typeof m.temps_sej === 'number' ? m.temps_sej as number : null;
     const zone     = typeof m.zone      === 'string' ? m.zone      as string : null;
-    if (tempsSej != null && zone) {
-      const a81 = computeArticle81({ tSej: tempsSej, zone, valeurJour, data: article81Data });
-      const montant = (departAt && arriveeAt)
-        ? prorateForMonth(a81.montantPrimeSej, departAt, arriveeAt, year, mo)
-        : a81.montantPrimeSej;
-      totalA81 += montant;
-    }
+    if (tempsSej == null || !zone) continue;
+
+    const tSej24 = computeTSej24(tempsSej);
+    if (tSej24 === 0) continue; // < 24h → pas Article 81
+
+    // Plafond : si on dépasse, on n'ajoute pas le montant de cette rotation
+    if (cumulJoursRunning >= plafondJours) continue;
+    cumulJoursRunning += tSej24;
+
+    const a81 = computeArticle81({ tSej: tempsSej, zone, valeurJour, data: article81Data });
+    const departAt  = typeof m.depart_at  === 'string' ? m.depart_at  as string : null;
+    const arriveeAt = typeof m.arrivee_at === 'string' ? m.arrivee_at as string : null;
+    const montant = (departAt && arriveeAt)
+      ? prorateForMonth(a81.montantPrimeSej, departAt, arriveeAt, year, mo)
+      : a81.montantPrimeSej;
+    totalA81 += montant;
   }
+  const totalA81Net = totalA81 * 0.82;
   // HS seuil proratisé : 75 × (nb30e_regime - congeDays) / 30
   const nb30eRegime = REGIME_NB30E[regime] ?? NB_30E;
   const nb30eEff    = Math.max(0, nb30eRegime - congeDays);
@@ -197,7 +222,11 @@ function computeStats(
   };
   const congeAmount = congeDays * (cngPv + cngHs);
   const brut = fin.total + congeAmount;
-  return { flights, onDays, congeDays, totalHcr, totalPrime, totalTsvNuit, fin, congeAmount, brut, totalA81 };
+  return {
+    flights, onDays, congeDays, totalHcr, totalPrime, totalTsvNuit,
+    fin, congeAmount, brut,
+    totalA81, totalA81Net, cumulJoursRunning, plafondJours,
+  };
 }
 
 // ─── FinRow ──────────────────────────────────────────────────────────────────
@@ -416,6 +445,7 @@ export function GanttView({
   month, scenarios, userName, userRegime, cngPv, cngHs,
   primeIncitationUnit = 0, primeA330 = 0, primeInstruction = 0,
   article81Data = null, valeurJour = 600,
+  a81CumulBefore = { A: 0, B: 0, C: 0 },
 }: {
   month: string;
   scenarios: Scenario[];
@@ -433,6 +463,8 @@ export function GanttView({
   article81Data?: Article81Data | null;
   /** Valeur jour (€) pour Article 81 — depuis profil. */
   valeurJour?: number;
+  /** Cumul tSej24 par scénario depuis Jan jusqu'au mois précédent (pour plafond annuel). */
+  a81CumulBefore?: Record<'A' | 'B' | 'C', number>;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -1029,7 +1061,8 @@ export function GanttView({
                 primeIncitationUnit * incitCount
                 + (primeA330 + primeInstruction) * a330InstrBoost
                 + primeMai + primeNoel;
-              const stats = computeStats(scenario.items, year, mo, cngPv, cngHs, userRegime, monthlyFixedPrimes, article81Data, valeurJour);
+              const cumulBeforeForScenario = a81CumulBefore[scenario.name] ?? 0;
+              const stats = computeStats(scenario.items, year, mo, cngPv, cngHs, userRegime, monthlyFixedPrimes, article81Data, valeurJour, cumulBeforeForScenario);
               const isLast = idx === localScenarios.length - 1;
               return (
                 <div key={scenario.name}
@@ -1079,7 +1112,16 @@ export function GanttView({
                       {stats.totalA81 > 0 && (
                         <>
                           <div className="border-t border-dashed border-emerald-300 dark:border-emerald-700/40 my-0.5" />
-                          <FinRow label="A81" value={stats.totalA81} cls="text-emerald-600 dark:text-emerald-400" bold />
+                          <FinRow label="A81 brut" value={stats.totalA81}    cls="text-emerald-600 dark:text-emerald-400" bold />
+                          <FinRow label="A81 net"  value={stats.totalA81Net} cls="text-emerald-700 dark:text-emerald-300" />
+                          <div className="flex items-baseline justify-between gap-0.5">
+                            <span className="text-[7.5px] font-mono leading-none text-emerald-600/70 dark:text-emerald-400/60">
+                              {stats.cumulJoursRunning.toFixed(1)}/{stats.plafondJours}j
+                            </span>
+                            {stats.cumulJoursRunning >= stats.plafondJours && (
+                              <span className="text-[7.5px] font-bold leading-none text-amber-500">PLAFOND</span>
+                            )}
+                          </div>
                         </>
                       )}
                     </div>

@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { getScenariosWithItems } from '@/app/actions/planning';
 import { loadAnnexe } from '@/app/actions/annexe';
+import { getYearA81CumulBefore } from '@/app/actions/article81';
 import { GanttView } from '@/app/components/gantt/gantt-view';
 import { computeFullProfile, type AnnexeData } from '@/lib/annexe';
 import { REGIME_NB30E } from '@/lib/finance';
@@ -47,10 +48,12 @@ export default async function Home({
     .single();
   if (!profile) redirect('/profil');
 
-  const [scenarios, annexe, { data: a81Row }] = await Promise.all([
+  const [y, mo] = month.split('-').map(Number);
+  const [scenarios, annexe, { data: a81Row }, a81Cumul] = await Promise.all([
     getScenariosWithItems(month),
     loadAnnexe(),
     supabase.from('annexe_table').select('data').eq('slug', 'article_81').single(),
+    getYearA81CumulBefore(y, mo),
   ]);
   const article81Data: Article81Data | null = (a81Row?.data as Article81Data | null) ?? null;
   const valeurJour = Number(profile.valeur_jour ?? 600);
@@ -110,6 +113,7 @@ export default async function Home({
       primeInstruction={primes.primeInstruction}
       article81Data={article81Data}
       valeurJour={valeurJour}
+      a81CumulBefore={a81Cumul.byScenarioBefore}
     />
   );
 }
