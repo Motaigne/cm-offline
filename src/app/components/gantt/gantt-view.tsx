@@ -1377,7 +1377,8 @@ export function GanttView({
           onClose={() => setSearchOpen(false)}
           onItemAdded={(item, draftId) => {
             applyAdd(item, draftId);
-            setPendingCount(c => c + 1);
+            // Bump pending uniquement si offline — online n'a pas d'op en attente
+            if (!isOnline) setPendingCount(c => c + 1);
           }}
         />
       )}

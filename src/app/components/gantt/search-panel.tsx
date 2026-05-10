@@ -95,13 +95,18 @@ function RotationCard({
       depart_at:     inst.depart_at,
       arrivee_at:    inst.arrivee_at,
     };
+    const newItem: CalendarItem = { id, kind: 'flight', start_date: inst.depart_date, end_date: endDate, bid_category: null, meta };
+
+    // Optimistic UI dans les 2 cas — sinon l'user ne voit pas le vol apparaître
+    // (sur iPad PWA, le revalidatePath cascade ne re-render pas toujours) et
+    // retry plusieurs fois → inserts en double.
+    onItemAdded?.(newItem, scenario.id);
+
     startTransition(async () => {
       if (isOnline) {
         await addPlanningItem({ id, draft_id: scenario.id, kind: 'flight', start_date: inst.depart_date, end_date: endDate, pairing_instance_id: inst.id, meta });
       } else {
-        const newItem: CalendarItem = { id, kind: 'flight', start_date: inst.depart_date, end_date: endDate, bid_category: null, meta };
         await enqueueAdd(newItem, scenario.id);
-        onItemAdded?.(newItem, scenario.id);
       }
       setSelectedInst(null);
       onPlaced();
