@@ -195,7 +195,7 @@ export function NavBar() {
 
   return (
     <div className="bg-zinc-900 border-b border-zinc-700 flex-shrink-0" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
-      <nav className="flex items-center h-8 px-2 gap-0.5 overflow-x-auto">
+      <nav className="flex items-center h-10 px-3 gap-1 overflow-x-auto">
         {TABS.map(tab => {
           const active = tab.href === '/'
             ? path === '/'
@@ -205,7 +205,7 @@ export function NavBar() {
               key={tab.href}
               href={tab.href}
               className={[
-                'px-3 h-6 flex items-center text-[11px] font-medium rounded transition-colors whitespace-nowrap',
+                'px-4 h-8 flex items-center text-sm font-medium rounded transition-colors whitespace-nowrap',
                 active ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800',
               ].join(' ')}
             >
@@ -217,7 +217,7 @@ export function NavBar() {
           <a
             href="/admin/whitelist"
             className={[
-              'px-3 h-6 flex items-center text-[11px] font-medium rounded transition-colors whitespace-nowrap',
+              'px-4 h-8 flex items-center text-sm font-medium rounded transition-colors whitespace-nowrap',
               path.startsWith('/admin') ? 'bg-amber-700 text-white' : 'text-amber-400 hover:text-amber-200 hover:bg-zinc-800',
             ].join(' ')}
             title="Administration (whitelist + journal)"
@@ -225,25 +225,25 @@ export function NavBar() {
             Admin
           </a>
         )}
-        <div className="ml-auto flex items-center gap-1 flex-shrink-0">
-          <span title={swReady ? 'Service worker actif' : 'Service worker en attente'} className={`text-[10px] ${swReady ? 'text-emerald-500' : 'text-amber-500'}`}>
+        <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
+          <span title={swReady ? 'Service worker actif' : 'Service worker en attente'} className={`text-xs ${swReady ? 'text-emerald-500' : 'text-amber-500'}`}>
             {swReady ? '●' : '○'}
           </span>
           <button
             onClick={handleDownload}
             disabled={downloading}
             title={dlDone ? 'Cache hors ligne à jour — cliquer pour rafraîchir' : 'Télécharger tout pour utilisation hors ligne'}
-            className={`px-2 h-6 flex items-center gap-1 text-[11px] disabled:opacity-50 rounded hover:bg-zinc-800 transition-colors ${iconColor}`}
+            className={`px-3 h-8 flex items-center gap-1 text-sm disabled:opacity-50 rounded hover:bg-zinc-800 transition-colors ${iconColor}`}
           >
             <span>{icon}</span>
             {dlStatus && dlStatus !== '✓' && dlStatus !== '!' && dlStatus !== 'SW?' && (
-              <span className="font-mono text-[10px]">{dlStatus}</span>
+              <span className="font-mono text-xs">{dlStatus}</span>
             )}
           </button>
           <button
             onClick={handleReset}
             title="Vider le cache et recharger"
-            className="px-1.5 h-6 flex items-center text-[11px] text-zinc-500 hover:text-zinc-300 rounded hover:bg-zinc-800 transition-colors"
+            className="px-2 h-8 flex items-center text-sm text-zinc-500 hover:text-zinc-300 rounded hover:bg-zinc-800 transition-colors"
           >
             ↻
           </button>
