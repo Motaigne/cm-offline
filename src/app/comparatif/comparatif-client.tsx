@@ -5,6 +5,7 @@ import { PVEI, KSP } from '@/lib/finance';
 import { getRotationsForMonth } from '@/app/actions/search';
 import { cacheRotations, loadRotationsFromDB, getCachedMonths } from '@/lib/local-db';
 import type { RotationSignature } from '@/app/actions/search';
+import { Ep4Detail } from './ep4-detail';
 
 type SigInstance = {
   id: string;
@@ -379,6 +380,15 @@ export function ComparatifClient({
             Calculs avec PVEI&nbsp;=&nbsp;{PVEI}&nbsp;€/h · KSP&nbsp;=&nbsp;{KSP} · Prime bi-tronçon&nbsp;=&nbsp;{(2.5 * PVEI).toFixed(2)}&nbsp;€
             <span className="ml-2 text-zinc-300 dark:text-zinc-500">(modifiables dans /profil)</span>
           </div>
+
+          {/* Détail EP4 — feuille horaire + feuille décompte (port du pipeline Python) */}
+          <Ep4Detail
+            sigId={sig.id}
+            rotationCode={sig.rotation_code ?? ''}
+            zone={sig.zone}
+            year={year}
+            month={mo}
+          />
         </div>
       )}
     </div>
