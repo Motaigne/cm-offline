@@ -478,6 +478,12 @@ export function GanttView({
     if (!resetTarget) return;
     setResetting(true);
     const targets: ('A' | 'B' | 'C')[] = resetTarget === 'tout' ? ['A', 'B', 'C'] : [resetTarget];
+    // Optimistic UI : vide les scénarios concernés localement avant l'await DB.
+    // (router.refresh ne re-render pas toujours visiblement sur iPad PWA, cf bug
+    // search-panel — l'user croit que reset a échoué et retry.)
+    setLocalScenarios(prev => prev.map(s =>
+      targets.includes(s.name) ? { ...s, items: s.items.filter(i => i._isSpillover) } : s,
+    ));
     try {
       await resetPlanningScenarios(currentMonth, targets);
       router.refresh();

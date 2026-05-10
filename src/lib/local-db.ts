@@ -109,6 +109,10 @@ export async function hasPendingOps(): Promise<boolean> {
 export async function loadScenariosForMonth(month: string): Promise<Scenario[] | null> {
   const drafts = await db.drafts.where('target_month').equals(month).toArray();
   if (drafts.length === 0) return null;
+  // Dexie ne garantit pas l'ordre par primary key dans une `where().toArray()` —
+  // tri explicite par name pour avoir [A, B, C] et éviter le flash de swap au
+  // chargement cache-first puis fetch réseau.
+  drafts.sort((a, b) => a.name.localeCompare(b.name));
   return Promise.all(
     drafts.map(async (d) => {
       const stored = await db.items.where('draft_id').equals(d.id).toArray();
