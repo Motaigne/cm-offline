@@ -63,8 +63,10 @@ export interface Ep4Rotation {
   ONm: number;
   /** Bi-tronçon : 1 par service ≥ 2 legs hors TLV/BEY. */
   Prime: number;
-  /** Indemnité Repas. */
+  /** Indemnité Repas (compte par créneau couvert ≥ 1h, dédup par jour-local + slot). */
   IR: number;
+  /** Menus Frais (subset de IR pour les slots survenus en escale ≥ 3h). */
+  MF: number;
   tempsSej: number;
   tauxApp: number | null;
   /** Somme des tsv_n_ser_m. */

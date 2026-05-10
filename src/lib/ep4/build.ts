@@ -9,9 +9,9 @@
 import type { PairingDetail } from '@/lib/scraper/types';
 import type { Ep4Leg, Ep4Service, Ep4Rotation, TauxAppRow } from './types';
 import { tsvNuitJ, tsvNuitJ1 } from './night';
+import { computeIRandMF } from './ir';
 
 const HOUR_MS = 3_600_000;
-const DAY_MS  = 86_400_000;
 const EXCLUDE_PRIME_AIRPORTS = new Set(['TLV', 'BEY']);
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -119,29 +119,8 @@ function computeOnM(
   return 0;
 }
 
-// ─── IR : Indemnité Repas (Python 8_ep4_V7.py:197-242) ───────────────────────
-
-function computeIR(
-  finFirstSvcMs: number, debutLastSvcMs: number,
-  utcArrOffsetH: number,
-): number {
-  const debut_loc = finFirstSvcMs   + utcArrOffsetH * HOUR_MS;
-  const fin_loc   = debutLastSvcMs  + utcArrOffsetH * HOUR_MS;
-  if (fin_loc <= debut_loc) return 0;
-
-  let ir = 0;
-  let dayStart = Math.floor(debut_loc / DAY_MS) * DAY_MS;
-  while (dayStart <= fin_loc) {
-    const midiStart = dayStart + 11 * HOUR_MS;
-    const midiEnd   = dayStart + 15 * HOUR_MS;
-    const soirStart = dayStart + 18 * HOUR_MS;
-    const soirEnd   = dayStart + 22 * HOUR_MS;
-    if (midiEnd > debut_loc && midiStart < fin_loc) ir += 1;
-    if (soirEnd > debut_loc && soirStart < fin_loc) ir += 1;
-    dayStart += DAY_MS;
-  }
-  return ir;
-}
+// ─── IR + MF : voir lib/ep4/ir.ts (port spec instructions.md, plus précis
+// que le Python 8_ep4_V7.py:197-242 qui ne gérait que l'escale principale).
 
 // ─── Prime bi-tronçon (Python 8_ep4_V7.py:166-191) ───────────────────────────
 
@@ -307,9 +286,9 @@ export function buildEp4Rotation(
 
   const ONm = computeOnM(debut_vol_ms, fin_vol_ms, ON, year, month);
 
-  const debutLastSvc = rawServices[rawServices.length - 1]?.begin_ms ?? 0;
-  const finFirstSvc  = rawServices[0]?.end_ms ?? 0;
-  const IR = computeIR(finFirstSvc, debutLastSvc, utc_arr_first_service);
+  const irMf = computeIRandMF(detail);
+  const IR = irMf.ir;
+  const MF = irMf.mf;
 
   const Prime = computePrime(rawServices);
 
@@ -326,7 +305,7 @@ export function buildEp4Rotation(
     HDV, HC, ON, TDV_total,
     TA: r2(TA), HCA,
     H2HC, H2HCr, H2HC_initial, H2HCr_initial,
-    rtHDV, ONm, Prime, IR, tempsSej, tauxApp,
+    rtHDV, ONm, Prime, IR, MF, tempsSej, tauxApp,
     tsv_n_rot_m,
     debut_vol_ms, fin_vol_ms,
     utc_arr_first_service,
