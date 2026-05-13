@@ -540,7 +540,11 @@ export function GanttView({
   const [dragging, setDragging]   = useState<CalendarItem | null>(null);
 
   // search / import
-  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchOpen,     setSearchOpen]     = useState(false);
+  const [searchScenario, setSearchScenario] = useState<ScenarioName | null>(null);
+  const [searchPanelTop, setSearchPanelTop] = useState<number | undefined>(undefined);
+  const [scenarioPicker, setScenarioPicker] = useState<{ rect: DOMRect } | null>(null);
+  const scenarioRowsRef = useRef<Map<ScenarioName, HTMLDivElement>>(new Map());
   const [scrapeOpen, setScrapeOpen] = useState(false);
   const [isAdmin,    setIsAdmin]    = useState(false);
   const [canScrape,  setCanScrape]  = useState(false);
@@ -1063,6 +1067,7 @@ export function GanttView({
               const isDetailOpen = detailPanel?.name === scenario.name;
               return (
                 <div key={scenario.name} data-sr
+                  ref={el => { if (el) scenarioRowsRef.current.set(scenario.name, el); else scenarioRowsRef.current.delete(scenario.name); }}
                   className={`flex flex-1 ${!isLast ? 'border-b border-zinc-200 dark:border-zinc-800' : ''}`}
                   style={{ minHeight: ROW_H }}
                 >
@@ -1288,7 +1293,10 @@ export function GanttView({
           </div>
 
           <button
-            onClick={() => setSearchOpen(true)}
+            onClick={e => {
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              setScenarioPicker({ rect });
+            }}
             className="ml-auto flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
@@ -1476,12 +1484,45 @@ export function GanttView({
         )}
       </div>
 
+      {/* Picker scénario — s'affiche avant l'ouverture du search panel */}
+      {scenarioPicker && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setScenarioPicker(null)} />
+          <div
+            className="fixed z-50 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-2xl shadow-2xl p-3 flex flex-col gap-2"
+            style={{ bottom: window.innerHeight - scenarioPicker.rect.top + 8, left: scenarioPicker.rect.left }}
+          >
+            <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide">Ajouter dans</span>
+            <div className="flex gap-2">
+              {(localScenarios.map(s => s.name) as ScenarioName[]).map(name => (
+                <button
+                  key={name}
+                  onClick={() => {
+                    const rowEl = scenarioRowsRef.current.get(name);
+                    const rowBottom = rowEl?.getBoundingClientRect().bottom;
+                    setSearchScenario(name);
+                    setSearchPanelTop(rowBottom);
+                    setScenarioPicker(null);
+                    setSearchOpen(true);
+                  }}
+                  className="w-12 h-12 text-xl font-bold rounded-xl bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:bg-zinc-700 dark:hover:bg-zinc-300 active:scale-95 transition-all"
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Search panel */}
       {searchOpen && (
         <SearchPanel
           month={currentMonth}
           scenarios={localScenarios}
-          onClose={() => setSearchOpen(false)}
+          preselectedScenario={searchScenario ?? undefined}
+          panelTop={searchPanelTop}
+          onClose={() => { setSearchOpen(false); setSearchScenario(null); setSearchPanelTop(undefined); }}
           onItemAdded={(item, draftId) => {
             applyAdd(item, draftId);
             setPendingCount(c => c + 1);

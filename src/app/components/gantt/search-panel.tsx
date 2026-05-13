@@ -54,11 +54,13 @@ function matchesFamily(aircraftCode: string, families: string[]): boolean {
 function RotationCard({
   sig,
   scenarios,
+  preselectedScenario,
   onPlaced,
   onItemAdded,
 }: {
   sig: RotationSignature;
   scenarios: Scenario[];
+  preselectedScenario?: ScenarioName;
   onPlaced: () => void;
   onItemAdded?: (item: CalendarItem, draftId: string) => void;
 }) {
@@ -67,6 +69,19 @@ function RotationCard({
   const [isPending, startTransition]    = useTransition();
 
   function selectInst(inst: RotationInstance) {
+    if (preselectedScenario) {
+      const sc = scenarios.find(s => s.name === preselectedScenario);
+      if (sc) {
+        const endDate = endDateFromArrivee(inst.arrivee_at);
+        if (hasOverlap(sc.items, inst.depart_date, endDate)) {
+          setOverlapErr(`Chevauchement dans le scénario ${sc.name}`);
+          setSelectedInst(inst);
+          return;
+        }
+        place(inst, sc);
+        return;
+      }
+    }
     setSelectedInst(prev => prev?.id === inst.id ? null : inst);
     setOverlapErr(null);
   }
@@ -166,10 +181,12 @@ function RotationCard({
         })}
       </div>
 
-      {/* Scenario selector */}
-      {selectedInst && (
+      {/* Scenario selector — affiché seulement si pas de présélection ou si chevauchement */}
+      {selectedInst && (!preselectedScenario || overlapErr) && (
         <div className="flex items-center gap-2 pt-2 border-t border-zinc-100 dark:border-zinc-800 flex-wrap">
-          <span className="text-xs text-zinc-400 flex-shrink-0">Scénario :</span>
+          <span className="text-xs text-zinc-400 flex-shrink-0">
+            {overlapErr ? 'Autre scénario :' : 'Scénario :'}
+          </span>
           {scenarios.map(sc => (
             <button
               key={sc.name}
@@ -193,12 +210,14 @@ function ResultList({
   loading,
   sigs,
   scenarios,
+  preselectedScenario,
   onPlaced,
   onItemAdded,
 }: {
   loading: boolean;
   sigs: RotationSignature[];
   scenarios: Scenario[];
+  preselectedScenario?: ScenarioName;
   onPlaced: () => void;
   onItemAdded?: (item: CalendarItem, draftId: string) => void;
 }) {
@@ -211,7 +230,7 @@ function ResultList({
   return (
     <>
       {sigs.map(sig => (
-        <RotationCard key={sig.id} sig={sig} scenarios={scenarios} onPlaced={onPlaced} onItemAdded={onItemAdded} />
+        <RotationCard key={sig.id} sig={sig} scenarios={scenarios} preselectedScenario={preselectedScenario} onPlaced={onPlaced} onItemAdded={onItemAdded} />
       ))}
     </>
   );
@@ -223,12 +242,14 @@ function SimpleTab({
   data,
   loading,
   scenarios,
+  preselectedScenario,
   onPlaced,
   onItemAdded,
 }: {
   data: RotationSignature[] | null;
   loading: boolean;
   scenarios: Scenario[];
+  preselectedScenario?: ScenarioName;
   onPlaced: () => void;
   onItemAdded?: (item: CalendarItem, draftId: string) => void;
 }) {
@@ -329,7 +350,7 @@ function SimpleTab({
 
       {/* Results */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3" style={{ WebkitOverflowScrolling: 'touch' } as React.CSSProperties}>
-        <ResultList loading={loading} sigs={filtered} scenarios={scenarios} onPlaced={onPlaced} onItemAdded={onItemAdded} />
+        <ResultList loading={loading} sigs={filtered} scenarios={scenarios} preselectedScenario={preselectedScenario} onPlaced={onPlaced} onItemAdded={onItemAdded} />
       </div>
     </>
   );
@@ -388,12 +409,14 @@ function ValTab({
   data,
   loading,
   scenarios,
+  preselectedScenario,
   onPlaced,
   onItemAdded,
 }: {
   data: RotationSignature[] | null;
   loading: boolean;
   scenarios: Scenario[];
+  preselectedScenario?: ScenarioName;
   onPlaced: () => void;
   onItemAdded?: (item: CalendarItem, draftId: string) => void;
 }) {
@@ -447,7 +470,7 @@ function ValTab({
 
       {/* Results */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3" style={{ WebkitOverflowScrolling: 'touch' } as React.CSSProperties}>
-        <ResultList loading={loading} sigs={filtered} scenarios={scenarios} onPlaced={onPlaced} onItemAdded={onItemAdded} />
+        <ResultList loading={loading} sigs={filtered} scenarios={scenarios} preselectedScenario={preselectedScenario} onPlaced={onPlaced} onItemAdded={onItemAdded} />
       </div>
     </>
   );
@@ -460,11 +483,15 @@ type Tab = 'simple' | 'val';
 export function SearchPanel({
   month,
   scenarios,
+  preselectedScenario,
+  panelTop,
   onClose,
   onItemAdded,
 }: {
   month: string;
   scenarios: Scenario[];
+  preselectedScenario?: ScenarioName;
+  panelTop?: number;
   onClose: () => void;
   onItemAdded?: (item: CalendarItem, draftId: string) => void;
 }) {
@@ -503,10 +530,12 @@ export function SearchPanel({
       {/* Backdrop */}
       <div className="fixed inset-0 z-30 bg-black/20" onClick={onClose} />
 
-      {/* Panel */}
+      {/* Panel — si panelTop défini : s'étend de la ligne choisie jusqu'en bas */}
       <div
-        className="fixed bottom-0 left-0 right-0 z-40 bg-white dark:bg-zinc-950 rounded-t-2xl shadow-2xl flex flex-col"
-        style={{ height: '70vh' }}
+        className="fixed left-0 right-0 z-40 bg-white dark:bg-zinc-950 rounded-t-2xl shadow-2xl flex flex-col"
+        style={panelTop !== undefined
+          ? { top: panelTop, bottom: 0 }
+          : { bottom: 0, height: '70vh' }}
       >
         {/* Header */}
         <div className="flex-shrink-0 px-5 pt-4 pb-0">
@@ -514,6 +543,9 @@ export function SearchPanel({
             <div>
               <h2 className="font-semibold text-sm">
                 Rotations · <span className="text-zinc-400 font-normal">{month}</span>
+                {preselectedScenario && (
+                  <span className="ml-2 px-2 py-0.5 rounded-full bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 text-xs font-bold">→ {preselectedScenario}</span>
+                )}
               </h2>
               {data && (
                 <p className="text-xs text-zinc-400 mt-0.5">
@@ -553,9 +585,9 @@ export function SearchPanel({
         {/* Tab content */}
         <div className="flex-1 flex flex-col overflow-hidden pt-3">
           {tab === 'simple' ? (
-            <SimpleTab data={data} loading={loading} scenarios={scenarios} onPlaced={handlePlaced} onItemAdded={onItemAdded} />
+            <SimpleTab data={data} loading={loading} scenarios={scenarios} preselectedScenario={preselectedScenario} onPlaced={handlePlaced} onItemAdded={onItemAdded} />
           ) : (
-            <ValTab data={data} loading={loading} scenarios={scenarios} onPlaced={handlePlaced} onItemAdded={onItemAdded} />
+            <ValTab data={data} loading={loading} scenarios={scenarios} preselectedScenario={preselectedScenario} onPlaced={handlePlaced} onItemAdded={onItemAdded} />
           )}
         </div>
       </div>
