@@ -186,7 +186,7 @@ export function NavBar() {
 
   return (
     <div className="bg-zinc-900 border-b border-zinc-700 flex-shrink-0" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
-      <nav className="flex items-center h-10 px-3 gap-1 overflow-x-auto">
+      <nav className="flex items-center h-8 px-3 gap-1 overflow-x-auto">
         {TABS.map(tab => {
           const active = tab.href === '/'
             ? path === '/'

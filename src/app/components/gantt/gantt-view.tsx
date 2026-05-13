@@ -1067,12 +1067,12 @@ export function GanttView({
                   style={{ minHeight: ROW_H }}
                 >
                   {/* Label */}
-                  <div className="flex-shrink-0 flex flex-col border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 py-2 items-center"
+                  <div className="flex-shrink-0 flex flex-col border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 pt-1 pb-1 items-center"
                     style={{ width: LABEL_W }}>
-                    <span className="text-base font-bold text-zinc-700 dark:text-zinc-100 mb-0.5">{scenario.name}</span>
 
-                    {/* x / y ON */}
-                    <div className="mb-1">
+                    {/* Nom scénario + ON — toujours visibles en haut */}
+                    <span className="text-base font-bold text-zinc-700 dark:text-zinc-100">{scenario.name}</span>
+                    <div className="mb-0.5">
                       {yMax >= 0 ? (
                         <span className={`text-[9px] font-semibold font-mono px-1.5 rounded ${stats.onDays > yMax ? 'bg-red-100 dark:bg-red-950/50 text-red-600 dark:text-red-400' : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300'}`}>
                           {stats.onDays}/{yMax}ON
@@ -1084,7 +1084,8 @@ export function GanttView({
                       ) : null}
                     </div>
 
-                    <div className="w-full px-2 flex flex-col gap-[2px]">
+                    {/* FinRows */}
+                    <div className="w-full px-2 flex flex-col gap-[1px]">
                       <FinRow label="FIXE" value={stats.fin.fixe} cls="text-zinc-400" />
                       <FinRow label="PV"   value={stats.fin.pv}   cls="text-blue-500" />
                       {stats.fin.hs > 0 ? (
@@ -1122,40 +1123,41 @@ export function GanttView({
                           <FinRow label="MF" value={irMfByScenario[scenario.name].mf_eur} cls="text-orange-700 dark:text-orange-300" />
                         </>
                       )}
-                      {/* Bouton détail → flyout vers la droite */}
-                      <button
-                        onClick={e => {
-                          if (isDetailOpen) { setDetailPanel(null); return; }
-                          const rowEl = (e.currentTarget as HTMLElement).closest<HTMLElement>('[data-sr]');
-                          const rect  = rowEl?.getBoundingClientRect() ?? e.currentTarget.getBoundingClientRect();
-                          const totalPv    = stats.totalHcr + stats.totalTsvNuit / 2;
-                          const pvEur      = stats.fin.pv;
-                          const tauxMoyen  = stats.totalHc > 0 ? pvEur / stats.totalHc : PVEI * KSP;
-                          const nb30eEff   = Math.max(0, (REGIME_NB30E[userRegime] ?? NB_30E) - stats.congeDays);
-                          const nb30eEff2  = isFullPrimeMonth(userRegime, mo) ? 30 : nb30eEff;
-                          const seuil75    = 75 * (nb30eEff2 / 30);
-                          const nb30eReg2  = REGIME_NB30E[userRegime] ?? NB_30E;
-                          const fixeFF     = isFullPrimeMonth(userRegime, mo) && nb30eReg2 > 0
-                            ? FIXE_MENSUEL * 30 / nb30eReg2 : FIXE_MENSUEL;
-                          const mgaV       = fixeFF + 85 * (nb30eEff2 / 30) * PVEI;
-                          const bitroncon  = stats.totalPrime * 2.5 * PVEI;
-                          const boost      = isFullPrimeMonth(userRegime, mo) && (REGIME_NB30E[userRegime] ?? NB_30E) > 0 ? 30 / (REGIME_NB30E[userRegime] ?? NB_30E) : 1;
-                          setDetailPanel({
-                            name: scenario.name, rect,
-                            totalPv, totalHc: stats.totalHc, seuil75, pvEur, hsH: stats.hsH, hsEur: stats.fin.hs,
-                            hsFixeRate: stats.hsFixeRate, hsVolRate: stats.hsVolRate, tauxMoyen,
-                            difEur: stats.fin.dif, mga: mgaV, fixeForFin: fixeFF,
-                            totalPrime: stats.totalPrime, bitronconEur: bitroncon,
-                            incitation: incitCount * primeIncitationUnit,
-                            a330: primeA330 * boost, instruction: primeInstruction * boost,
-                          });
-                        }}
-                        data-sr
-                        className={`mt-1 text-[9px] font-mono select-none px-2 py-0.5 rounded transition-colors ${isDetailOpen ? 'bg-zinc-700 text-white' : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-300 hover:bg-zinc-300 dark:hover:bg-zinc-600'}`}
-                      >
-                        {isDetailOpen ? '◀ fermer' : '▶ détail'}
-                      </button>
                     </div>
+
+                    {/* Bouton détail — toujours épinglé en bas */}
+                    <button
+                      onClick={e => {
+                        if (isDetailOpen) { setDetailPanel(null); return; }
+                        const rowEl = (e.currentTarget as HTMLElement).closest<HTMLElement>('[data-sr]');
+                        const rect  = rowEl?.getBoundingClientRect() ?? e.currentTarget.getBoundingClientRect();
+                        const totalPv    = stats.totalHcr + stats.totalTsvNuit / 2;
+                        const pvEur      = stats.fin.pv;
+                        const tauxMoyen  = stats.totalHc > 0 ? pvEur / stats.totalHc : PVEI * KSP;
+                        const nb30eEff   = Math.max(0, (REGIME_NB30E[userRegime] ?? NB_30E) - stats.congeDays);
+                        const nb30eEff2  = isFullPrimeMonth(userRegime, mo) ? 30 : nb30eEff;
+                        const seuil75    = 75 * (nb30eEff2 / 30);
+                        const nb30eReg2  = REGIME_NB30E[userRegime] ?? NB_30E;
+                        const fixeFF     = isFullPrimeMonth(userRegime, mo) && nb30eReg2 > 0
+                          ? FIXE_MENSUEL * 30 / nb30eReg2 : FIXE_MENSUEL;
+                        const mgaV       = fixeFF + 85 * (nb30eEff2 / 30) * PVEI;
+                        const bitroncon  = stats.totalPrime * 2.5 * PVEI;
+                        const boost      = isFullPrimeMonth(userRegime, mo) && (REGIME_NB30E[userRegime] ?? NB_30E) > 0 ? 30 / (REGIME_NB30E[userRegime] ?? NB_30E) : 1;
+                        setDetailPanel({
+                          name: scenario.name, rect,
+                          totalPv, totalHc: stats.totalHc, seuil75, pvEur, hsH: stats.hsH, hsEur: stats.fin.hs,
+                          hsFixeRate: stats.hsFixeRate, hsVolRate: stats.hsVolRate, tauxMoyen,
+                          difEur: stats.fin.dif, mga: mgaV, fixeForFin: fixeFF,
+                          totalPrime: stats.totalPrime, bitronconEur: bitroncon,
+                          incitation: incitCount * primeIncitationUnit,
+                          a330: primeA330 * boost, instruction: primeInstruction * boost,
+                        });
+                      }}
+                      data-sr
+                      className={`mt-1 flex-shrink-0 text-[9px] font-mono select-none px-2 py-0.5 rounded transition-colors ${isDetailOpen ? 'bg-zinc-700 text-white' : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-300 hover:bg-zinc-300 dark:hover:bg-zinc-600'}`}
+                    >
+                      {isDetailOpen ? '◀ fermer' : '▶ détail'}
+                    </button>
                   </div>
 
                   {/* Day grid + bars */}
