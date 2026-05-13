@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useTransition, useRef } from 'react';
+import { useState, useEffect, useTransition, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -545,6 +545,26 @@ export function GanttView({
   const [searchPanelTop, setSearchPanelTop] = useState<number | undefined>(undefined);
   const [scenarioPicker, setScenarioPicker] = useState<{ rect: DOMRect } | null>(null);
   const scenarioRowsRef = useRef<Map<ScenarioName, HTMLDivElement>>(new Map());
+
+  // Quand search ouvert : scénario sélectionné remonté en premier
+  const displayScenarios = useMemo(() => {
+    if (searchOpen && searchScenario) {
+      return [
+        ...localScenarios.filter(s => s.name === searchScenario),
+        ...localScenarios.filter(s => s.name !== searchScenario),
+      ];
+    }
+    return localScenarios;
+  }, [localScenarios, searchOpen, searchScenario]);
+
+  // Recalcule panelTop après re-render (le scénario est maintenant en première ligne)
+  useEffect(() => {
+    if (!searchOpen || !searchScenario) return;
+    requestAnimationFrame(() => {
+      const rowEl = scenarioRowsRef.current.get(searchScenario);
+      if (rowEl) setSearchPanelTop(rowEl.getBoundingClientRect().bottom);
+    });
+  }, [searchOpen, searchScenario]);
   const [scrapeOpen, setScrapeOpen] = useState(false);
   const [isAdmin,    setIsAdmin]    = useState(false);
   const [canScrape,  setCanScrape]  = useState(false);
@@ -1045,7 +1065,7 @@ export function GanttView({
 
           {/* Planning rows */}
           <div className="flex-1 flex flex-col overflow-hidden">
-            {localScenarios.map((scenario, idx) => {
+            {displayScenarios.map((scenario, idx) => {
               // Mai et Noël : placeholders à 0 — port Python à venir (instructions.md AUTRE MODIFICATION).
               const primeMai = 0;
               const primeNoel = 0;
