@@ -2,10 +2,8 @@
 
 import { useState, useEffect, useTransition, useMemo } from 'react';
 import { getRotationsForMonth, type RotationSignature, type RotationInstance } from '@/app/actions/search';
-import { addPlanningItem } from '@/app/actions/planning';
 import type { Scenario, CalendarItem } from '@/app/page';
 import type { ScenarioName } from '@/app/actions/planning';
-import { useOnlineStatus } from '@/hooks/use-online';
 import { cacheRotations, loadRotationsFromDB } from '@/lib/local-db';
 import { enqueueAdd } from '@/lib/sync-service';
 
@@ -64,7 +62,6 @@ function RotationCard({
   onPlaced: () => void;
   onItemAdded?: (item: CalendarItem, draftId: string) => void;
 }) {
-  const isOnline = useOnlineStatus();
   const [selectedInst, setSelectedInst] = useState<RotationInstance | null>(null);
   const [overlapErr, setOverlapErr]     = useState<string | null>(null);
   const [isPending, startTransition]    = useTransition();
@@ -104,11 +101,7 @@ function RotationCard({
     onItemAdded?.(newItem, scenario.id);
 
     startTransition(async () => {
-      if (isOnline) {
-        await addPlanningItem({ id, draft_id: scenario.id, kind: 'flight', start_date: inst.depart_date, end_date: endDate, pairing_instance_id: inst.id, meta });
-      } else {
-        await enqueueAdd(newItem, scenario.id);
-      }
+      await enqueueAdd(newItem, scenario.id);
       setSelectedInst(null);
       onPlaced();
     });
@@ -475,7 +468,6 @@ export function SearchPanel({
   onClose: () => void;
   onItemAdded?: (item: CalendarItem, draftId: string) => void;
 }) {
-  const isOnline = useOnlineStatus();
   const [data, setData]             = useState<RotationSignature[] | null>(null);
   const [loading, setLoading]       = useState(true);
   const [fromCache, setFromCache]   = useState(false);

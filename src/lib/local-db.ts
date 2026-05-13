@@ -70,18 +70,31 @@ class CmDatabase extends Dexie {
 
 export const db = new CmDatabase();
 
-/** Écrase le cache local pour un mois donné avec les données serveur. */
+/** Met à jour le cache local pour un mois donné avec les données serveur.
+ *  Préserve les items dont l'id est dans sync_queue (add/update non encore synchés). */
 export async function hydrateDB(scenarios: Scenario[], month: string): Promise<void> {
+  const pendingOps = await db.sync_queue.toArray();
+  const pendingIds = new Set(
+    pendingOps
+      .filter(op => op.op === 'add' || op.op === 'update')
+      .map(op => (JSON.parse(op.payload) as { id: string }).id),
+  );
+
   await db.transaction('rw', db.drafts, db.items, async () => {
     const existing = await db.drafts.where('target_month').equals(month).toArray();
     const ids = existing.map(d => d.id);
-    if (ids.length) await db.items.where('draft_id').anyOf(ids).delete();
+    if (ids.length) {
+      const all = await db.items.where('draft_id').anyOf(ids).toArray();
+      await db.items.bulkDelete(all.filter(i => !pendingIds.has(i.id)).map(i => i.id));
+    }
     await db.drafts.where('target_month').equals(month).delete();
 
     for (const s of scenarios) {
       await db.drafts.put({ id: s.id, name: s.name, target_month: month });
       for (const item of s.items) {
-        await db.items.put({ ...item, draft_id: s.id });
+        if (!pendingIds.has(item.id)) {
+          await db.items.put({ ...item, draft_id: s.id });
+        }
       }
     }
   });

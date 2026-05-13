@@ -10,7 +10,7 @@ import {
 } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
 import {
-  addPlanningItem, deletePlanningItem, updatePlanningItem, getScenariosWithItems,
+  getScenariosWithItems,
   resetPlanningScenarios,
 } from '@/app/actions/planning';
 import { ACTIVITY_META, type ActivityKind } from '@/lib/activity-meta';
@@ -23,9 +23,8 @@ import { rotationValue, monthlyFinancialsP, PRIME_BITRONCON, PVEI, KSP, FIXE_MEN
 import { computeArticle81, computeTSej24, getPlafondJours } from '@/lib/article81';
 import type { Article81Data } from '@/lib/article81';
 import { createClient } from '@/lib/supabase/client';
-import { useOnlineStatus } from '@/hooks/use-online';
 import { db, hydrateDB, loadFromDB, hasPendingOps, loadScenariosForMonth, cacheRotations } from '@/lib/local-db';
-import { enqueueAdd, enqueueDelete, enqueueUpdate, syncNow, pendingOpsCount } from '@/lib/sync-service';
+import { enqueueAdd, enqueueDelete, enqueueUpdate, pendingOpsCount } from '@/lib/sync-service';
 import { getRotationsForMonth } from '@/app/actions/search';
 import { getCurrentUserScrapeRights } from '@/app/actions/auth';
 import { NavBar } from '@/app/components/nav';
@@ -479,7 +478,6 @@ export function GanttView({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const rowRef = useRef<HTMLDivElement>(null);
-  const isOnline = useOnlineStatus();
 
   // navigation mois côté client (évite router.push → serveur → page blanche hors ligne)
   const [currentMonth, setCurrentMonth] = useState(month);
@@ -489,7 +487,6 @@ export function GanttView({
   // local state (offline-capable copy of scenarios)
   const [localScenarios, setLocalScenarios] = useState<Scenario[]>(scenarios);
   const [pendingCount, setPendingCount]     = useState(0);
-  const [isSyncing, setIsSyncing]           = useState(false);
 
   // sheet
   const [sheet, setSheet]         = useState<SheetState | null>(null);
@@ -588,54 +585,21 @@ export function GanttView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [month]);
 
-  // ── Sync automatique quand on repasse online ─────────────────────────────────
+  // ── Mise à jour depuis le serveur après le bouton Sync (router.refresh) ────
+  // Quand `scenarios` change (nouveau RSC depuis le cache mis à jour par Sync),
+  // on met à jour localScenarios si la queue est vide.
   useEffect(() => {
-    if (!isOnline) return;
-    async function doSync() {
-      const count = await pendingOpsCount();
-      if (count === 0) return;
-      setIsSyncing(true);
-      try {
-        await syncNow();
-        // Re-fetch les scénarios du mois affiché (pas via router.refresh qui se
-        // base sur la prop `month` SSR — peut différer de currentMonth si l'user
-        // a navigué localement hors ligne).
-        const fresh = await getScenariosWithItems(currentMonth);
-        setLocalScenarios(fresh);
-        await hydrateDB(fresh, currentMonth);
-        setPendingCount(0);
-      } catch { /* ignore — le fallback IndexedDB suit */ }
-      finally {
-        // setIsSyncing(false) APRÈS setLocalScenarios pour empêcher l'effet
-        // maybeRefresh ci-dessous de tirer pendant la fenêtre où la prop
-        // `scenarios` SSR est mise à jour par les revalidatePath en cascade
-        // (sinon il écrase localScenarios avec une RSC payload intermédiaire).
-        setIsSyncing(false);
-      }
-    }
-    doSync();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOnline]);
-
-  // ── Mise à jour depuis le serveur après refresh ──────────────────────────────
-  useEffect(() => {
-    // Ignore si l'user a navigué vers un autre mois localement : les `scenarios`
-    // (prop SSR) correspondent au mois `month`, pas à `currentMonth`.
     if (currentMonth !== month) return;
-    // Ignore pendant un sync en cours : doSync va setLocalScenarios avec les
-    // données fresh, et la prop `scenarios` SSR peut arriver intermédiaire
-    // (entre 2 revalidatePath). On laisse doSync être autoritatif.
-    if (isSyncing) return;
     async function maybeRefresh() {
       const count = await pendingOpsCount();
       if (count === 0) {
         setLocalScenarios(scenarios);
-        await hydrateDB(scenarios, month);
+        setPendingCount(0);
       }
     }
     maybeRefresh();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scenarios, isSyncing]);
+  }, [scenarios]);
 
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
@@ -789,22 +753,14 @@ export function GanttView({
     startTransition(async () => {
       if (sheet.mode === 'edit' && sheet.item) {
         applyUpdate(sheet.item.id, start, end);
-        if (isOnline) {
-          await updatePlanningItem(sheet.item.id, start, end);
-        } else {
-          await enqueueUpdate(sheet.item.id, start, end);
-          setPendingCount(c => c + 1);
-        }
+        await enqueueUpdate(sheet.item.id, start, end);
+        setPendingCount(c => c + 1);
       } else {
         const id = crypto.randomUUID();
         const newItem: CalendarItem = { id, kind: addKind, start_date: start, end_date: end, bid_category: null, meta: null };
         applyAdd(newItem, sheet.scenarioId);
-        if (isOnline) {
-          await addPlanningItem({ id, draft_id: sheet.scenarioId, kind: addKind, start_date: start, end_date: end });
-        } else {
-          await enqueueAdd(newItem, sheet.scenarioId);
-          setPendingCount(c => c + 1);
-        }
+        await enqueueAdd(newItem, sheet.scenarioId);
+        setPendingCount(c => c + 1);
       }
       setSheet(null);
     });
@@ -814,12 +770,8 @@ export function GanttView({
     if (!sheet?.item) return;
     startTransition(async () => {
       applyDelete(sheet.item!.id);
-      if (isOnline) {
-        await deletePlanningItem(sheet.item!.id);
-      } else {
-        await enqueueDelete(sheet.item!.id);
-        setPendingCount(c => c + 1);
-      }
+      await enqueueDelete(sheet.item!.id);
+      setPendingCount(c => c + 1);
       setSheet(null);
     });
   }
@@ -864,27 +816,13 @@ export function GanttView({
     ));
 
     startTransition(async () => {
-      // 1. Supprime l'existant
       for (const it of targetExisting) {
-        if (isOnline) {
-          await deletePlanningItem(it.id);
-        } else {
-          await enqueueDelete(it.id);
-          setPendingCount(c => c + 1);
-        }
+        await enqueueDelete(it.id);
+        setPendingCount(c => c + 1);
       }
-      // 2. Insère les copies
       for (const it of newItems) {
-        if (isOnline) {
-          await addPlanningItem({
-            id: it.id, draft_id: targetScenario.id, kind: it.kind,
-            start_date: it.start_date, end_date: it.end_date,
-            bid_category: it.bid_category, meta: it.meta,
-          });
-        } else {
-          await enqueueAdd(it, targetScenario.id);
-          setPendingCount(c => c + 1);
-        }
+        await enqueueAdd(it, targetScenario.id);
+        setPendingCount(c => c + 1);
       }
     });
 
@@ -926,12 +864,8 @@ export function GanttView({
 
     applyUpdate(item.id, newStartStr, newEndStr);
     startTransition(async () => {
-      if (isOnline) {
-        await updatePlanningItem(item.id, newStartStr, newEndStr);
-      } else {
-        await enqueueUpdate(item.id, newStartStr, newEndStr);
-        setPendingCount(c => c + 1);
-      }
+      await enqueueUpdate(item.id, newStartStr, newEndStr);
+      setPendingCount(c => c + 1);
     });
   }
 
@@ -958,16 +892,10 @@ export function GanttView({
         <header className="flex items-center justify-between px-4 h-14 border-b border-zinc-200 dark:border-zinc-800 flex-shrink-0">
           <div className="flex items-center gap-2">
             <span className="font-semibold text-sm tracking-tight">CM-offline</span>
-            {isSyncing && (
-              <span className="text-[10px] text-blue-400 animate-pulse">sync…</span>
-            )}
-            {!isOnline && pendingCount > 0 && (
+            {pendingCount > 0 && (
               <span className="text-[10px] font-mono bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 px-1.5 rounded-full">
-                {pendingCount} hors ligne
+                {pendingCount} à sync
               </span>
-            )}
-            {!isOnline && pendingCount === 0 && (
-              <span className="text-[10px] text-zinc-400">hors ligne</span>
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -1470,8 +1398,7 @@ export function GanttView({
           onClose={() => setSearchOpen(false)}
           onItemAdded={(item, draftId) => {
             applyAdd(item, draftId);
-            // Bump pending uniquement si offline — online n'a pas d'op en attente
-            if (!isOnline) setPendingCount(c => c + 1);
+            setPendingCount(c => c + 1);
           }}
         />
       )}
