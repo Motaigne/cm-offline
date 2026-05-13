@@ -96,31 +96,29 @@ export function ProfilForm({
     );
     if (!hasAnnexe || !fonction) return null;
 
-    const nb30e = regime ? REGIME_NB30E[regime as RegimeEnum] : 23;
-    const cl    = parseInt(classe)   || 2;
-    const ech   = parseInt(echelon)  || 4;
+    const nb30e   = regime ? REGIME_NB30E[regime as RegimeEnum] : 23;
+    const is10_12 = regime ? REGIME_MOIS12[regime as RegimeEnum] === 10 : false;
+    const cl      = parseInt(classe)  || 2;
+    const ech     = parseInt(echelon) || 4;
 
-    // Mapping fonction profil → clé de la table prime_instruction
-    // (ICPL = TRI CDB côté annexe ; TRI OPL = TRI_OPL)
     const primeInstFonction = fonction === 'TRI_OPL' ? 'TRI_OPL'
       : fonction === 'TRI_CDB' ? 'ICPL'
       : null;
     const primeInstAnnee = (isTri && triNiveau !== '') ? parseInt(triNiveau) : null;
 
-    return computeFullProfile(
-      aircraft,
-      fonction,
-      cl,
-      categorie,
-      ech,
-      bonusAtpl,
-      nb30e,
-      'LC',
-      primeInstFonction,
-      primeInstAnnee,
-      prime330Count,
-      annexe as AnnexeData,
-    );
+    const profileArgs = [aircraft, fonction, cl, categorie, ech, bonusAtpl, nb30e, 'LC' as const,
+      primeInstFonction, primeInstAnnee, prime330Count, annexe as AnnexeData] as const;
+
+    const main = computeFullProfile(...profileArgs);
+
+    // Pour les régimes 10/12 : en juil/août il n'y a pas de jours TAF (congé TAF),
+    // donc nb30e = 30 → les primes sont plus élevées ces 2 mois.
+    const juillAout = is10_12
+      ? computeFullProfile(aircraft, fonction, cl, categorie, ech, bonusAtpl, 30, 'LC',
+          primeInstFonction, primeInstAnnee, prime330Count, annexe as AnnexeData)
+      : null;
+
+    return { ...main, juillAout };
   }, [annexe, fonction, regime, aircraft, classe, categorie, echelon, bonusAtpl, isTri, triNiveau, prime330Count]);
 
   function handleSave() {
@@ -368,12 +366,26 @@ export function ProfilForm({
             <ValueCard label="Prime d'incitation"  value={`${computed.primeIncitation.toFixed(2)} €`} color="amber"  />
             {/* ligne 4 (conditionnelle) */}
             {isTri && computed.primeInstruction > 0 && (
-              <ValueCard label="Prime mensuelle d'instruction"
-                value={`${computed.primeInstruction.toFixed(2)} €`} color="amber" />
+              <>
+                <ValueCard
+                  label={computed.juillAout ? "Prime d'instruction (jan–juin, sep–déc)" : "Prime mensuelle d'instruction"}
+                  value={`${computed.primeInstruction.toFixed(2)} €`} color="amber" />
+                {computed.juillAout && (
+                  <ValueCard label="Prime d'instruction (juil–août)"
+                    value={`${computed.juillAout.primeInstruction.toFixed(2)} €`} color="amber" />
+                )}
+              </>
             )}
             {prime330 && computed.primeA330 > 0 && (
-              <ValueCard label="Prime A330"
-                value={`${computed.primeA330.toFixed(2)} €`} color="amber" />
+              <>
+                <ValueCard
+                  label={computed.juillAout ? 'Prime A330 (jan–juin, sep–déc)' : 'Prime A330'}
+                  value={`${computed.primeA330.toFixed(2)} €`} color="amber" />
+                {computed.juillAout && (
+                  <ValueCard label="Prime A330 (juil–août)"
+                    value={`${computed.juillAout.primeA330.toFixed(2)} €`} color="amber" />
+                )}
+              </>
             )}
           </div>
         </div>

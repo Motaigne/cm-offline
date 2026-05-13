@@ -1,6 +1,6 @@
 import { defaultCache } from '@serwist/next/worker';
 import type { PrecacheEntry, SerwistGlobalConfig } from 'serwist';
-import { Serwist, NetworkFirst, CacheFirst, ExpirationPlugin } from 'serwist';
+import { Serwist, CacheFirst, ExpirationPlugin } from 'serwist';
 
 declare global {
   interface WorkerGlobalScope extends SerwistGlobalConfig {
@@ -16,8 +16,8 @@ const serwist = new Serwist({
   clientsClaim: true,
   navigationPreload: true,
   runtimeCaching: [
-    // RSC payloads (Next.js soft navigation) : NetworkFirst court pour obtenir
-    // des données fraîches quand en ligne, fallback cache sinon.
+    // RSC payloads (Next.js soft navigation) : CacheFirst — l'app est offline-first,
+    // le bouton Sync met à jour le cache RSC via precachePage (fetch RSC:1 explicite).
     {
       matcher: ({ request, sameOrigin, url }) =>
         sameOrigin &&
@@ -26,9 +26,8 @@ const serwist = new Serwist({
         (request.headers.get('RSC') === '1' ||
          request.headers.get('Next-Router-Prefetch') === '1' ||
          url.searchParams.has('_rsc')),
-      handler: new NetworkFirst({
+      handler: new CacheFirst({
         cacheName: 'rsc',
-        networkTimeoutSeconds: 1,
         plugins: [
           new ExpirationPlugin({ maxEntries: 128, maxAgeSeconds: 30 * 24 * 60 * 60 }),
         ],

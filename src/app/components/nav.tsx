@@ -177,12 +177,12 @@ export function NavBar() {
     window.location.reload();
   }
 
-  const syncIcon = syncStatus === 'ok' ? '✓' : syncStatus === 'err' || syncStatus === 'offline' ? '!' : '⟳';
+  const syncLabel = syncStatus === 'ok' ? '✓' : syncStatus === 'err' || syncStatus === 'offline' ? '!' : 'Sync';
   const syncColor = syncStatus === 'ok'
     ? 'text-emerald-500'
     : syncStatus === 'err' || syncStatus === 'offline'
     ? 'text-red-500'
-    : 'text-zinc-500 hover:text-zinc-300';
+    : 'text-zinc-400 hover:text-zinc-100';
 
   return (
     <div className="bg-zinc-900 border-b border-zinc-700 flex-shrink-0" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
@@ -217,24 +217,21 @@ export function NavBar() {
           </a>
         )}
         <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
-          <span title={swReady ? 'Service worker actif' : 'Service worker en attente'} className={`text-xs ${swReady ? 'text-emerald-500' : 'text-amber-500'}`}>
-            {swReady ? '●' : '○'}
-          </span>
           <button
             onClick={handleSync}
             disabled={syncing}
             title={
-              syncStatus === 'offline' ? 'Pas de réseau — impossible de synchroniser'
-              : syncStatus === 'push'  ? 'Envoi des modifications…'
-              : syncStatus === 'pull'  ? 'Téléchargement des données…'
-              : syncStatus === 'ok'    ? 'Synchronisation réussie'
+              syncStatus === 'offline' ? 'Pas de réseau'
+              : syncStatus === 'push'  ? 'Envoi…'
+              : syncStatus === 'pull'  ? 'Téléchargement…'
+              : syncStatus === 'ok'    ? 'Synchronisé'
               : syncStatus === 'err'   ? 'Erreur de synchronisation'
-              : pendingCount > 0       ? `${pendingCount} modification(s) à envoyer — cliquer pour synchroniser`
-              : 'Synchroniser (envoyer les modifications puis télécharger)'
+              : pendingCount > 0       ? `${pendingCount} modification(s) en attente`
+              : 'Synchroniser'
             }
-            className={`relative px-3 h-8 flex items-center gap-1 text-sm disabled:opacity-50 rounded hover:bg-zinc-800 transition-colors ${syncColor}`}
+            className={`relative px-3 h-8 flex items-center gap-1 text-sm font-medium disabled:opacity-50 rounded hover:bg-zinc-800 transition-colors ${syncColor}`}
           >
-            <span className={syncing ? 'animate-spin inline-block' : ''}>{syncIcon}</span>
+            <span className={syncing ? 'animate-pulse' : ''}>{syncLabel}</span>
             {dlProgress && <span className="font-mono text-xs">{dlProgress}</span>}
             {(syncStatus === 'push' || syncStatus === 'pull') && !dlProgress && (
               <span className="text-[10px] animate-pulse">{syncStatus === 'push' ? '↑' : '↓'}</span>
