@@ -50,13 +50,17 @@ export default async function Home({
   if (!profile) redirect('/profil');
 
   const [y, mo] = month.split('-').map(Number);
-  const [scenarios, annexe, { data: a81Row }, a81Cumul, irMfMonth] = await Promise.all([
+  const [scenarios, annexe, { data: a81Row }, a81Cumul, irMfMonth, { data: prorataRow }] = await Promise.all([
     getScenariosWithItems(month),
     loadAnnexe(),
     supabase.from('annexe_table').select('data').eq('slug', 'article_81').single(),
     getYearA81CumulBefore(y, mo),
     getMonthlyIrMfEuros(month),
+    supabase.from('annexe_table').select('data').eq('slug', 'prorata').single(),
   ]);
+  type ProrataThreshold = { range: string; ji_restants: number; duree_min: number; duree_min_opt6: number };
+  const prorataThresholds: ProrataThreshold[] =
+    (prorataRow?.data as { thresholds: ProrataThreshold[] } | null)?.thresholds ?? [];
   const article81Data: Article81Data | null = (a81Row?.data as Article81Data | null) ?? null;
   const valeurJour = Number(profile.valeur_jour ?? 600);
 
@@ -117,6 +121,7 @@ export default async function Home({
       valeurJour={valeurJour}
       a81CumulBefore={a81Cumul.byScenarioBefore}
       irMfByScenario={irMfMonth.byScenario}
+      prorataThresholds={prorataThresholds}
     />
   );
 }

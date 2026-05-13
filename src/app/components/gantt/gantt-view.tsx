@@ -33,11 +33,11 @@ type RegimeEnum = Database['public']['Enums']['regime_enum'];
 
 // ─── layout constants ────────────────────────────────────────────────────────
 
-const LABEL_W = 96;
-const DAY_H   = 44;
-const ROW_H   = 180;
-const BAR_H   = 52;
-const BAR_TOP = (ROW_H - BAR_H) / 2;
+const LABEL_W          = 96;
+const DAY_H            = 44;
+const ROW_H_COLLAPSED  = 180;
+const ROW_H_EXPANDED   = 280;
+const BAR_H            = 52;
 
 // ─── locale / calendar helpers ───────────────────────────────────────────────
 
@@ -118,6 +118,22 @@ function clipItem(item: CalendarItem, y: number, mo: number) {
   const start = item.start_date.slice(0,7) < prefix ? 1 : dayNum(item.start_date);
   const end   = item.end_date.slice(0,7)   > prefix ? dim : dayNum(item.end_date);
   return { start, end };
+}
+
+// ─── prorata table (DDA OFF) ─────────────────────────────────────────────────
+
+type ProrataThreshold = { range: string; ji_restants: number; duree_min: number; duree_min_opt6: number };
+
+function lookupJI(n: number, thresholds: ProrataThreshold[]): number {
+  for (const t of thresholds) {
+    if (t.range.startsWith('>')) {
+      if (n > parseInt(t.range.slice(1))) return t.ji_restants;
+    } else {
+      const [lo, hi] = t.range.split('-').map(Number);
+      if (n >= lo && n <= hi) return t.ji_restants;
+    }
+  }
+  return 0;
 }
 
 // ─── prorata mois (rotations à cheval) ───────────────────────────────────────
@@ -252,7 +268,7 @@ function FinRow({ label, value, cls, bold }: { label: string; value: number; cls
 const REST_H = 6;
 
 function DraggableBar({
-  item, clip, dim, year, mo, onEdit, isDragSource,
+  item, clip, dim, year, mo, onEdit, isDragSource, rowH,
 }: {
   item: CalendarItem;
   clip: { start: number; end: number };
@@ -261,6 +277,7 @@ function DraggableBar({
   mo: number;
   onEdit: (item: CalendarItem) => void;
   isDragSource: boolean;
+  rowH: number;
 }) {
   const readOnly = !!item._isSpillover;
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
@@ -330,7 +347,8 @@ function DraggableBar({
     wPct    = (span / dim) * 100;
   }
 
-  const restTop = BAR_TOP + (BAR_H - REST_H) / 2;
+  const barTop  = (rowH - BAR_H) / 2;
+  const restTop = barTop + (BAR_H - REST_H) / 2;
 
   return (
     <>
@@ -371,7 +389,7 @@ function DraggableBar({
           position: 'absolute',
           left: `${leftPct}%`,
           width: `${wPct}%`,
-          top: BAR_TOP,
+          top: barTop,
           height: BAR_H,
           backgroundColor: actMeta.color,
           color: actMeta.textColor,
@@ -452,6 +470,7 @@ export function GanttView({
   article81Data = null, valeurJour = 600,
   a81CumulBefore = { A: 0, B: 0, C: 0 },
   irMfByScenario,
+  prorataThresholds = [],
 }: {
   month: string;
   scenarios: Scenario[];
@@ -474,6 +493,8 @@ export function GanttView({
   /** Totaux IR/MF (compte + €) par scénario pour le mois courant — pré-calculés
    *  côté serveur via raw_detail (cf. getMonthlyIrMfEuros). */
   irMfByScenario?: Record<'A' | 'B' | 'C', { ir: number; mf: number; ir_eur: number; mf_eur: number; skipped: number }>;
+  /** Seuils prorata DDA OFF depuis annexe_table slug='prorata'. */
+  prorataThresholds?: ProrataThreshold[];
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -503,6 +524,9 @@ export function GanttView({
   const [scrapeOpen, setScrapeOpen] = useState(false);
   const [isAdmin,    setIsAdmin]    = useState(false);
   const [canScrape,  setCanScrape]  = useState(false);
+
+  // Accordéon colonne paie — scénarios développés
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
   // Compteur prime d'incitation (0-5), persistance localStorage par mois.
   const [incitCount, setIncitCount] = useState(0);
@@ -1005,28 +1029,33 @@ export function GanttView({
               const cumulBeforeForScenario = a81CumulBefore[scenario.name] ?? 0;
               const stats = computeStats(scenario.items, year, mo, cngPv, cngHs, userRegime, monthlyFixedPrimes, article81Data, valeurJour, cumulBeforeForScenario);
               const isLast = idx === localScenarios.length - 1;
+              const isExpanded = expandedRows.has(scenario.name);
+              const tafDays   = tafOk ? tafDur : 0;
+              const joursProrata = stats.congeDays + tafDays;
+              const jiRestants   = prorataThresholds.length > 0 ? lookupJI(joursProrata, prorataThresholds) : -1;
+              const yMax         = jiRestants >= 0 ? dim - jiRestants - joursProrata : -1;
+              const rowH = isExpanded ? ROW_H_EXPANDED : ROW_H_COLLAPSED;
               return (
                 <div key={scenario.name}
                   className={`flex flex-shrink-0 ${!isLast ? 'border-b border-zinc-200 dark:border-zinc-800' : ''}`}
-                  style={{ height: ROW_H }}
+                  style={{ height: rowH }}
                 >
                   {/* Label */}
-                  <div className="flex-shrink-0 flex flex-col border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 py-2 items-center"
+                  <div className="flex-shrink-0 flex flex-col border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 py-2 items-center overflow-hidden"
                     style={{ width: LABEL_W }}>
-                    <span className="text-2xl font-bold text-zinc-700 dark:text-zinc-100 mb-1">{scenario.name}</span>
+                    <span className="text-2xl font-bold text-zinc-700 dark:text-zinc-100 mb-0.5">{scenario.name}</span>
 
-                    {/* ON / Congés */}
-                    <div className="w-full px-2 flex items-center justify-center gap-1.5 mb-1">
-                      {stats.onDays > 0 && (
+                    {/* x / y ON */}
+                    <div className="mb-1">
+                      {yMax >= 0 ? (
+                        <span className={`text-[9px] font-semibold font-mono px-1.5 rounded ${stats.onDays > yMax ? 'bg-red-100 dark:bg-red-950/50 text-red-600 dark:text-red-400' : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300'}`}>
+                          {stats.onDays}/{yMax}ON
+                        </span>
+                      ) : stats.onDays > 0 ? (
                         <span className="text-[9px] font-semibold font-mono bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 px-1 rounded">
                           {stats.onDays}ON
                         </span>
-                      )}
-                      {stats.congeDays > 0 && (
-                        <span className="text-[9px] font-semibold font-mono bg-pink-100 dark:bg-pink-950/50 text-pink-600 dark:text-pink-400 px-1 rounded">
-                          {stats.congeDays}cg
-                        </span>
-                      )}
+                      ) : null}
                     </div>
 
                     <div className="w-full px-2 flex flex-col gap-[2px]">
@@ -1035,40 +1064,59 @@ export function GanttView({
                       {stats.fin.hs > 0 && (
                         <FinRow label="HS" value={stats.fin.hs}     cls="text-green-500" />
                       )}
-                      {stats.fin.dif > 0 && (
-                        <FinRow label="DIF" value={stats.fin.dif}   cls="text-violet-500" />
-                      )}
                       {stats.fin.primes > 0 && (
-                        <FinRow label="+P" value={stats.fin.primes} cls="text-amber-500" />
+                        <FinRow label="P"  value={stats.fin.primes} cls="text-amber-500" />
                       )}
                       <div className="border-t border-zinc-300 dark:border-zinc-600 my-0.5" />
                       <FinRow label="=" value={stats.fin.total} cls="text-zinc-700 dark:text-zinc-100" bold />
-                      {stats.congeDays > 0 && (
+
+                      {/* Accordéon toggle */}
+                      <button
+                        onClick={() => setExpandedRows(prev => {
+                          const next = new Set(prev);
+                          if (next.has(scenario.name)) next.delete(scenario.name);
+                          else next.add(scenario.name);
+                          return next;
+                        })}
+                        className="text-[7px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 mt-0.5 text-left select-none"
+                      >
+                        {isExpanded ? '▲ moins' : '▼ détail'}
+                      </button>
+
+                      {/* Accordéon détail */}
+                      {isExpanded && (
                         <>
-                          <FinRow label="+cg" value={stats.congeAmount} cls="text-pink-500" />
-                          <div className="border-t border-dashed border-zinc-300 dark:border-zinc-600 my-0.5" />
-                          <FinRow label="BRUT" value={stats.brut} cls="text-emerald-600 dark:text-emerald-400" bold />
-                        </>
-                      )}
-                      {stats.totalA81 > 0 && (
-                        <>
-                          <div className="border-t border-dashed border-emerald-300 dark:border-emerald-700/40 my-0.5" />
-                          <FinRow label="A81" value={stats.totalA81} cls="text-emerald-600 dark:text-emerald-400" bold />
-                          <div className="flex items-baseline justify-between gap-0.5">
-                            <span className="text-[7.5px] font-mono leading-none text-emerald-600/70 dark:text-emerald-400/60">
-                              {stats.cumulJoursRunning.toFixed(1)}/{stats.plafondJours}j
-                            </span>
-                            {stats.cumulJoursRunning >= stats.plafondJours && (
-                              <span className="text-[7.5px] font-bold leading-none text-amber-500">PLAFOND</span>
-                            )}
-                          </div>
-                        </>
-                      )}
-                      {irMfByScenario && (irMfByScenario[scenario.name]?.ir_eur > 0 || irMfByScenario[scenario.name]?.mf_eur > 0) && (
-                        <>
-                          <div className="border-t border-dashed border-orange-300 dark:border-orange-700/40 my-0.5" />
-                          <FinRow label="IR" value={irMfByScenario[scenario.name].ir_eur} cls="text-orange-600 dark:text-orange-400" bold />
-                          <FinRow label="MF" value={irMfByScenario[scenario.name].mf_eur} cls="text-orange-700 dark:text-orange-300" />
+                          {stats.fin.dif > 0 && (
+                            <FinRow label="DIF" value={stats.fin.dif} cls="text-violet-500" />
+                          )}
+                          {stats.congeDays > 0 && (
+                            <>
+                              <FinRow label="+cg" value={stats.congeAmount} cls="text-pink-500" />
+                              <div className="border-t border-dashed border-zinc-300 dark:border-zinc-600 my-0.5" />
+                              <FinRow label="BRUT" value={stats.brut} cls="text-emerald-600 dark:text-emerald-400" bold />
+                            </>
+                          )}
+                          {stats.totalA81 > 0 && (
+                            <>
+                              <div className="border-t border-dashed border-emerald-300 dark:border-emerald-700/40 my-0.5" />
+                              <FinRow label="A81" value={stats.totalA81} cls="text-emerald-600 dark:text-emerald-400" bold />
+                              <div className="flex items-baseline justify-between gap-0.5">
+                                <span className="text-[7.5px] font-mono leading-none text-emerald-600/70 dark:text-emerald-400/60">
+                                  {stats.cumulJoursRunning.toFixed(1)}/{stats.plafondJours}j
+                                </span>
+                                {stats.cumulJoursRunning >= stats.plafondJours && (
+                                  <span className="text-[7.5px] font-bold leading-none text-amber-500">PLAFOND</span>
+                                )}
+                              </div>
+                            </>
+                          )}
+                          {irMfByScenario && (irMfByScenario[scenario.name]?.ir_eur > 0 || irMfByScenario[scenario.name]?.mf_eur > 0) && (
+                            <>
+                              <div className="border-t border-dashed border-orange-300 dark:border-orange-700/40 my-0.5" />
+                              <FinRow label="IR" value={irMfByScenario[scenario.name].ir_eur} cls="text-orange-600 dark:text-orange-400" bold />
+                              <FinRow label="MF" value={irMfByScenario[scenario.name].mf_eur} cls="text-orange-700 dark:text-orange-300" />
+                            </>
+                          )}
                         </>
                       )}
                     </div>
@@ -1127,6 +1175,7 @@ export function GanttView({
                           mo={mo}
                           onEdit={(it) => openEdit(it, scenario)}
                           isDragSource={dragging?.id === item.id}
+                          rowH={rowH}
                         />
                       );
                     })}
