@@ -244,19 +244,24 @@ function computeStats(
   const hsFixeRate = nb30eForFin > 0 ? fixeForFin * 1.25 / 75 : 0;
   const hsVolRate  = tauxMoyen * 0.25;
   const hsSeuil    = 75 * (nb30eForFin / 30);
-  const hsH        = Math.max(0, totalPv - hsSeuil);
+  const hsH        = Math.max(0, totalHc - hsSeuil);
   const hsNew      = hsH * (hsFixeRate + hsVolRate);
   // PRIME = bi-tronçon (sommée par vol via finBase.primes) + primes mensuelles
   // fixes (incit + A330 + instruction + Mai + Noël). monthlyFixedPrimes est calculé
   // en amont avec proration régime + boost 100% en juillet/août pour TAF*_10_12.
   const primesTotal = finBase.primes + monthlyFixedPrimes;
+  const congeAmount = congeDays * (cngPv + cngHs);
+  // DIF = max(0, MGA − (FIXE + PV€ + congeAmount)) : les congés payés comptent
+  // vers le plancher MGA avant que le DIF ne complète.
+  const mga      = finBase.fixe + 85 * (nb30eForFin / 30) * PVEI;
+  const difFinal = Math.max(0, mga - (finBase.fixe + finBase.pv + congeAmount));
   const fin = {
     ...finBase,
+    dif:    difFinal,
     hs:     hsNew,
     primes: primesTotal,
-    total:  finBase.fixe + finBase.pv + hsNew + primesTotal + finBase.dif,
+    total:  finBase.fixe + finBase.pv + hsNew + primesTotal + difFinal,
   };
-  const congeAmount = congeDays * (cngPv + cngHs);
   const brut = fin.total + congeAmount;
   return {
     flights, onDays, congeDays, totalHcr, totalHc, totalPrime, totalTsvNuit,
@@ -542,9 +547,9 @@ export function GanttView({
   // Panneau détail paie (flyout fixe à droite du label)
   type DetailPanel = {
     name: string; rect: DOMRect;
-    totalPv: number; seuil75: number; pvEur: number; hsH: number; hsEur: number;
+    totalPv: number; totalHc: number; seuil75: number; pvEur: number; hsH: number; hsEur: number;
     hsFixeRate: number; hsVolRate: number; tauxMoyen: number;
-    difEur: number; mga: number;
+    difEur: number; mga: number; fixeForFin: number;
     totalPrime: number; bitronconEur: number; incitation: number; a330: number; instruction: number;
   };
   const [detailPanel, setDetailPanel] = useState<DetailPanel | null>(null);
@@ -1087,6 +1092,9 @@ export function GanttView({
                       {stats.fin.primes > 0 && (
                         <FinRow label="P"  value={stats.fin.primes} cls="text-amber-500" />
                       )}
+                      {stats.fin.dif > 0 && (
+                        <FinRow label="DIF" value={stats.fin.dif} cls="text-violet-500" />
+                      )}
                       <div className="border-t border-zinc-300 dark:border-zinc-600 my-0.5" />
                       <FinRow label="=" value={stats.fin.total} cls="text-zinc-700 dark:text-zinc-100" bold />
                       {stats.congeDays > 0 && (
@@ -1129,14 +1137,17 @@ export function GanttView({
                           const nb30eEff   = Math.max(0, (REGIME_NB30E[userRegime] ?? NB_30E) - stats.congeDays);
                           const nb30eEff2  = isFullPrimeMonth(userRegime, mo) ? 30 : nb30eEff;
                           const seuil75    = 75 * (nb30eEff2 / 30);
-                          const mgaV       = FIXE_MENSUEL + 85 * (nb30eEff2 / 30) * PVEI;
+                          const nb30eReg2  = REGIME_NB30E[userRegime] ?? NB_30E;
+                          const fixeFF     = isFullPrimeMonth(userRegime, mo) && nb30eReg2 > 0
+                            ? FIXE_MENSUEL * 30 / nb30eReg2 : FIXE_MENSUEL;
+                          const mgaV       = fixeFF + 85 * (nb30eEff2 / 30) * PVEI;
                           const bitroncon  = stats.totalPrime * 2.5 * PVEI;
                           const boost      = isFullPrimeMonth(userRegime, mo) && (REGIME_NB30E[userRegime] ?? NB_30E) > 0 ? 30 / (REGIME_NB30E[userRegime] ?? NB_30E) : 1;
                           setDetailPanel({
                             name: scenario.name, rect,
-                            totalPv, seuil75, pvEur, hsH: stats.hsH, hsEur: stats.fin.hs,
+                            totalPv, totalHc: stats.totalHc, seuil75, pvEur, hsH: stats.hsH, hsEur: stats.fin.hs,
                             hsFixeRate: stats.hsFixeRate, hsVolRate: stats.hsVolRate, tauxMoyen,
-                            difEur: stats.fin.dif, mga: mgaV,
+                            difEur: stats.fin.dif, mga: mgaV, fixeForFin: fixeFF,
                             totalPrime: stats.totalPrime, bitronconEur: bitroncon,
                             incitation: incitCount * primeIncitationUnit,
                             a330: primeA330 * boost, instruction: primeInstruction * boost,
@@ -1504,7 +1515,7 @@ export function GanttView({
             <div className="mb-2">
               <div className="text-[8px] font-semibold text-green-600 dark:text-green-400 uppercase mb-0.5">Heures supp.</div>
               <div className="text-[8px] font-mono text-zinc-500 dark:text-zinc-400">
-                PV {detailPanel.totalPv.toFixed(2)} h / seuil {detailPanel.seuil75.toFixed(1)} h
+                HC {detailPanel.totalHc.toFixed(2)} h / seuil {detailPanel.seuil75.toFixed(1)} h
               </div>
               {detailPanel.hsH > 0 ? (
                 <>
@@ -1519,7 +1530,7 @@ export function GanttView({
                   </div>
                 </>
               ) : (
-                <div className="text-[8px] text-zinc-400 italic">Sous le seuil ({detailPanel.totalPv.toFixed(2)} h)</div>
+                <div className="text-[8px] text-zinc-400 italic">Sous le seuil ({detailPanel.totalHc.toFixed(2)} h)</div>
               )}
             </div>
 
@@ -1528,7 +1539,7 @@ export function GanttView({
               <div className="mb-2">
                 <div className="text-[8px] font-semibold text-violet-600 dark:text-violet-400 uppercase mb-0.5">DIF MGA</div>
                 <div className="text-[8px] font-mono text-zinc-500 dark:text-zinc-400">
-                  MGA {Math.round(detailPanel.mga)} € / FIXE+PV {Math.round(FIXE_MENSUEL + detailPanel.pvEur)} €
+                  MGA {Math.round(detailPanel.mga)} € / FIXE+PV {Math.round(detailPanel.fixeForFin + detailPanel.pvEur)} €
                 </div>
                 <div className="text-[8px] font-mono text-violet-600 dark:text-violet-400">
                   DIF = {Math.round(detailPanel.difEur)} €
