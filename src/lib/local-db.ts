@@ -51,7 +51,7 @@ class CmDatabase extends Dexie {
   releases!:  Table<StoredRelease,  string>;
 
   constructor() {
-    super('cm-offline');
+    super('optip');
     this.version(1).stores({
       drafts:     'id, target_month',
       items:      'id, draft_id',

@@ -78,7 +78,7 @@ self.addEventListener('push', event => {
   try { data = evt.data.json() as Record<string, unknown>; }
   catch { data = { title: 'Mise à jour', body: evt.data.text() }; }
 
-  const title = (data.title as string) ?? 'cm-offline';
+  const title = (data.title as string) ?? 'OptiP';
   const body  = (data.body  as string) ?? '';
 
   evt.waitUntil(
@@ -86,7 +86,7 @@ self.addEventListener('push', event => {
       body,
       icon: '/icons/icon-192.png',
       badge: '/icons/icon-192.png',
-      tag: typeof data.release_id === 'string' ? `release-${data.release_id}` : 'cm-offline',
+      tag: typeof data.release_id === 'string' ? `release-${data.release_id}` : 'optip',
       data,
     }),
   );

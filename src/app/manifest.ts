@@ -2,8 +2,8 @@ import type { MetadataRoute } from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'CM-offline',
-    short_name: 'CM',
+    name: 'OptiP',
+    short_name: 'OptiP',
     description: 'Planning & simulation paie',
     start_url: '/',
     display: 'standalone',
