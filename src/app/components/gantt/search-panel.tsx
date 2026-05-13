@@ -69,8 +69,7 @@ function RotationCard({
   const [overlapErr, setOverlapErr]     = useState<string | null>(null);
   const [isPending, startTransition]    = useTransition();
 
-  const pvEur      = Math.round(sig.hcr_crew * PVEI * KSP);
-  const bitroncon  = sig.prime > 0 ? Math.round(sig.prime * 2.5 * PVEI) : 0;
+  const pvPrimeEur = Math.round(sig.hcr_crew * PVEI * KSP + sig.prime * 2.5 * PVEI);
 
   function place(inst: RotationInstance, scenario: Scenario) {
     const endDate = endDateFromArrivee(inst.arrivee_at);
@@ -145,9 +144,8 @@ function RotationCard({
               {fmtLocalTime(sig.instances[0].depart_at)} → {fmtLocalTime(sig.instances[0].arrivee_at)}
             </span>
           )}
-          {/* PV + bitroncon */}
           <span className="text-xs px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 font-mono">
-            PV {pvEur}€{bitroncon > 0 ? ` +${bitroncon}€` : ''}
+            PV+P {pvPrimeEur}€
           </span>
         </div>
         <div className="flex items-center gap-3 text-xs text-zinc-500">
@@ -234,20 +232,32 @@ export function SearchPanel({
   const [sortBy,   setSortBy]   = useState<SortBy>('h2hc');
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setFromCache(false);
+
+    // 1. IndexedDB en premier — instantané
+    loadRotationsFromDB(month).then(cached => {
+      if (cancelled || cached.length === 0) return;
+      setData(cached);
+      setFromCache(true);
+      setLoading(false);
+    }).catch(() => {});
+
+    // 2. Réseau en arrière-plan — remplace le cache quand disponible
     getRotationsForMonth(month)
       .then(d => {
+        if (cancelled) return;
         setData(d);
+        setFromCache(false);
         setLoading(false);
-        cacheRotations(d, month);
+        cacheRotations(d, month).catch(() => {});
       })
-      .catch(async () => {
-        const cached = await loadRotationsFromDB(month);
-        setData(cached);
-        setFromCache(true);
-        setLoading(false);
+      .catch(() => {
+        if (!cancelled) setLoading(false);
       });
+
+    return () => { cancelled = true; };
   }, [month]);
 
   const filtered = useMemo(() => {
