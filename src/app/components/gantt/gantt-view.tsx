@@ -164,7 +164,7 @@ function computeStats(
 ) {
   let onDays = 0, congeDays = 0;
   const flights = items.filter(i => i.kind === 'flight').length;
-  let totalHcr = 0, totalPrime = 0, totalTsvNuit = 0;
+  let totalHcr = 0, totalHc = 0, totalPrime = 0, totalTsvNuit = 0;
   // 1ère passe : agrégats simples sur les non-flights + collect des flights pour A81
   const flightItems: CalendarItem[] = [];
   for (const item of items) {
@@ -181,12 +181,15 @@ function computeStats(
     const departAt  = typeof m.depart_at  === 'string' ? m.depart_at  as string : null;
     const arriveeAt = typeof m.arrivee_at === 'string' ? m.arrivee_at as string : null;
     let hcr     = typeof m.hcr_crew === 'number' ? m.hcr_crew  as number : 0;
+    let hc      = typeof m.hc       === 'number' ? m.hc        as number : 0;
     let tsvNuit = typeof m.tsv_nuit === 'number' ? m.tsv_nuit  as number : 0;
     if (departAt && arriveeAt) {
       hcr     = prorateForMonth(hcr,     departAt, arriveeAt, year, mo);
+      hc      = prorateForMonth(hc,      departAt, arriveeAt, year, mo);
       tsvNuit = prorateForMonth(tsvNuit, departAt, arriveeAt, year, mo);
     }
     totalHcr     += hcr;
+    totalHc      += hc;
     totalPrime   += typeof m.prime === 'number' ? (m.prime as number) : 0;
     totalTsvNuit += tsvNuit;
   }
@@ -232,21 +235,34 @@ function computeStats(
   const fixeForFin  = fullPrime && nb30eRegime > 0 ? FIXE_MENSUEL * 30 / nb30eRegime : FIXE_MENSUEL;
   const nb30eForFin = fullPrime ? 30 : nb30eEff;
   const finBase = monthlyFinancialsP(totalHcr, totalPrime, totalTsvNuit, { pvei: PVEI, ksp: KSP, fixe: fixeForFin, nb30e: nb30eForFin });
+  // HS : nouvelle formule HS.FIXE + HS.VOL
+  // HS.FIXE = fixe × 1.25 / 75 (1/75e du fixe × 1.25)
+  // HS.VOL  = taux_moyen × 0.25 ; taux_moyen = PV€ / totalHC (HC, pas HCr)
+  const totalPv    = totalHcr + totalTsvNuit / 2;
+  const pvEur      = totalPv * PVEI * KSP;
+  const tauxMoyen  = totalHc > 0 ? pvEur / totalHc : PVEI * KSP;
+  const hsFixeRate = nb30eForFin > 0 ? fixeForFin * 1.25 / 75 : 0;
+  const hsVolRate  = tauxMoyen * 0.25;
+  const hsSeuil    = 75 * (nb30eForFin / 30);
+  const hsH        = Math.max(0, totalPv - hsSeuil);
+  const hsNew      = hsH * (hsFixeRate + hsVolRate);
   // PRIME = bi-tronçon (sommée par vol via finBase.primes) + primes mensuelles
   // fixes (incit + A330 + instruction + Mai + Noël). monthlyFixedPrimes est calculé
   // en amont avec proration régime + boost 100% en juillet/août pour TAF*_10_12.
   const primesTotal = finBase.primes + monthlyFixedPrimes;
   const fin = {
     ...finBase,
+    hs:     hsNew,
     primes: primesTotal,
-    total:  finBase.total - finBase.primes + primesTotal,
+    total:  finBase.fixe + finBase.pv + hsNew + primesTotal + finBase.dif,
   };
   const congeAmount = congeDays * (cngPv + cngHs);
   const brut = fin.total + congeAmount;
   return {
-    flights, onDays, congeDays, totalHcr, totalPrime, totalTsvNuit,
+    flights, onDays, congeDays, totalHcr, totalHc, totalPrime, totalTsvNuit,
     fin, congeAmount, brut,
     totalA81, totalA81Net, cumulJoursRunning, plafondJours,
+    hsH, hsFixeRate, hsVolRate,
   };
 }
 
@@ -527,6 +543,7 @@ export function GanttView({
   type DetailPanel = {
     name: string; rect: DOMRect;
     totalPv: number; seuil75: number; pvEur: number; hsH: number; hsEur: number;
+    hsFixeRate: number; hsVolRate: number; tauxMoyen: number;
     difEur: number; mga: number;
     totalPrime: number; bitronconEur: number; incitation: number; a330: number; instruction: number;
   };
@@ -1065,7 +1082,7 @@ export function GanttView({
                       <FinRow label="FIXE" value={stats.fin.fixe}   cls="text-zinc-400" />
                       <FinRow label="PV"   value={stats.fin.pv}     cls="text-blue-500" />
                       {stats.fin.hs > 0 && (
-                        <FinRow label="HS" value={stats.fin.hs}     cls="text-green-500" />
+                        <FinRow label={`HS(${stats.hsH.toFixed(1)})`} value={stats.fin.hs} cls="text-green-500" />
                       )}
                       {stats.fin.primes > 0 && (
                         <FinRow label="P"  value={stats.fin.primes} cls="text-amber-500" />
@@ -1107,16 +1124,18 @@ export function GanttView({
                           const rowEl = (e.currentTarget as HTMLElement).closest<HTMLElement>('[data-sr]');
                           const rect  = rowEl?.getBoundingClientRect() ?? e.currentTarget.getBoundingClientRect();
                           const totalPv    = stats.totalHcr + stats.totalTsvNuit / 2;
+                          const pvEur      = stats.fin.pv;
+                          const tauxMoyen  = stats.totalHc > 0 ? pvEur / stats.totalHc : PVEI * KSP;
                           const nb30eEff   = Math.max(0, (REGIME_NB30E[userRegime] ?? NB_30E) - stats.congeDays);
                           const nb30eEff2  = isFullPrimeMonth(userRegime, mo) ? 30 : nb30eEff;
                           const seuil75    = 75 * (nb30eEff2 / 30);
-                          const hsH        = Math.max(0, totalPv - seuil75);
                           const mgaV       = FIXE_MENSUEL + 85 * (nb30eEff2 / 30) * PVEI;
                           const bitroncon  = stats.totalPrime * 2.5 * PVEI;
                           const boost      = isFullPrimeMonth(userRegime, mo) && (REGIME_NB30E[userRegime] ?? NB_30E) > 0 ? 30 / (REGIME_NB30E[userRegime] ?? NB_30E) : 1;
                           setDetailPanel({
                             name: scenario.name, rect,
-                            totalPv, seuil75, pvEur: stats.fin.pv, hsH, hsEur: stats.fin.hs,
+                            totalPv, seuil75, pvEur, hsH: stats.hsH, hsEur: stats.fin.hs,
+                            hsFixeRate: stats.hsFixeRate, hsVolRate: stats.hsVolRate, tauxMoyen,
                             difEur: stats.fin.dif, mga: mgaV,
                             totalPrime: stats.totalPrime, bitronconEur: bitroncon,
                             incitation: incitCount * primeIncitationUnit,
@@ -1488,11 +1507,19 @@ export function GanttView({
                 PV {detailPanel.totalPv.toFixed(2)} h / seuil {detailPanel.seuil75.toFixed(1)} h
               </div>
               {detailPanel.hsH > 0 ? (
-                <div className="text-[8px] font-mono text-green-600 dark:text-green-400">
-                  {detailPanel.hsH.toFixed(2)} h × {(PVEI * KSP * 0.25).toFixed(2)} = {Math.round(detailPanel.hsEur)} €
-                </div>
+                <>
+                  <div className="text-[8px] font-mono text-zinc-400">
+                    HS.FIXE {detailPanel.hsFixeRate.toFixed(2)} €/h <span className="opacity-60">(fixe×1.25/75)</span>
+                  </div>
+                  <div className="text-[8px] font-mono text-zinc-400">
+                    HS.VOL {detailPanel.hsVolRate.toFixed(2)} €/h <span className="opacity-60">(taux_moy×0.25)</span>
+                  </div>
+                  <div className="text-[8px] font-mono text-green-600 dark:text-green-400">
+                    {detailPanel.hsH.toFixed(2)} h × {(detailPanel.hsFixeRate + detailPanel.hsVolRate).toFixed(2)} = {Math.round(detailPanel.hsEur)} €
+                  </div>
+                </>
               ) : (
-                <div className="text-[8px] text-zinc-400 italic">Sous le seuil</div>
+                <div className="text-[8px] text-zinc-400 italic">Sous le seuil ({detailPanel.totalPv.toFixed(2)} h)</div>
               )}
             </div>
 
