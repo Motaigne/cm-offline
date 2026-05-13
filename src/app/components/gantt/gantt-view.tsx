@@ -267,7 +267,7 @@ function computeStats(
     flights, onDays, congeDays, totalHcr, totalHc, totalPrime, totalTsvNuit,
     fin, congeAmount, brut,
     totalA81, totalA81Net, cumulJoursRunning, plafondJours,
-    hsH, hsFixeRate, hsVolRate,
+    hsH, hsFixeRate, hsVolRate, hsSeuil,
   };
 }
 
@@ -1084,39 +1084,35 @@ export function GanttView({
                     </div>
 
                     <div className="w-full px-2 flex flex-col gap-[2px]">
-                      <FinRow label="FIXE" value={stats.fin.fixe}   cls="text-zinc-400" />
-                      <FinRow label="PV"   value={stats.fin.pv}     cls="text-blue-500" />
-                      {stats.fin.hs > 0 && (
+                      <FinRow label="FIXE" value={stats.fin.fixe} cls="text-zinc-400" />
+                      <FinRow label="PV"   value={stats.fin.pv}   cls="text-blue-500" />
+                      {stats.fin.hs > 0 ? (
                         <FinRow label={`HS(${stats.hsH.toFixed(1)})`} value={stats.fin.hs} cls="text-green-500" />
+                      ) : (
+                        <FinRow label={`HS(−${Math.max(0, stats.hsSeuil - stats.totalHc).toFixed(1)}h)`} value={0} cls="text-zinc-300 dark:text-zinc-600" />
                       )}
-                      {stats.fin.primes > 0 && (
-                        <FinRow label="P"  value={stats.fin.primes} cls="text-amber-500" />
-                      )}
+                      <FinRow label="P" value={stats.fin.primes} cls="text-amber-500" />
                       {stats.fin.dif > 0 && (
                         <FinRow label="DIF" value={stats.fin.dif} cls="text-violet-500" />
                       )}
                       <div className="border-t border-zinc-300 dark:border-zinc-600 my-0.5" />
-                      <FinRow label="=" value={stats.fin.total} cls="text-zinc-700 dark:text-zinc-100" bold />
+                      <FinRow label={stats.fin.dif > 0 ? '(MGA)' : '='} value={stats.fin.total} cls="text-zinc-700 dark:text-zinc-100" bold />
                       {stats.congeDays > 0 && (
-                        <>
-                          <FinRow label="+cg" value={stats.congeAmount} cls="text-pink-500" />
-                          <div className="border-t border-dashed border-zinc-300 dark:border-zinc-600 my-0.5" />
-                          <FinRow label="BRUT" value={stats.brut} cls="text-emerald-600 dark:text-emerald-400" bold />
-                        </>
+                        <FinRow label="+cg" value={stats.congeAmount} cls="text-pink-500" />
                       )}
+                      <div className="border-t border-dashed border-zinc-300 dark:border-zinc-600 my-0.5" />
+                      <FinRow label="BRUT" value={stats.brut} cls="text-emerald-600 dark:text-emerald-400" bold />
+                      <div className="border-t border-dashed border-emerald-300 dark:border-emerald-700/40 my-0.5" />
+                      <FinRow label="A81" value={stats.totalA81} cls="text-emerald-600 dark:text-emerald-400" bold />
                       {stats.totalA81 > 0 && (
-                        <>
-                          <div className="border-t border-dashed border-emerald-300 dark:border-emerald-700/40 my-0.5" />
-                          <FinRow label="A81" value={stats.totalA81} cls="text-emerald-600 dark:text-emerald-400" bold />
-                          <div className="flex items-baseline justify-between gap-0.5">
-                            <span className="text-[7.5px] font-mono leading-none text-emerald-600/70 dark:text-emerald-400/60">
-                              {stats.cumulJoursRunning.toFixed(1)}/{stats.plafondJours}j
-                            </span>
-                            {stats.cumulJoursRunning >= stats.plafondJours && (
-                              <span className="text-[7.5px] font-bold leading-none text-amber-500">PLAFOND</span>
-                            )}
-                          </div>
-                        </>
+                        <div className="flex items-baseline justify-between gap-0.5">
+                          <span className="text-[7.5px] font-mono leading-none text-emerald-600/70 dark:text-emerald-400/60">
+                            {stats.cumulJoursRunning.toFixed(1)}/{stats.plafondJours}j
+                          </span>
+                          {stats.cumulJoursRunning >= stats.plafondJours && (
+                            <span className="text-[7.5px] font-bold leading-none text-amber-500">PLAFOND</span>
+                          )}
+                        </div>
                       )}
                       {irMfByScenario && (irMfByScenario[scenario.name]?.ir_eur > 0 || irMfByScenario[scenario.name]?.mf_eur > 0) && (
                         <>
