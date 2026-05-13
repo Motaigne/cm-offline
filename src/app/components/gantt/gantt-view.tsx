@@ -1069,7 +1069,7 @@ export function GanttView({
                   {/* Label */}
                   <div className="flex-shrink-0 flex flex-col border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 py-2 items-center"
                     style={{ width: LABEL_W }}>
-                    <span className="text-2xl font-bold text-zinc-700 dark:text-zinc-100 mb-0.5">{scenario.name}</span>
+                    <span className="text-base font-bold text-zinc-700 dark:text-zinc-100 mb-0.5">{scenario.name}</span>
 
                     {/* x / y ON */}
                     <div className="mb-1">
@@ -1151,7 +1151,7 @@ export function GanttView({
                           });
                         }}
                         data-sr
-                        className={`mt-0.5 text-[7px] font-mono select-none px-1 rounded transition-colors ${isDetailOpen ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-100'}`}
+                        className={`mt-1 text-[9px] font-mono select-none px-2 py-0.5 rounded transition-colors ${isDetailOpen ? 'bg-zinc-700 text-white' : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-300 hover:bg-zinc-300 dark:hover:bg-zinc-600'}`}
                       >
                         {isDetailOpen ? '◀ fermer' : '▶ détail'}
                       </button>
