@@ -367,7 +367,7 @@ function DraggableBar({
     wPct    = (span / dim) * 100;
   }
 
-  const restTop = BAR_TOP + (BAR_H - REST_H) / 2;
+  const restTop = `calc(50% - ${REST_H / 2}px)`;
 
   return (
     <>
@@ -408,7 +408,8 @@ function DraggableBar({
           position: 'absolute',
           left: `${leftPct}%`,
           width: `${wPct}%`,
-          top: BAR_TOP,
+          top: '50%',
+          marginTop: -(BAR_H / 2),
           height: BAR_H,
           backgroundColor: actMeta.color,
           color: actMeta.textColor,
@@ -1062,8 +1063,8 @@ export function GanttView({
               const isDetailOpen = detailPanel?.name === scenario.name;
               return (
                 <div key={scenario.name} data-sr
-                  className={`flex flex-shrink-0 ${!isLast ? 'border-b border-zinc-200 dark:border-zinc-800' : ''}`}
-                  style={{ height: ROW_H }}
+                  className={`flex flex-1 ${!isLast ? 'border-b border-zinc-200 dark:border-zinc-800' : ''}`}
+                  style={{ minHeight: ROW_H }}
                 >
                   {/* Label */}
                   <div className="flex-shrink-0 flex flex-col border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 py-2 items-center"
@@ -1089,7 +1090,7 @@ export function GanttView({
                       {stats.fin.hs > 0 ? (
                         <FinRow label={`HS(${stats.hsH.toFixed(1)})`} value={stats.fin.hs} cls="text-green-500" />
                       ) : (
-                        <FinRow label={`HS(−${Math.max(0, stats.hsSeuil - stats.totalHc).toFixed(1)}h)`} value={0} cls="text-zinc-300 dark:text-zinc-600" />
+                        <FinRow label={`HS(−${Math.max(0, stats.hsSeuil - stats.totalHc).toFixed(1)}h)`} value={0} cls="text-zinc-400 dark:text-zinc-500" />
                       )}
                       <FinRow label="P" value={stats.fin.primes} cls="text-amber-500" />
                       {stats.fin.dif > 0 && (
