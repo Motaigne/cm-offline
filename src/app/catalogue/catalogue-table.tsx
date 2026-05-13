@@ -88,14 +88,18 @@ export function CatalogueTable({
     window.history.replaceState(null, '', `/catalogue?m=${m}`);
     setLoading(true);
     try {
-      if (navigator.onLine) {
+      // IDB d'abord (offline-first) — réseau seulement si IDB vide
+      const cached = await loadRotationsFromDB(m);
+      if (cached.length > 0) {
+        setSigs(cached.map(rotToSig));
+        setFromCache(true);
+      } else if (navigator.onLine) {
         const data = await getRotationsForMonth(m);
         setSigs(data.map(rotToSig));
         void cacheRotations(data, m);
       } else {
-        const cached = await loadRotationsFromDB(m);
-        if (cached.length > 0) { setSigs(cached.map(rotToSig)); setFromCache(true); }
-        else { setNoCache(true); setSigs([]); const cms = await getCachedMonths(); if (cms.length) setMonths(cms); }
+        setNoCache(true); setSigs([]);
+        const cms = await getCachedMonths(); if (cms.length) setMonths(cms);
       }
     } catch {
       const cached = await loadRotationsFromDB(m);
