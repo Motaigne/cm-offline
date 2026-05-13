@@ -1,12 +1,12 @@
 'use client';
 
 import { useState, useEffect, useTransition, useMemo } from 'react';
-import { getRotationsForMonth, type RotationSignature, type RotationInstance } from '@/app/actions/search';
+import { type RotationSignature, type RotationInstance } from '@/app/actions/search';
 import type { Scenario, CalendarItem } from '@/app/page';
 import type { ScenarioName } from '@/app/actions/planning';
-import { cacheRotations, loadRotationsFromDB } from '@/lib/local-db';
+import { loadRotationsFromDB } from '@/lib/local-db';
 import { enqueueAdd } from '@/lib/sync-service';
-import { PVEI, KSP } from '@/lib/finance';
+import { rotationValue } from '@/lib/finance';
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -69,7 +69,7 @@ function RotationCard({
   const [overlapErr, setOverlapErr]     = useState<string | null>(null);
   const [isPending, startTransition]    = useTransition();
 
-  const pvPrimeEur = Math.round(sig.hcr_crew * PVEI * KSP + sig.prime * 2.5 * PVEI);
+  const pvPrimeEur = Math.round(rotationValue(sig.hcr_crew, sig.prime, sig.tsv_nuit));
 
   function place(inst: RotationInstance, scenario: Scenario) {
     const endDate = endDateFromArrivee(inst.arrivee_at);
@@ -234,29 +234,13 @@ export function SearchPanel({
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    setFromCache(false);
-
-    // 1. IndexedDB en premier — instantané
     loadRotationsFromDB(month).then(cached => {
-      if (cancelled || cached.length === 0) return;
+      if (cancelled) return;
       setData(cached);
-      setFromCache(true);
       setLoading(false);
-    }).catch(() => {});
-
-    // 2. Réseau en arrière-plan — remplace le cache quand disponible
-    getRotationsForMonth(month)
-      .then(d => {
-        if (cancelled) return;
-        setData(d);
-        setFromCache(false);
-        setLoading(false);
-        cacheRotations(d, month).catch(() => {});
-      })
-      .catch(() => {
-        if (!cancelled) setLoading(false);
-      });
-
+    }).catch(() => {
+      if (!cancelled) setLoading(false);
+    });
     return () => { cancelled = true; };
   }, [month]);
 
