@@ -33,11 +33,11 @@ type RegimeEnum = Database['public']['Enums']['regime_enum'];
 
 // ─── layout constants ────────────────────────────────────────────────────────
 
-const LABEL_W          = 96;
-const DAY_H            = 44;
-const ROW_H_COLLAPSED  = 180;
-const ROW_H_EXPANDED   = 280;
-const BAR_H            = 52;
+const LABEL_W = 96;
+const DAY_H   = 44;
+const ROW_H   = 180;
+const BAR_H   = 52;
+const BAR_TOP = (ROW_H - BAR_H) / 2;
 
 // ─── locale / calendar helpers ───────────────────────────────────────────────
 
@@ -268,7 +268,7 @@ function FinRow({ label, value, cls, bold }: { label: string; value: number; cls
 const REST_H = 6;
 
 function DraggableBar({
-  item, clip, dim, year, mo, onEdit, isDragSource, rowH,
+  item, clip, dim, year, mo, onEdit, isDragSource,
 }: {
   item: CalendarItem;
   clip: { start: number; end: number };
@@ -277,7 +277,6 @@ function DraggableBar({
   mo: number;
   onEdit: (item: CalendarItem) => void;
   isDragSource: boolean;
-  rowH: number;
 }) {
   const readOnly = !!item._isSpillover;
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
@@ -347,8 +346,7 @@ function DraggableBar({
     wPct    = (span / dim) * 100;
   }
 
-  const barTop  = (rowH - BAR_H) / 2;
-  const restTop = barTop + (BAR_H - REST_H) / 2;
+  const restTop = BAR_TOP + (BAR_H - REST_H) / 2;
 
   return (
     <>
@@ -389,7 +387,7 @@ function DraggableBar({
           position: 'absolute',
           left: `${leftPct}%`,
           width: `${wPct}%`,
-          top: barTop,
+          top: BAR_TOP,
           height: BAR_H,
           backgroundColor: actMeta.color,
           color: actMeta.textColor,
@@ -525,8 +523,14 @@ export function GanttView({
   const [isAdmin,    setIsAdmin]    = useState(false);
   const [canScrape,  setCanScrape]  = useState(false);
 
-  // Accordéon colonne paie — scénarios développés
-  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  // Panneau détail paie (flyout fixe à droite du label)
+  type DetailPanel = {
+    name: string; rect: DOMRect;
+    totalPv: number; seuil75: number; pvEur: number; hsH: number; hsEur: number;
+    difEur: number; mga: number;
+    totalPrime: number; bitronconEur: number; incitation: number; a330: number; instruction: number;
+  };
+  const [detailPanel, setDetailPanel] = useState<DetailPanel | null>(null);
 
   // Compteur prime d'incitation (0-5), persistance localStorage par mois.
   const [incitCount, setIncitCount] = useState(0);
@@ -635,7 +639,7 @@ export function GanttView({
   const [today, setToday] = useState('');
   useEffect(() => { setToday(localStr(new Date())); }, []);
   const tafDur = getTafDuration(userRegime);
-  const tafOk  = isTafAvailable(userRegime, month);
+  const tafOk  = isTafAvailable(userRegime, currentMonth);
   const days   = Array.from({ length: dim }, (_, i) => i + 1);
 
   // ── Navigation mois (client-side, pas de router.push) ───────────────────────
@@ -1029,19 +1033,18 @@ export function GanttView({
               const cumulBeforeForScenario = a81CumulBefore[scenario.name] ?? 0;
               const stats = computeStats(scenario.items, year, mo, cngPv, cngHs, userRegime, monthlyFixedPrimes, article81Data, valeurJour, cumulBeforeForScenario);
               const isLast = idx === localScenarios.length - 1;
-              const isExpanded = expandedRows.has(scenario.name);
-              const tafDays   = tafOk ? tafDur : 0;
+              const tafDays      = tafOk ? tafDur : 0;
               const joursProrata = stats.congeDays + tafDays;
               const jiRestants   = prorataThresholds.length > 0 ? lookupJI(joursProrata, prorataThresholds) : -1;
               const yMax         = jiRestants >= 0 ? dim - jiRestants - joursProrata : -1;
-              const rowH = isExpanded ? ROW_H_EXPANDED : ROW_H_COLLAPSED;
+              const isDetailOpen = detailPanel?.name === scenario.name;
               return (
-                <div key={scenario.name}
+                <div key={scenario.name} data-sr
                   className={`flex flex-shrink-0 ${!isLast ? 'border-b border-zinc-200 dark:border-zinc-800' : ''}`}
-                  style={{ height: rowH }}
+                  style={{ height: ROW_H }}
                 >
                   {/* Label */}
-                  <div className="flex-shrink-0 flex flex-col border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 py-2 items-center overflow-hidden"
+                  <div className="flex-shrink-0 flex flex-col border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 py-2 items-center"
                     style={{ width: LABEL_W }}>
                     <span className="text-2xl font-bold text-zinc-700 dark:text-zinc-100 mb-0.5">{scenario.name}</span>
 
@@ -1069,56 +1072,62 @@ export function GanttView({
                       )}
                       <div className="border-t border-zinc-300 dark:border-zinc-600 my-0.5" />
                       <FinRow label="=" value={stats.fin.total} cls="text-zinc-700 dark:text-zinc-100" bold />
-
-                      {/* Accordéon toggle */}
-                      <button
-                        onClick={() => setExpandedRows(prev => {
-                          const next = new Set(prev);
-                          if (next.has(scenario.name)) next.delete(scenario.name);
-                          else next.add(scenario.name);
-                          return next;
-                        })}
-                        className="text-[7px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 mt-0.5 text-left select-none"
-                      >
-                        {isExpanded ? '▲ moins' : '▼ détail'}
-                      </button>
-
-                      {/* Accordéon détail */}
-                      {isExpanded && (
+                      {stats.congeDays > 0 && (
                         <>
-                          {stats.fin.dif > 0 && (
-                            <FinRow label="DIF" value={stats.fin.dif} cls="text-violet-500" />
-                          )}
-                          {stats.congeDays > 0 && (
-                            <>
-                              <FinRow label="+cg" value={stats.congeAmount} cls="text-pink-500" />
-                              <div className="border-t border-dashed border-zinc-300 dark:border-zinc-600 my-0.5" />
-                              <FinRow label="BRUT" value={stats.brut} cls="text-emerald-600 dark:text-emerald-400" bold />
-                            </>
-                          )}
-                          {stats.totalA81 > 0 && (
-                            <>
-                              <div className="border-t border-dashed border-emerald-300 dark:border-emerald-700/40 my-0.5" />
-                              <FinRow label="A81" value={stats.totalA81} cls="text-emerald-600 dark:text-emerald-400" bold />
-                              <div className="flex items-baseline justify-between gap-0.5">
-                                <span className="text-[7.5px] font-mono leading-none text-emerald-600/70 dark:text-emerald-400/60">
-                                  {stats.cumulJoursRunning.toFixed(1)}/{stats.plafondJours}j
-                                </span>
-                                {stats.cumulJoursRunning >= stats.plafondJours && (
-                                  <span className="text-[7.5px] font-bold leading-none text-amber-500">PLAFOND</span>
-                                )}
-                              </div>
-                            </>
-                          )}
-                          {irMfByScenario && (irMfByScenario[scenario.name]?.ir_eur > 0 || irMfByScenario[scenario.name]?.mf_eur > 0) && (
-                            <>
-                              <div className="border-t border-dashed border-orange-300 dark:border-orange-700/40 my-0.5" />
-                              <FinRow label="IR" value={irMfByScenario[scenario.name].ir_eur} cls="text-orange-600 dark:text-orange-400" bold />
-                              <FinRow label="MF" value={irMfByScenario[scenario.name].mf_eur} cls="text-orange-700 dark:text-orange-300" />
-                            </>
-                          )}
+                          <FinRow label="+cg" value={stats.congeAmount} cls="text-pink-500" />
+                          <div className="border-t border-dashed border-zinc-300 dark:border-zinc-600 my-0.5" />
+                          <FinRow label="BRUT" value={stats.brut} cls="text-emerald-600 dark:text-emerald-400" bold />
                         </>
                       )}
+                      {stats.totalA81 > 0 && (
+                        <>
+                          <div className="border-t border-dashed border-emerald-300 dark:border-emerald-700/40 my-0.5" />
+                          <FinRow label="A81" value={stats.totalA81} cls="text-emerald-600 dark:text-emerald-400" bold />
+                          <div className="flex items-baseline justify-between gap-0.5">
+                            <span className="text-[7.5px] font-mono leading-none text-emerald-600/70 dark:text-emerald-400/60">
+                              {stats.cumulJoursRunning.toFixed(1)}/{stats.plafondJours}j
+                            </span>
+                            {stats.cumulJoursRunning >= stats.plafondJours && (
+                              <span className="text-[7.5px] font-bold leading-none text-amber-500">PLAFOND</span>
+                            )}
+                          </div>
+                        </>
+                      )}
+                      {irMfByScenario && (irMfByScenario[scenario.name]?.ir_eur > 0 || irMfByScenario[scenario.name]?.mf_eur > 0) && (
+                        <>
+                          <div className="border-t border-dashed border-orange-300 dark:border-orange-700/40 my-0.5" />
+                          <FinRow label="IR" value={irMfByScenario[scenario.name].ir_eur} cls="text-orange-600 dark:text-orange-400" bold />
+                          <FinRow label="MF" value={irMfByScenario[scenario.name].mf_eur} cls="text-orange-700 dark:text-orange-300" />
+                        </>
+                      )}
+                      {/* Bouton détail → flyout vers la droite */}
+                      <button
+                        onClick={e => {
+                          if (isDetailOpen) { setDetailPanel(null); return; }
+                          const rowEl = (e.currentTarget as HTMLElement).closest<HTMLElement>('[data-sr]');
+                          const rect  = rowEl?.getBoundingClientRect() ?? e.currentTarget.getBoundingClientRect();
+                          const totalPv    = stats.totalHcr + stats.totalTsvNuit / 2;
+                          const nb30eEff   = Math.max(0, (REGIME_NB30E[userRegime] ?? NB_30E) - stats.congeDays);
+                          const nb30eEff2  = isFullPrimeMonth(userRegime, mo) ? 30 : nb30eEff;
+                          const seuil75    = 75 * (nb30eEff2 / 30);
+                          const hsH        = Math.max(0, totalPv - seuil75);
+                          const mgaV       = FIXE_MENSUEL + 85 * (nb30eEff2 / 30) * PVEI;
+                          const bitroncon  = stats.totalPrime * 2.5 * PVEI;
+                          const boost      = isFullPrimeMonth(userRegime, mo) && (REGIME_NB30E[userRegime] ?? NB_30E) > 0 ? 30 / (REGIME_NB30E[userRegime] ?? NB_30E) : 1;
+                          setDetailPanel({
+                            name: scenario.name, rect,
+                            totalPv, seuil75, pvEur: stats.fin.pv, hsH, hsEur: stats.fin.hs,
+                            difEur: stats.fin.dif, mga: mgaV,
+                            totalPrime: stats.totalPrime, bitronconEur: bitroncon,
+                            incitation: incitCount * primeIncitationUnit,
+                            a330: primeA330 * boost, instruction: primeInstruction * boost,
+                          });
+                        }}
+                        data-sr
+                        className={`mt-0.5 text-[7px] font-mono select-none px-1 rounded transition-colors ${isDetailOpen ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-100'}`}
+                      >
+                        {isDetailOpen ? '◀ fermer' : '▶ détail'}
+                      </button>
                     </div>
                   </div>
 
@@ -1175,7 +1184,6 @@ export function GanttView({
                           mo={mo}
                           onEdit={(it) => openEdit(it, scenario)}
                           isDragSource={dragging?.id === item.id}
-                          rowH={rowH}
                         />
                       );
                     })}
@@ -1459,6 +1467,74 @@ export function GanttView({
           onClose={() => setScrapeOpen(false)}
           onDone={() => { setScrapeOpen(false); router.refresh(); }}
         />
+      )}
+
+      {/* Panneau détail paie (fixed, à droite du label) */}
+      {detailPanel && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setDetailPanel(null)} />
+          <div
+            className="fixed z-50 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl shadow-2xl p-3 w-56"
+            style={{ left: detailPanel.rect.left + LABEL_W + 6, top: detailPanel.rect.top + 4 }}
+          >
+            <div className="text-[9px] font-bold text-zinc-400 uppercase tracking-wide mb-2">
+              Détail — Scénario {detailPanel.name}
+            </div>
+
+            {/* HS */}
+            <div className="mb-2">
+              <div className="text-[8px] font-semibold text-green-600 dark:text-green-400 uppercase mb-0.5">Heures supp.</div>
+              <div className="text-[8px] font-mono text-zinc-500 dark:text-zinc-400">
+                PV {detailPanel.totalPv.toFixed(2)} h / seuil {detailPanel.seuil75.toFixed(1)} h
+              </div>
+              {detailPanel.hsH > 0 ? (
+                <div className="text-[8px] font-mono text-green-600 dark:text-green-400">
+                  {detailPanel.hsH.toFixed(2)} h × {(PVEI * KSP * 0.25).toFixed(2)} = {Math.round(detailPanel.hsEur)} €
+                </div>
+              ) : (
+                <div className="text-[8px] text-zinc-400 italic">Sous le seuil</div>
+              )}
+            </div>
+
+            {/* DIF MGA */}
+            {detailPanel.difEur > 0 && (
+              <div className="mb-2">
+                <div className="text-[8px] font-semibold text-violet-600 dark:text-violet-400 uppercase mb-0.5">DIF MGA</div>
+                <div className="text-[8px] font-mono text-zinc-500 dark:text-zinc-400">
+                  MGA {Math.round(detailPanel.mga)} € / FIXE+PV {Math.round(FIXE_MENSUEL + detailPanel.pvEur)} €
+                </div>
+                <div className="text-[8px] font-mono text-violet-600 dark:text-violet-400">
+                  DIF = {Math.round(detailPanel.difEur)} €
+                </div>
+              </div>
+            )}
+
+            {/* Primes */}
+            <div>
+              <div className="text-[8px] font-semibold text-amber-600 dark:text-amber-400 uppercase mb-0.5">Primes</div>
+              {detailPanel.bitronconEur > 0 && (
+                <div className="text-[8px] font-mono text-zinc-500 dark:text-zinc-400">
+                  Bi-tronçon ×{detailPanel.totalPrime} = {Math.round(detailPanel.bitronconEur)} €
+                </div>
+              )}
+              {detailPanel.incitation > 0 && (
+                <div className="text-[8px] font-mono text-zinc-500 dark:text-zinc-400">
+                  Incitation = {Math.round(detailPanel.incitation)} €
+                </div>
+              )}
+              {detailPanel.a330 > 0 && (
+                <div className="text-[8px] font-mono text-zinc-500 dark:text-zinc-400">
+                  A330 = {Math.round(detailPanel.a330)} €
+                </div>
+              )}
+              {detailPanel.instruction > 0 && (
+                <div className="text-[8px] font-mono text-zinc-500 dark:text-zinc-400">
+                  Instruction = {Math.round(detailPanel.instruction)} €
+                </div>
+              )}
+            </div>
+          </div>
+        </>
       )}
 
       {/* DragOverlay */}
