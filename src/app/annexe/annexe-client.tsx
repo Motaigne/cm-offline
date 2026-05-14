@@ -410,8 +410,172 @@ function GenericCard({ table, canEdit }: { table: AnnexeRow; canEdit: boolean })
   );
 }
 
+// ── IR / MF Rates ─────────────────────────────────────────────────────────────
+type IrMfRate = { escale: string; country: string; currency?: string; ir_eur: number; mf_eur: number };
+
+function parseIrCsv(csv: string): IrMfRate[] {
+  const lines = csv.trim().split('\n').slice(1); // skip header
+  const result: IrMfRate[] = [];
+  for (const line of lines) {
+    // handle quoted fields with commas inside
+    const parts = line.match(/(".*?"|[^,]+)(?:,|$)/g)?.map(s => s.replace(/^"|"$|,$/g, '').trim()) ?? [];
+    if (parts.length < 4) continue;
+    const parseEur = (s: string) => parseFloat(s.replace('€', '').replace(',', '.').trim()) || 0;
+    result.push({ escale: parts[0], country: parts[1], ir_eur: parseEur(parts[2]), mf_eur: parseEur(parts[3]) });
+  }
+  return result;
+}
+
+function IrMfRatesCard({ table, canEdit }: { table: AnnexeRow; canEdit: boolean }) {
+  const [filter, setFilter]         = useState('');
+  const [showAdd, setShowAdd]       = useState(false);
+  const [showCsv, setShowCsv]       = useState(false);
+  const [csvText, setCsvText]       = useState('');
+  const [newEscale, setNewEscale]   = useState('');
+  const [newPays, setNewPays]       = useState('');
+  const [newIr, setNewIr]           = useState('');
+  const [newMf, setNewMf]           = useState('');
+  const [err, setErr]               = useState('');
+  const [saved, setSaved]           = useState('');
+  const [isPending, start]          = useTransition();
+
+  const rates = (table.data as IrMfRate[]).slice().sort((a, b) => a.escale.localeCompare(b.escale));
+  const filtered = filter
+    ? rates.filter(r => r.escale.toLowerCase().includes(filter.toLowerCase()) || r.country.toLowerCase().includes(filter.toLowerCase()))
+    : rates;
+
+  function doSave(newData: IrMfRate[], msg: string) {
+    setErr('');
+    start(async () => {
+      const sorted = newData.slice().sort((a, b) => a.escale.localeCompare(b.escale));
+      const res = await saveAnnexeTable(table.slug, sorted as unknown as Json);
+      if (res.error) { setErr(res.error); }
+      else { setSaved(msg); setShowAdd(false); setShowCsv(false); setTimeout(() => setSaved(''), 3000); }
+    });
+  }
+
+  function handleAdd() {
+    const ir = parseFloat(newIr.replace(',', '.'));
+    const mf = parseFloat(newMf.replace(',', '.'));
+    if (!newEscale || isNaN(ir)) { setErr('Escale et IR requis'); return; }
+    const without = rates.filter(r => r.escale.toUpperCase() !== newEscale.toUpperCase());
+    doSave([...without, { escale: newEscale.toUpperCase(), country: newPays.toUpperCase(), ir_eur: ir, mf_eur: isNaN(mf) ? ir * 0.2 : mf }], `✓ ${newEscale.toUpperCase()} ajouté`);
+    setNewEscale(''); setNewPays(''); setNewIr(''); setNewMf('');
+  }
+
+  function handleCsvImport() {
+    const parsed = parseIrCsv(csvText);
+    if (!parsed.length) { setErr('CSV invalide ou vide'); return; }
+    doSave(parsed, `✓ ${parsed.length} escales importées`);
+    setCsvText('');
+  }
+
+  function handleDelete(escale: string) {
+    doSave(rates.filter(r => r.escale !== escale), `✓ ${escale} supprimé`);
+  }
+
+  return (
+    <Card title="Indemnité Repas & Menus Frais — taux par escale" table={table} canEdit={canEdit}>
+      {/* Barre recherche + actions */}
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-zinc-100 dark:border-zinc-800">
+        <input
+          value={filter} onChange={e => setFilter(e.target.value)}
+          placeholder="Filtrer escale ou pays…"
+          className="flex-1 min-w-[160px] text-[11px] px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200"
+        />
+        <span className="text-[10px] text-zinc-400">{filtered.length} / {rates.length}</span>
+        {canEdit && (
+          <>
+            <button onClick={() => { setShowAdd(v => !v); setShowCsv(false); setErr(''); }}
+              className="text-[10px] px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
+              + Escale
+            </button>
+            <button onClick={() => { setShowCsv(v => !v); setShowAdd(false); setErr(''); }}
+              className="text-[10px] px-2 py-1 rounded border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30">
+              Importer CSV
+            </button>
+          </>
+        )}
+        {saved && <span className="text-[10px] text-green-500 font-medium">{saved}</span>}
+      </div>
+
+      {/* Formulaire ajout */}
+      {showAdd && (
+        <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-zinc-50 dark:bg-zinc-800/50 border-b border-zinc-100 dark:border-zinc-800 text-[11px]">
+          <input placeholder="ESCALE" value={newEscale} onChange={e => setNewEscale(e.target.value)}
+            className="w-20 px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono uppercase" />
+          <input placeholder="PAYS" value={newPays} onChange={e => setNewPays(e.target.value)}
+            className="w-36 px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800" />
+          <input placeholder="IR €" value={newIr} onChange={e => setNewIr(e.target.value)}
+            className="w-20 px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono" />
+          <input placeholder="MF € (auto ×20%)" value={newMf} onChange={e => setNewMf(e.target.value)}
+            className="w-28 px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono" />
+          <button onClick={handleAdd} disabled={isPending}
+            className="px-3 py-1 rounded bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 font-semibold disabled:opacity-40">
+            {isPending ? '…' : 'Ajouter'}
+          </button>
+          {err && <span className="text-red-500">{err}</span>}
+        </div>
+      )}
+
+      {/* Import CSV */}
+      {showCsv && (
+        <div className="px-3 py-2 bg-blue-50 dark:bg-blue-950/30 border-b border-blue-100 dark:border-blue-900 space-y-2">
+          <p className="text-[10px] text-blue-700 dark:text-blue-300">
+            Colle le contenu du CSV (avec en-tête : ESCALE, PAYS, IR…, MF…). Remplace toutes les escales existantes.
+          </p>
+          <textarea value={csvText} onChange={e => setCsvText(e.target.value)}
+            rows={6} placeholder="ESCALE,PAYS,IR AF…,MF AF…&#10;JNB/CPT,AFRIQUE DU SUD,&quot;22,28€&quot;,…"
+            className="w-full font-mono text-[10px] px-2 py-1.5 rounded border border-blue-200 dark:border-blue-800 bg-white dark:bg-zinc-900 resize-y" />
+          <div className="flex gap-2 items-center">
+            <button onClick={handleCsvImport} disabled={isPending || !csvText.trim()}
+              className="px-3 py-1 rounded bg-blue-600 text-white text-[10px] font-semibold disabled:opacity-40">
+              {isPending ? '…' : 'Importer'}
+            </button>
+            <button onClick={() => setShowCsv(false)} className="text-[10px] text-zinc-500 hover:text-zinc-700">Annuler</button>
+            {err && <span className="text-[10px] text-red-500">{err}</span>}
+          </div>
+        </div>
+      )}
+
+      {/* Tableau */}
+      <div className="overflow-x-auto max-h-[480px] overflow-y-auto">
+        <table className="w-full text-xs">
+          <thead className="sticky top-0 bg-zinc-50 dark:bg-zinc-800/90 z-10">
+            <tr>
+              <th className="px-2.5 py-1.5 text-left text-[10px] font-medium text-zinc-400 uppercase tracking-wide whitespace-nowrap">Escale</th>
+              <th className="px-2.5 py-1.5 text-left text-[10px] font-medium text-zinc-400 uppercase tracking-wide">Pays</th>
+              <th className="px-2.5 py-1.5 text-right text-[10px] font-medium text-zinc-400 uppercase tracking-wide whitespace-nowrap">IR €</th>
+              <th className="px-2.5 py-1.5 text-right text-[10px] font-medium text-zinc-400 uppercase tracking-wide whitespace-nowrap">MF €</th>
+              {canEdit && <th className="w-6" />}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+            {filtered.map((r, i) => (
+              <tr key={r.escale} className={i % 2 ? 'bg-zinc-50/50 dark:bg-zinc-800/20' : ''}>
+                <td className="px-2.5 py-1 font-mono font-semibold text-zinc-700 dark:text-zinc-200 whitespace-nowrap">{r.escale}</td>
+                <td className="px-2.5 py-1 text-zinc-500 dark:text-zinc-400">{r.country}</td>
+                <td className="px-2.5 py-1 text-right font-mono text-zinc-700 dark:text-zinc-300">{r.ir_eur.toFixed(2)}</td>
+                <td className="px-2.5 py-1 text-right font-mono text-zinc-500 dark:text-zinc-400">{r.mf_eur.toFixed(2)}</td>
+                {canEdit && (
+                  <td className="px-1 py-1 text-center">
+                    <button onClick={() => handleDelete(r.escale)} disabled={isPending}
+                      className="text-zinc-300 hover:text-red-500 dark:text-zinc-600 dark:hover:text-red-400 text-[10px] leading-none disabled:opacity-30">
+                      ×
+                    </button>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────────
-const KNOWN = ['cat_anciennete', 'coef_classe', 'taux_avion', 'prime_incitation', 'prime_incitation_330', 'traitement_base', 'prorata', 'prime_instruction', 'article_81', 'definitions'];
+const KNOWN = ['cat_anciennete', 'coef_classe', 'taux_avion', 'prime_incitation', 'prime_incitation_330', 'traitement_base', 'prorata', 'prime_instruction', 'article_81', 'definitions', 'ir_mf_rates'];
 
 export function AnnexeClient({ tables, canEdit }: { tables: AnnexeRow[]; canEdit: boolean }) {
   const by = Object.fromEntries(tables.map(t => [t.slug, t]));
@@ -453,7 +617,10 @@ export function AnnexeClient({ tables, canEdit }: { tables: AnnexeRow[]; canEdit
       {/* 6. Article 81 */}
       {by.article_81 && <Article81Card table={by.article_81} canEdit={canEdit} />}
 
-      {/* 7. Définitions */}
+      {/* 7. IR / MF */}
+      {by.ir_mf_rates && <IrMfRatesCard table={by.ir_mf_rates} canEdit={canEdit} />}
+
+      {/* 8. Définitions */}
       {by.definitions && <DefinitionsCard table={by.definitions} canEdit={canEdit} />}
 
       {/* Autres */}
