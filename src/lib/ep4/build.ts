@@ -11,6 +11,7 @@ import type { IrMfRate } from '@/lib/ir-rates';
 import type { Ep4Leg, Ep4Service, Ep4Rotation, TauxAppRow } from './types';
 import { tsvNuitJ, tsvNuitJ1 } from './night';
 import { computeIRandMF } from './ir';
+import { getPlanPrestation } from '@/lib/plan-prestation';
 
 const HOUR_MS = 3_600_000;
 const EXCLUDE_PRIME_AIRPORTS = new Set(['TLV', 'BEY']);
@@ -288,7 +289,7 @@ export function buildEp4Rotation(
 
   const ONm = computeOnM(debut_vol_ms, fin_vol_ms, ON, year, month);
 
-  const irMf = computeIRandMF(detail, irRates);
+  const irMf = computeIRandMF(detail, irRates, getPlanPrestation);
   const IR = irMf.ir;
   const MF = irMf.mf;
   const IR_eur = irMf.ir_eur;

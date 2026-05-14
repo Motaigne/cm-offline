@@ -42,19 +42,24 @@ interface SlotInfo {
 }
 
 /** Marque les créneaux IR/MF couverts par un intervalle local donné, en
- *  attribuant l'escale d'origine pour le lookup tarif. */
+ *  attribuant l'escale d'origine pour le lookup tarif.
+ *  suppressDej/suppressDin : slots couverts par un repas à bord (Plan de Prestations). */
 function addSlots(
   intervalLocalStartMs: number,
   intervalLocalEndMs: number,
   escale: string,
   isMfEligible: boolean,
   irSlotsMap: Map<string, SlotInfo>,
+  suppressDej = false,
+  suppressDin = false,
 ): void {
   if (intervalLocalEndMs <= intervalLocalStartMs) return;
   let dayStart = Math.floor(intervalLocalStartMs / DAY_MS) * DAY_MS;
   while (dayStart <= intervalLocalEndMs) {
     const dayKey = localDayKey(dayStart);
     for (const slot of SLOTS) {
+      if (suppressDej && slot.name === 'midi') continue;
+      if (suppressDin && slot.name === 'soir') continue;
       const slotStart = dayStart + slot.startH * HOUR_MS;
       const slotEnd   = dayStart + slot.endH   * HOUR_MS;
       const overlap = Math.max(0,
@@ -90,7 +95,11 @@ export interface IrMfResult {
   missingRateEscales: string[];
 }
 
-export function computeIRandMF(detail: PairingDetail, rates: IrMfRate[] = []): IrMfResult {
+export function computeIRandMF(
+  detail: PairingDetail,
+  rates: IrMfRate[] = [],
+  getMealProvision?: (flightNumber: string, dep: string) => { dej: boolean; din: boolean } | null,
+): IrMfResult {
   const slotsMap = new Map<string, SlotInfo>();
 
   // Aplatissement en services ordonnés (en gardant codes DEP/ARR pour escale)
@@ -99,6 +108,7 @@ export function computeIRandMF(detail: PairingDetail, rates: IrMfRate[] = []): I
       begin_ms: d.schBeginDate,
       end_ms:   d.schEndDate,
       legs: (d.dutyLegAssociation ?? []).flatMap(dla => (dla.legs ?? []).map(l => ({
+        flightNumber: l.flightNumber,
         dep: l.departureStationCode,
         arr: l.arrivalStationCode,
         dep_ms: l.scheduledDepartureDate,
@@ -111,11 +121,13 @@ export function computeIRandMF(detail: PairingDetail, rates: IrMfRate[] = []): I
 
   // 1. Fenêtres TSVP par leg (en vol — pas MF-éligible).
   // Escale d'origine = destination du leg (= où le pilote arrive ou prépare son arrivée).
+  // Si le Plan de Prestations prévoit un repas à bord, le slot correspondant est supprimé.
   for (const svc of services) {
     for (const leg of svc.legs) {
+      const meal = getMealProvision ? getMealProvision(leg.flightNumber, leg.dep) : null;
       const localStart = (leg.dep_ms - TSVP_PRE_MS)  + leg.dep_utc_offset_h * HOUR_MS;
       const localEnd   = (leg.arr_ms + TSVP_POST_MS) + leg.dep_utc_offset_h * HOUR_MS;
-      addSlots(localStart, localEnd, leg.arr, false, slotsMap);
+      addSlots(localStart, localEnd, leg.arr, false, slotsMap, meal?.dej ?? false, meal?.din ?? false);
     }
   }
 

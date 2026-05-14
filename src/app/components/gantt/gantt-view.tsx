@@ -1564,8 +1564,8 @@ export function GanttView({
         <>
           <div className="fixed inset-0 z-40" onClick={() => setDetailPanel(null)} />
           <div
-            className="fixed z-50 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl shadow-2xl p-3 w-56"
-            style={{ left: detailPanel.rect.left + LABEL_W + 6, top: detailPanel.rect.top + 4 }}
+            className="fixed z-50 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl shadow-2xl p-3 w-56 overflow-y-auto max-h-[calc(100vh-16px)]"
+            style={{ left: detailPanel.rect.left + LABEL_W + 6, top: Math.max(8, Math.min(detailPanel.rect.top + 4, window.innerHeight - 280)) }}
           >
             <div className="text-[9px] font-bold text-zinc-400 uppercase tracking-wide mb-2">
               Détail — Scénario {detailPanel.name}

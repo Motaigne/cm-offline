@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { computeIRandMF } from '@/lib/ep4';
 import type { PairingDetail } from '@/lib/scraper/types';
 import type { IrMfRate } from '@/lib/ir-rates';
+import { getPlanPrestation } from '@/lib/plan-prestation';
 
 export interface MonthlyIrMfTotal {
   ir: number;       // compte
@@ -118,7 +119,7 @@ export async function getMonthlyIrMfEuros(month: string): Promise<MonthlyIrMfRes
       continue;
     }
 
-    const irMf = computeIRandMF(sig.raw_detail as unknown as PairingDetail, irRates);
+    const irMf = computeIRandMF(sig.raw_detail as unknown as PairingDetail, irRates, getPlanPrestation);
     result.byScenario[name].ir     += irMf.ir;
     result.byScenario[name].mf     += irMf.mf;
     result.byScenario[name].ir_eur += irMf.ir_eur;

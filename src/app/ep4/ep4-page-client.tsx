@@ -106,7 +106,7 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
               <button
                 key={s}
                 onClick={() => setScenario(s)}
-                disabled={data !== null && count === 0}
+                disabled={loading}
                 className={`px-3 h-7 rounded text-sm font-bold transition-colors disabled:opacity-30 ${
                   active
                     ? 'bg-zinc-800 dark:bg-zinc-100 text-white dark:text-zinc-900'
