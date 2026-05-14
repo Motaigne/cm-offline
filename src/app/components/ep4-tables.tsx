@@ -4,6 +4,7 @@
 
 import type { ReactNode } from 'react';
 import type { Ep4Rotation } from '@/lib/ep4';
+import { getPlanPrestation } from '@/lib/plan-prestation';
 
 function fmt(n: number | null | undefined, dec = 2): string {
   if (n == null || isNaN(n)) return '';
@@ -351,17 +352,23 @@ export function Ep4DecompteConsolidee({ flights, year, month }: {
 // ─── Frais de Déplacement EP4 (format document officiel) ─────────────────────
 
 export function Ep4FraisEP4Consolidee({ flights }: { flights: ConsoFlight[] }) {
-  // 18 colonnes de données
-  const NCOLS = 18;
+  // 19 colonnes de données (format document officiel EP4)
+  const NCOLS = 19;
 
-  let totIR = 0, totMF = 0, totTotalIndem = 0, totIREur = 0;
+  let totIR = 0, totMF = 0, totTotalIndem = 0, totDec = 0;
 
   const rotRows: ReactNode[][] = flights.map(({ ep4, is_spillover }) => {
+    // Dec total pour la rotation = somme des repas supprimés par leg
+    const rotDec = ep4.services.reduce((acc, svc) => {
+      const meal = getPlanPrestation(svc.legs[0]?.flightNumber ?? '', svc.legs[0]?.dep ?? '');
+      return acc + (meal ? (meal.dej ? 1 : 0) + (meal.din ? 1 : 0) : 0);
+    }, 0);
+
     if (!is_spillover) {
       totIR        += ep4.IR;
       totMF        += ep4.MF;
       totTotalIndem += ep4.IR_eur + ep4.MF_eur;
-      totIREur     += ep4.IR_eur;
+      totDec       += rotDec;
     }
 
     return [
@@ -376,31 +383,46 @@ export function Ep4FraisEP4Consolidee({ flights }: { flights: ConsoFlight[] }) {
         const firstLeg = svc.legs[0];
         const lastLeg  = svc.legs[svc.legs.length - 1];
         const isFirstSvc = si === 0;
+
+        // IR/MF sur 1er service :
+        //   - spillover (retour) → côté départ (escale étrangère)
+        //   - normal (aller)    → côté arrivée (escale étrangère)
+        const showIR = isFirstSvc;
+        const irDep  = is_spillover && showIR ? ep4.IR : 0;
+        const mfDep  = is_spillover && showIR ? ep4.MF : 0;
+        const irArr  = !is_spillover && showIR ? ep4.IR : 0;
+        const mfArr  = !is_spillover && showIR ? ep4.MF : 0;
         const totalIndem = isFirstSvc ? ep4.IR_eur + ep4.MF_eur : null;
+        // Dec = repas supprimés par prestation sur ce service
+        const meal = getPlanPrestation(firstLeg?.flightNumber ?? '', firstLeg?.dep ?? '');
+        const dec  = meal ? (meal.dej ? 1 : 0) + (meal.din ? 1 : 0) : 0;
+
         return (
           <tr key={`f-${ep4.rotation_code}-${svc.service_index}`}
               className={`border-b border-zinc-100 dark:border-zinc-800 ${is_spillover ? 'italic text-zinc-400' : ''}`}>
+            {/* N° Ligne */}
+            <Td>{firstLeg?.flightNumber ?? ''}</Td>
             {/* Départ */}
             <Td>{firstLeg?.dep ?? ''}</Td>
             <Td>{firstLeg ? fmtEp4Time(firstLeg.begin_ms) : ''}</Td>
-            <Td>{/* Dec dep — placeholder */}</Td>
-            <Td>{/* Pdéj dep — placeholder */}</Td>
-            <Td right>{isFirstSvc ? String(ep4.IR) : ''}</Td>
-            <Td right>{isFirstSvc ? String(ep4.MF) : ''}</Td>
+            <Td right>{dec > 0 ? String(dec) : ''}</Td>
+            <Td>{/* Pdéj */}</Td>
+            <Td right>{irDep > 0 ? String(irDep) : ''}</Td>
+            <Td right>{mfDep > 0 ? String(mfDep) : ''}</Td>
             {/* Arrivée */}
             <Td>{lastLeg?.arr ?? ''}</Td>
             <Td>{lastLeg ? fmtEp4Time(lastLeg.end_ms) : ''}</Td>
-            <Td>{/* Dec arr — placeholder */}</Td>
-            <Td>{/* Pdéj arr — placeholder */}</Td>
-            <Td>{/* IR arr — vide (déjà côté départ) */}</Td>
-            <Td>{/* MF arr — vide */}</Td>
+            <Td>{/* Dec arr */}</Td>
+            <Td>{/* Pdéj arr */}</Td>
+            <Td right>{irArr > 0 ? String(irArr) : ''}</Td>
+            <Td right>{mfArr > 0 ? String(mfArr) : ''}</Td>
             {/* Indemnités */}
             <Td right>{totalIndem != null ? fmt(totalIndem) : ''}</Td>
-            <Td>{/* Type — placeholder */}</Td>
-            <Td>{/* km — placeholder */}</Td>
-            <Td>{/* Mt Dec — placeholder */}</Td>
+            <Td>{/* Type */}</Td>
+            <Td>{/* km */}</Td>
+            <Td>{/* Mt Dec */}</Td>
             <Td right>{isFirstSvc ? fmt(ep4.IR_eur) : ''}</Td>
-            <Td>{/* PN Non Exonéré — placeholder */}</Td>
+            <Td>{/* PN Non Exonéré */}</Td>
           </tr>
         );
       }),
@@ -413,24 +435,25 @@ export function Ep4FraisEP4Consolidee({ flights }: { flights: ConsoFlight[] }) {
         <table className="text-[11px] font-mono w-full border-collapse">
           <thead>
             <tr className="bg-zinc-50 dark:bg-zinc-800 text-zinc-500 border-b border-zinc-100 dark:border-zinc-700">
+              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700 whitespace-nowrap">N° Ligne</th>
               <th colSpan={6} className="px-2 py-1 text-center text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700">Départ</th>
               <th colSpan={6} className="px-2 py-1 text-center text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700">Arrivée</th>
-              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700 whitespace-nowrap">Total Indem</th>
+              <th rowSpan={2} className="px-2 py-1 text-right text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700 whitespace-nowrap">Total Indem</th>
               <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700">Type</th>
               <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700">km</th>
               <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700 whitespace-nowrap">Mt Dec</th>
-              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700 whitespace-nowrap">PN Exonéré</th>
-              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700 whitespace-nowrap">PN Non Exonéré</th>
+              <th rowSpan={2} className="px-2 py-1 text-right text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700 whitespace-nowrap">PN Exonéré</th>
+              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700 whitespace-nowrap">PN Non Exo.</th>
             </tr>
             <tr className="bg-zinc-50 dark:bg-zinc-800 text-zinc-500 border-b border-zinc-200 dark:border-zinc-700">
               <Th>Esc.</Th>
-              <Th>Horaires loc.</Th>
+              <Th>Hor. TU</Th>
               <Th>Dec</Th>
               <Th>Pdéj</Th>
               <Th>IR</Th>
               <Th>MF</Th>
               <Th>Esc.</Th>
-              <Th>Horaires loc.</Th>
+              <Th>Hor. TU</Th>
               <Th>Dec</Th>
               <Th>Pdéj</Th>
               <Th>IR</Th>
@@ -441,19 +464,26 @@ export function Ep4FraisEP4Consolidee({ flights }: { flights: ConsoFlight[] }) {
           {flights.length > 1 && (
             <tfoot>
               <tr className="border-t-2 border-zinc-400 dark:border-zinc-500 bg-zinc-50 dark:bg-zinc-800/40 font-semibold">
-                <td colSpan={4} className="px-2 py-1 text-[10px] text-zinc-500 uppercase">Total</td>
+                <td colSpan={3} className="px-2 py-1 text-[10px] text-zinc-500 uppercase">Totaux</td>
+                <Td right>{totDec > 0 ? String(totDec) : '—'}</Td>
+                <Td />
                 <Td right>{totIR > 0 ? String(totIR) : '—'}</Td>
                 <Td right>{totMF > 0 ? String(totMF) : '—'}</Td>
-                <td colSpan={6} />
+                <td colSpan={5} />
+                <Td right>{totIR > 0 ? String(totIR) : '—'}</Td>
+                <Td right>{totMF > 0 ? String(totMF) : '—'}</Td>
                 <Td right>{fmt(totTotalIndem)}</Td>
-                <td colSpan={3} />
-                <Td right>{fmt(totIREur)}</Td>
-                <Td />
+                <td colSpan={4} />
               </tr>
             </tfoot>
           )}
         </table>
       </div>
+      {flights.some(f => f.ep4.IR_missingRateEscales.length > 0) && (
+        <p className="px-4 py-2 text-[10px] text-amber-600 dark:text-amber-400">
+          Taux IR manquants : {[...new Set(flights.flatMap(f => f.ep4.IR_missingRateEscales))].join(', ')}
+        </p>
+      )}
     </Card>
   );
 }
@@ -645,10 +675,11 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
   const monthStart = Date.UTC(year, month - 1, 1);
   const monthEnd   = month === 12 ? Date.UTC(year + 1, 0, 1) : Date.UTC(year, month, 1);
 
-  // Totaux — 19 colonnes de données
-  let totHVReal = 0, totHCV = 0, totHCT = 0, totHCA = 0;
+  // 22 colonnes de données
+  const NCOLS = 22;
+  let totHVReal = 0, totTME = 0, totHCV = 0, totHCT = 0, totHCA = 0;
   let totH1 = 0, totH2HC = 0, totHCVr = 0, totH1r = 0, totH2HCr = 0;
-  let totMontantHCr = 0, totNuit = 0;
+  let totMontantHCr = 0, totNuit = 0, totMontantNuit = 0;
 
   const rotRows: ReactNode[][] = flights.map(({ ep4, is_spillover }) => {
     const allLegs = ep4.services.flatMap((svc, si) =>
@@ -656,28 +687,28 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
     );
     const isSpilloverRot = is_spillover;
 
-    // Accumulation totaux (non-spillover uniquement)
     if (!isSpilloverRot) {
       ep4.services.forEach(svc => {
         totHVReal += svc.block_block;
+        totTME    += svc.TME ?? 0;
         totHCV    += svc.HCV;
         totHCT    += svc.HCT;
         totH1     += svc.H1;
         totHCVr   += svc.HCVr;
         totH1r    += svc.H1r;
         totNuit   += svc.tsv_nuit;
+        totMontantNuit += svc.tsv_nuit * PVEI;
       });
-      totHCA       += ep4.HCA;
-      totH2HC      += ep4.H2HC;
-      totH2HCr     += ep4.H2HCr;
+      totHCA        += ep4.HCA;
+      totH2HC       += ep4.H2HC;
+      totH2HCr      += ep4.H2HCr;
       totMontantHCr += ep4.H2HCr * PVEI * KSP;
     }
 
-    // separator colSpan = 20 columns
     return [
       <tr key={`sep-d-${ep4.rotation_code}-${ep4.debut_vol_ms}`}
           className="bg-zinc-100 dark:bg-zinc-800/60 border-t-2 border-zinc-300 dark:border-zinc-600">
-        <td colSpan={20} className="px-2 py-0.5 text-[10px] font-semibold text-zinc-500 dark:text-zinc-300">
+        <td colSpan={NCOLS} className="px-2 py-0.5 text-[10px] font-semibold text-zinc-500 dark:text-zinc-300">
           {ep4.rotation_code || '—'}
           {isSpilloverRot && <span className="ml-2 text-amber-500">↩ à cheval</span>}
         </td>
@@ -686,30 +717,33 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
         const isSpillover = isSpilloverRot || leg.end_ms < monthStart || leg.begin_ms >= monthEnd;
         const isFirstLegOfSvc = li === 0;
         const isFirstLegOfRot = si === 0 && li === 0;
-        const montantHCr = isFirstLegOfRot ? ep4.H2HCr * PVEI * KSP : null;
+        const montantHCr  = isFirstLegOfRot ? ep4.H2HCr * PVEI * KSP : null;
+        const montantNuit = isFirstLegOfSvc && svc.tsv_nuit > 0 ? svc.tsv_nuit * PVEI : null;
         return (
           <tr key={`d2-${leg.flightNumber}-${leg.begin_ms}`}
               className={`border-b border-zinc-100 dark:border-zinc-800 ${isSpillover ? 'italic text-zinc-400' : ''}`}>
             <Td>{fmtDateCourt(leg.begin_ms)}</Td>
-            <Td>{isFirstLegOfSvc ? leg.flightNumber : ''}</Td>
+            <Td>{leg.flightNumber}</Td>
             <Td>{leg.dep}</Td>
             <Td>{leg.arr}</Td>
             <Td right>{fmt(leg.tdv_troncon)}</Td>
-            <Td>{/* TME — placeholder */}</Td>
-            <Td>{/* HV 100% — placeholder */}</Td>
+            <Td right>{isFirstLegOfSvc ? fmt(svc.TME) : ''}</Td>
             <Td right>{isFirstLegOfSvc ? fmt(svc.CMT, 4) : ''}</Td>
+            <Td>{/* HV 100% — non calculé */}</Td>
             <Td right>{isFirstLegOfSvc ? fmt(svc.HCV) : ''}</Td>
             <Td right>{isFirstLegOfSvc ? fmt(svc.HCT) : ''}</Td>
             <Td right>{isFirstLegOfRot ? fmt(ep4.HCA) : ''}</Td>
             <Td right>{isFirstLegOfSvc ? fmt(svc.H1) : ''}</Td>
             <Td right>{isFirstLegOfRot ? fmt(ep4.H2HC) : ''}</Td>
+            <Td>{/* HV 100%(r) — non calculé */}</Td>
             <Td right>{isFirstLegOfSvc ? fmt(svc.HCVr) : ''}</Td>
             <Td right>{isFirstLegOfSvc ? fmt(svc.H1r) : ''}</Td>
             <Td right>{isFirstLegOfRot ? fmt(ep4.H2HCr) : ''}</Td>
             <Td right>{montantHCr != null ? fmt(montantHCr) : ''}</Td>
             <Td right>{isFirstLegOfSvc && svc.tsv_nuit > 0 ? fmt(svc.tsv_nuit) : ''}</Td>
-            <Td>{/* Majo 10% — placeholder */}</Td>
-            <Td>{/* Prime CDB — placeholder */}</Td>
+            <Td right>{montantNuit != null ? fmt(montantNuit) : ''}</Td>
+            <Td>{/* Majo 10% */}</Td>
+            <Td>{/* Prime CDB */}</Td>
           </tr>
         );
       }),
@@ -728,18 +762,20 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
               <Th>Arr.</Th>
               <Th>HV réal</Th>
               <Th>TME</Th>
-              <Th>HV 100%</Th>
               <Th>CMT</Th>
+              <Th>HV 100%</Th>
               <Th>HCV</Th>
               <Th>HCT</Th>
               <Th>HCA</Th>
               <Th>H1</Th>
               <Th>H2/HC</Th>
+              <Th>HV 100%(r)</Th>
               <Th>HCV(r)</Th>
               <Th>H1(r)</Th>
-              <Th>H2/HC(r)</Th>
+              <Th>H2(r)/HC(r)</Th>
               <Th>Montant HC(r)</Th>
               <Th>Majo Nuit</Th>
+              <Th>Mt Nuit</Th>
               <Th>Majo 10%</Th>
               <Th>Prime CDB</Th>
             </tr>
@@ -750,19 +786,21 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
               <tr className="border-t-2 border-zinc-400 dark:border-zinc-500 bg-zinc-50 dark:bg-zinc-800/40 font-semibold">
                 <td colSpan={4} className="px-2 py-1 text-[10px] text-zinc-500 uppercase">Total</td>
                 <Td right>{fmt(totHVReal)}</Td>
-                <Td />{/* TME */}
-                <Td />{/* HV 100% */}
+                <Td right>{fmt(totTME)}</Td>
                 <Td />{/* CMT */}
+                <Td />{/* HV 100% */}
                 <Td right>{fmt(totHCV)}</Td>
                 <Td right>{fmt(totHCT)}</Td>
                 <Td right>{fmt(totHCA)}</Td>
                 <Td right>{fmt(totH1)}</Td>
                 <Td right>{fmt(totH2HC)}</Td>
+                <Td />{/* HV 100%(r) */}
                 <Td right>{fmt(totHCVr)}</Td>
                 <Td right>{fmt(totH1r)}</Td>
                 <Td right>{fmt(totH2HCr)}</Td>
                 <Td right>{fmt(totMontantHCr)}</Td>
                 <Td right>{fmt(totNuit)}</Td>
+                <Td right>{fmt(totMontantNuit)}</Td>
                 <Td />{/* Majo 10% */}
                 <Td />{/* Prime CDB */}
               </tr>

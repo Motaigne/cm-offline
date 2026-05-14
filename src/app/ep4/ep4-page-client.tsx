@@ -2,19 +2,17 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { NavBar } from '@/app/components/nav';
-import { Ep4HoraireConsolidee, Ep4DecompteConsolidee, Ep4HoraireEP4Consolidee, Ep4DecompteEP4Consolidee, Ep4FraisEP4Consolidee } from '@/app/components/ep4-tables';
+import { Ep4HoraireEP4Consolidee, Ep4DecompteEP4Consolidee, Ep4FraisEP4Consolidee } from '@/app/components/ep4-tables';
 import { getEp4ForMonth, type Ep4MonthResponse } from '@/app/actions/ep4';
 
 type ScenarioName = 'A' | 'B' | 'C';
-type ViewName = 'horaire' | 'decompte' | 'frais' | 'horaire_old' | 'decompte_old';
+type ViewName = 'horaire' | 'decompte' | 'frais';
 
 const SCENARIOS: ScenarioName[] = ['A', 'B', 'C'];
 const VIEWS: { id: ViewName; label: string }[] = [
-  { id: 'horaire',      label: 'Feuille Horaire'         },
-  { id: 'decompte',     label: 'Feuille Décompte'        },
-  { id: 'frais',        label: 'Frais de Déplacement'    },
-  { id: 'horaire_old',  label: 'Feuille Horaire (old)'   },
-  { id: 'decompte_old', label: 'Feuille Décompte (old)'  },
+  { id: 'horaire',  label: 'Feuille Horaire'      },
+  { id: 'decompte', label: 'Feuille Décompte'     },
+  { id: 'frais',    label: 'Frais de Déplacement' },
 ];
 
 const MONTH_FR = ['Janvier','Février','Mars','Avril','Mai','Juin',
@@ -184,12 +182,8 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
             <Ep4HoraireEP4Consolidee flights={scenarioFlights} year={y} month={mo} />
           ) : view === 'decompte' ? (
             <Ep4DecompteEP4Consolidee flights={scenarioFlights} year={y} month={mo} />
-          ) : view === 'frais' ? (
-            <Ep4FraisEP4Consolidee flights={scenarioFlights} />
-          ) : view === 'horaire_old' ? (
-            <Ep4HoraireConsolidee flights={scenarioFlights} year={y} month={mo} />
           ) : (
-            <Ep4DecompteConsolidee flights={scenarioFlights} year={y} month={mo} />
+            <Ep4FraisEP4Consolidee flights={scenarioFlights} />
           )
         )}
       </main>

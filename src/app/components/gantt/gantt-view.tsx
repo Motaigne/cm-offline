@@ -1128,7 +1128,7 @@ export function GanttView({
                         <FinRow label="+cg" value={stats.congeAmount} cls="text-pink-500" />
                       )}
                       <div className="border-t border-dashed border-zinc-300 dark:border-zinc-600 my-0.5" />
-                      <FinRow label="BRUT" value={stats.brut} cls="text-emerald-600 dark:text-emerald-400" bold />
+                      <FinRow label={stats.fin.dif > 0 ? 'BRUT(MGA)' : 'BRUT'} value={stats.brut} cls="text-emerald-600 dark:text-emerald-400" bold />
                       <div className="border-t border-dashed border-emerald-300 dark:border-emerald-700/40 my-0.5" />
                       <FinRow label="A81" value={stats.totalA81} cls="text-zinc-400" />
                       {stats.totalA81 > 0 && (

@@ -28,8 +28,16 @@ export async function saveAnnexeTable(slug: string, data: Json) {
   if (!user) return { error: 'Non authentifié' };
   const { data: profile } = await supabase.from('user_profile').select('is_admin').eq('user_id', user.id).single();
   if (!profile?.is_admin) return { error: 'Accès refusé' };
-  const { error } = await supabase.from('annexe_table')
-    .update({ data, updated_at: new Date().toISOString() })
-    .eq('slug', slug);
-  return error ? { error: error.message } : { ok: true };
+  // Essai update d'abord ; si 0 lignes correspondantes → insert (nouvelle row)
+  const { error: updateErr, data: updated } = await supabase.from('annexe_table')
+    .update({ data })
+    .eq('slug', slug)
+    .select('slug');
+  if (updateErr) return { error: updateErr.message };
+  if (!updated || updated.length === 0) {
+    const { error: insertErr } = await supabase.from('annexe_table')
+      .insert({ slug, name: slug, data });
+    if (insertErr) return { error: insertErr.message };
+  }
+  return { ok: true };
 }

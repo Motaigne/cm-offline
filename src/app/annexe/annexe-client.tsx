@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useState, useTransition, type ReactNode } from 'react';
 import { saveAnnexeTable } from '@/app/actions/annexe';
 import type { Json } from '@/types/supabase';
 
@@ -11,7 +11,7 @@ function Card({
   title, children, table, canEdit,
 }: {
   title: string;
-  children: React.ReactNode;
+  children: ReactNode;
   table: AnnexeRow;
   canEdit: boolean;
 }) {
@@ -617,8 +617,11 @@ export function AnnexeClient({ tables, canEdit }: { tables: AnnexeRow[]; canEdit
       {/* 6. Article 81 */}
       {by.article_81 && <Article81Card table={by.article_81} canEdit={canEdit} />}
 
-      {/* 7. IR / MF */}
-      {by.ir_mf_rates && <IrMfRatesCard table={by.ir_mf_rates} canEdit={canEdit} />}
+      {/* 7. IR / MF — toujours visible (même si la ligne DB manque) */}
+      <IrMfRatesCard
+        table={by.ir_mf_rates ?? { slug: 'ir_mf_rates', name: 'IR + MF', description: null, data: [], updated_at: '' }}
+        canEdit={canEdit}
+      />
 
       {/* 8. Définitions */}
       {by.definitions && <DefinitionsCard table={by.definitions} canEdit={canEdit} />}
