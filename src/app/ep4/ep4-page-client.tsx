@@ -2,18 +2,19 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { NavBar } from '@/app/components/nav';
-import { Ep4HoraireConsolidee, Ep4DecompteConsolidee, Ep4HoraireEP4Consolidee, Ep4DecompteEP4Consolidee } from '@/app/components/ep4-tables';
+import { Ep4HoraireConsolidee, Ep4DecompteConsolidee, Ep4HoraireEP4Consolidee, Ep4DecompteEP4Consolidee, Ep4FraisEP4Consolidee } from '@/app/components/ep4-tables';
 import { getEp4ForMonth, type Ep4MonthResponse } from '@/app/actions/ep4';
 
 type ScenarioName = 'A' | 'B' | 'C';
-type ViewName = 'horaire' | 'decompte' | 'horaire_old' | 'decompte_old';
+type ViewName = 'horaire' | 'decompte' | 'frais' | 'horaire_old' | 'decompte_old';
 
 const SCENARIOS: ScenarioName[] = ['A', 'B', 'C'];
 const VIEWS: { id: ViewName; label: string }[] = [
-  { id: 'horaire',      label: 'Feuille Horaire'       },
-  { id: 'decompte',     label: 'Feuille Décompte'      },
-  { id: 'horaire_old',  label: 'Feuille Horaire (old)' },
-  { id: 'decompte_old', label: 'Feuille Décompte (old)'},
+  { id: 'horaire',      label: 'Feuille Horaire'         },
+  { id: 'decompte',     label: 'Feuille Décompte'        },
+  { id: 'frais',        label: 'Frais de Déplacement'    },
+  { id: 'horaire_old',  label: 'Feuille Horaire (old)'   },
+  { id: 'decompte_old', label: 'Feuille Décompte (old)'  },
 ];
 
 const MONTH_FR = ['Janvier','Février','Mars','Avril','Mai','Juin',
@@ -167,8 +168,14 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
         ) : null}
 
         {data && scenarioFlights.length === 0 && !error && (
-          <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-6 text-center text-sm text-zinc-400">
-            Aucun vol planifié sur le scénario {scenario} pour {MONTH_FR[mo - 1]} {y}.
+          <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-6 text-center space-y-1">
+            <p className="text-sm text-zinc-400">
+              Aucun vol EP4 sur le scénario {scenario} pour {MONTH_FR[mo - 1]} {y}.
+            </p>
+            <p className="text-xs text-zinc-400/70">
+              Si un vol apparaît dans le calendrier, il n&apos;a pas de données EP4 liées
+              (pairing_instance_id manquant — vol ajouté sans passer par la recherche catalogue).
+            </p>
           </div>
         )}
 
@@ -177,6 +184,8 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
             <Ep4HoraireEP4Consolidee flights={scenarioFlights} year={y} month={mo} />
           ) : view === 'decompte' ? (
             <Ep4DecompteEP4Consolidee flights={scenarioFlights} year={y} month={mo} />
+          ) : view === 'frais' ? (
+            <Ep4FraisEP4Consolidee flights={scenarioFlights} />
           ) : view === 'horaire_old' ? (
             <Ep4HoraireConsolidee flights={scenarioFlights} year={y} month={mo} />
           ) : (

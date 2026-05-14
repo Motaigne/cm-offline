@@ -348,6 +348,116 @@ export function Ep4DecompteConsolidee({ flights, year, month }: {
   );
 }
 
+// ─── Frais de Déplacement EP4 (format document officiel) ─────────────────────
+
+export function Ep4FraisEP4Consolidee({ flights }: { flights: ConsoFlight[] }) {
+  // 18 colonnes de données
+  const NCOLS = 18;
+
+  let totIR = 0, totMF = 0, totTotalIndem = 0, totIREur = 0;
+
+  const rotRows: ReactNode[][] = flights.map(({ ep4, is_spillover }) => {
+    if (!is_spillover) {
+      totIR        += ep4.IR;
+      totMF        += ep4.MF;
+      totTotalIndem += ep4.IR_eur + ep4.MF_eur;
+      totIREur     += ep4.IR_eur;
+    }
+
+    return [
+      <tr key={`sep-f-${ep4.rotation_code}-${ep4.debut_vol_ms}`}
+          className="bg-zinc-100 dark:bg-zinc-800/60 border-t-2 border-zinc-300 dark:border-zinc-600">
+        <td colSpan={NCOLS} className="px-2 py-0.5 text-[10px] font-semibold text-zinc-500 dark:text-zinc-300">
+          {ep4.rotation_code || '—'}
+          {is_spillover && <span className="ml-2 text-amber-500">↩ à cheval</span>}
+        </td>
+      </tr>,
+      ...ep4.services.map((svc, si) => {
+        const firstLeg = svc.legs[0];
+        const lastLeg  = svc.legs[svc.legs.length - 1];
+        const isFirstSvc = si === 0;
+        const totalIndem = isFirstSvc ? ep4.IR_eur + ep4.MF_eur : null;
+        return (
+          <tr key={`f-${ep4.rotation_code}-${svc.service_index}`}
+              className={`border-b border-zinc-100 dark:border-zinc-800 ${is_spillover ? 'italic text-zinc-400' : ''}`}>
+            {/* Départ */}
+            <Td>{firstLeg?.dep ?? ''}</Td>
+            <Td>{firstLeg ? fmtEp4Time(firstLeg.begin_ms) : ''}</Td>
+            <Td>{/* Dec dep — placeholder */}</Td>
+            <Td>{/* Pdéj dep — placeholder */}</Td>
+            <Td right>{isFirstSvc ? String(ep4.IR) : ''}</Td>
+            <Td right>{isFirstSvc ? String(ep4.MF) : ''}</Td>
+            {/* Arrivée */}
+            <Td>{lastLeg?.arr ?? ''}</Td>
+            <Td>{lastLeg ? fmtEp4Time(lastLeg.end_ms) : ''}</Td>
+            <Td>{/* Dec arr — placeholder */}</Td>
+            <Td>{/* Pdéj arr — placeholder */}</Td>
+            <Td>{/* IR arr — vide (déjà côté départ) */}</Td>
+            <Td>{/* MF arr — vide */}</Td>
+            {/* Indemnités */}
+            <Td right>{totalIndem != null ? fmt(totalIndem) : ''}</Td>
+            <Td>{/* Type — placeholder */}</Td>
+            <Td>{/* km — placeholder */}</Td>
+            <Td>{/* Mt Dec — placeholder */}</Td>
+            <Td right>{isFirstSvc ? fmt(ep4.IR_eur) : ''}</Td>
+            <Td>{/* PN Non Exonéré — placeholder */}</Td>
+          </tr>
+        );
+      }),
+    ];
+  });
+
+  return (
+    <Card title="Frais de Déplacement EP4">
+      <div className="overflow-x-auto">
+        <table className="text-[11px] font-mono w-full border-collapse">
+          <thead>
+            <tr className="bg-zinc-50 dark:bg-zinc-800 text-zinc-500 border-b border-zinc-100 dark:border-zinc-700">
+              <th colSpan={6} className="px-2 py-1 text-center text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700">Départ</th>
+              <th colSpan={6} className="px-2 py-1 text-center text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700">Arrivée</th>
+              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700 whitespace-nowrap">Total Indem</th>
+              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700">Type</th>
+              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700">km</th>
+              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700 whitespace-nowrap">Mt Dec</th>
+              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700 whitespace-nowrap">PN Exonéré</th>
+              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700 whitespace-nowrap">PN Non Exonéré</th>
+            </tr>
+            <tr className="bg-zinc-50 dark:bg-zinc-800 text-zinc-500 border-b border-zinc-200 dark:border-zinc-700">
+              <Th>Esc.</Th>
+              <Th>Horaires loc.</Th>
+              <Th>Dec</Th>
+              <Th>Pdéj</Th>
+              <Th>IR</Th>
+              <Th>MF</Th>
+              <Th>Esc.</Th>
+              <Th>Horaires loc.</Th>
+              <Th>Dec</Th>
+              <Th>Pdéj</Th>
+              <Th>IR</Th>
+              <Th>MF</Th>
+            </tr>
+          </thead>
+          <tbody>{rotRows}</tbody>
+          {flights.length > 1 && (
+            <tfoot>
+              <tr className="border-t-2 border-zinc-400 dark:border-zinc-500 bg-zinc-50 dark:bg-zinc-800/40 font-semibold">
+                <td colSpan={4} className="px-2 py-1 text-[10px] text-zinc-500 uppercase">Total</td>
+                <Td right>{totIR > 0 ? String(totIR) : '—'}</Td>
+                <Td right>{totMF > 0 ? String(totMF) : '—'}</Td>
+                <td colSpan={6} />
+                <Td right>{fmt(totTotalIndem)}</Td>
+                <td colSpan={3} />
+                <Td right>{fmt(totIREur)}</Td>
+                <Td />
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </Card>
+  );
+}
+
 // ─── Frais de Déplacement consolidés ─────────────────────────────────────────
 
 export function Ep4FraisDeplacementConsolidee({ flights }: { flights: ConsoFlight[] }) {
@@ -435,23 +545,45 @@ export function Ep4HoraireEP4Consolidee({ flights, year, month }: {
 }) {
   const monthStart = Date.UTC(year, month - 1, 1);
   const monthEnd   = month === 12 ? Date.UTC(year + 1, 0, 1) : Date.UTC(year, month, 1);
+  // 12 columns: N° Ligne | Esc. | Réal dep | Prog dep | Esc. | Réal arr | Prog arr | Tps Vol | V.ref | TSV | T.A | Tps Vol Nuit
+  const NCOLS = 12;
 
   return (
     <Card title="Feuille Horaire d'Activité du Personnel Navigant EP4">
       <div className="overflow-x-auto">
-        <table className="text-[11px] font-mono w-max border-collapse">
+        <table className="text-[11px] font-mono w-full table-fixed border-collapse min-w-[600px]">
+          <colgroup>
+            <col style={{ width: '8%' }} />
+            <col style={{ width: '5%' }} />
+            <col style={{ width: '10%' }} />
+            <col style={{ width: '10%' }} />
+            <col style={{ width: '5%' }} />
+            <col style={{ width: '10%' }} />
+            <col style={{ width: '10%' }} />
+            <col style={{ width: '8%' }} />
+            <col style={{ width: '8%' }} />
+            <col style={{ width: '8%' }} />
+            <col style={{ width: '8%' }} />
+            <col style={{ width: '10%' }} />
+          </colgroup>
           <thead>
+            <tr className="bg-zinc-50 dark:bg-zinc-800 text-zinc-500 border-b border-zinc-100 dark:border-zinc-700">
+              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">N° Ligne</th>
+              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">Esc.</th>
+              <th colSpan={2} className="px-2 py-1 text-center text-[10px] font-medium uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">Départ TU</th>
+              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">Esc.</th>
+              <th colSpan={2} className="px-2 py-1 text-center text-[10px] font-medium uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">Arrivée TU</th>
+              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">Tps Vol</th>
+              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">V.ref</th>
+              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">TSV</th>
+              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">T.A</th>
+              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">Tps Vol Nuit</th>
+            </tr>
             <tr className="bg-zinc-50 dark:bg-zinc-800 text-zinc-500 border-b border-zinc-200 dark:border-zinc-700">
-              <Th>N° Ligne</Th>
-              <Th>Esc.</Th>
-              <Th>Départ TU</Th>
-              <Th>Esc.</Th>
-              <Th>Arrivée TU</Th>
-              <Th>Tps Vol</Th>
-              <Th>V.ref</Th>
-              <Th>TSV</Th>
-              <Th>T.A</Th>
-              <Th>Tps Vol Nuit</Th>
+              <Th>Réal</Th>
+              <Th>Prog</Th>
+              <Th>Réal</Th>
+              <Th>Prog</Th>
             </tr>
           </thead>
           <tbody>
@@ -465,7 +597,7 @@ export function Ep4HoraireEP4Consolidee({ flights, year, month }: {
                 // Ligne séparateur rotation
                 <tr key={`sep-h-${ep4.rotation_code}-${ep4.debut_vol_ms}`}
                     className="bg-zinc-100 dark:bg-zinc-800/60 border-t-2 border-zinc-300 dark:border-zinc-600">
-                  <td colSpan={10} className="px-2 py-0.5 text-[10px] font-semibold text-zinc-500 dark:text-zinc-300">
+                  <td colSpan={NCOLS} className="px-2 py-0.5 text-[10px] font-semibold text-zinc-500 dark:text-zinc-300">
                     {ep4.rotation_code || '—'}
                     {is_spillover && <span className="ml-2 text-amber-500">↩ à cheval</span>}
                   </td>
@@ -479,8 +611,10 @@ export function Ep4HoraireEP4Consolidee({ flights, year, month }: {
                       <Td>{isFirstLegOfSvc ? leg.flightNumber : ''}</Td>
                       <Td>{leg.dep}</Td>
                       <Td>{fmtEp4Time(leg.begin_ms)}</Td>
+                      <Td>{''}</Td>
                       <Td>{leg.arr}</Td>
                       <Td>{fmtEp4Time(leg.end_ms)}</Td>
+                      <Td>{''}</Td>
                       <Td right>{fmt(leg.tdv_troncon)}</Td>
                       <Td right>{fmt(leg.tdv_troncon * svc.CMT)}</Td>
                       <Td right>{isLastLegOfSvc ? fmt(svc.tsv) : ''}</Td>
@@ -500,6 +634,9 @@ export function Ep4HoraireEP4Consolidee({ flights, year, month }: {
 
 // ─── Feuille Décompte EP4 (format document officiel) ─────────────────────────
 
+const PVEI = 120.65;
+const KSP  = 1.07;
+
 export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
   flights: ConsoFlight[];
   year: number;
@@ -508,9 +645,10 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
   const monthStart = Date.UTC(year, month - 1, 1);
   const monthEnd   = month === 12 ? Date.UTC(year + 1, 0, 1) : Date.UTC(year, month, 1);
 
-  // Totaux
-  let totHVReal = 0, totHV100 = 0, totHCV = 0, totHCT = 0, totHCA = 0;
-  let totH1 = 0, totH2HC = 0, totHCVr = 0, totH1r = 0, totH2HCr = 0, totNuit = 0;
+  // Totaux — 19 colonnes de données
+  let totHVReal = 0, totHCV = 0, totHCT = 0, totHCA = 0;
+  let totH1 = 0, totH2HC = 0, totHCVr = 0, totH1r = 0, totH2HCr = 0;
+  let totMontantHCr = 0, totNuit = 0;
 
   const rotRows: ReactNode[][] = flights.map(({ ep4, is_spillover }) => {
     const allLegs = ep4.services.flatMap((svc, si) =>
@@ -522,7 +660,6 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
     if (!isSpilloverRot) {
       ep4.services.forEach(svc => {
         totHVReal += svc.block_block;
-        totHV100  += svc.HCV;
         totHCV    += svc.HCV;
         totHCT    += svc.HCT;
         totH1     += svc.H1;
@@ -530,15 +667,17 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
         totH1r    += svc.H1r;
         totNuit   += svc.tsv_nuit;
       });
-      totHCA   += ep4.HCA;
-      totH2HC  += ep4.H2HC;
-      totH2HCr += ep4.H2HCr;
+      totHCA       += ep4.HCA;
+      totH2HC      += ep4.H2HC;
+      totH2HCr     += ep4.H2HCr;
+      totMontantHCr += ep4.H2HCr * PVEI * KSP;
     }
 
+    // separator colSpan = 20 columns
     return [
       <tr key={`sep-d-${ep4.rotation_code}-${ep4.debut_vol_ms}`}
           className="bg-zinc-100 dark:bg-zinc-800/60 border-t-2 border-zinc-300 dark:border-zinc-600">
-        <td colSpan={13} className="px-2 py-0.5 text-[10px] font-semibold text-zinc-500 dark:text-zinc-300">
+        <td colSpan={20} className="px-2 py-0.5 text-[10px] font-semibold text-zinc-500 dark:text-zinc-300">
           {ep4.rotation_code || '—'}
           {isSpilloverRot && <span className="ml-2 text-amber-500">↩ à cheval</span>}
         </td>
@@ -547,6 +686,7 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
         const isSpillover = isSpilloverRot || leg.end_ms < monthStart || leg.begin_ms >= monthEnd;
         const isFirstLegOfSvc = li === 0;
         const isFirstLegOfRot = si === 0 && li === 0;
+        const montantHCr = isFirstLegOfRot ? ep4.H2HCr * PVEI * KSP : null;
         return (
           <tr key={`d2-${leg.flightNumber}-${leg.begin_ms}`}
               className={`border-b border-zinc-100 dark:border-zinc-800 ${isSpillover ? 'italic text-zinc-400' : ''}`}>
@@ -555,6 +695,8 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
             <Td>{leg.dep}</Td>
             <Td>{leg.arr}</Td>
             <Td right>{fmt(leg.tdv_troncon)}</Td>
+            <Td>{/* TME — placeholder */}</Td>
+            <Td>{/* HV 100% — placeholder */}</Td>
             <Td right>{isFirstLegOfSvc ? fmt(svc.CMT, 4) : ''}</Td>
             <Td right>{isFirstLegOfSvc ? fmt(svc.HCV) : ''}</Td>
             <Td right>{isFirstLegOfSvc ? fmt(svc.HCT) : ''}</Td>
@@ -564,7 +706,10 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
             <Td right>{isFirstLegOfSvc ? fmt(svc.HCVr) : ''}</Td>
             <Td right>{isFirstLegOfSvc ? fmt(svc.H1r) : ''}</Td>
             <Td right>{isFirstLegOfRot ? fmt(ep4.H2HCr) : ''}</Td>
+            <Td right>{montantHCr != null ? fmt(montantHCr) : ''}</Td>
             <Td right>{isFirstLegOfSvc && svc.tsv_nuit > 0 ? fmt(svc.tsv_nuit) : ''}</Td>
+            <Td>{/* Majo 10% — placeholder */}</Td>
+            <Td>{/* Prime CDB — placeholder */}</Td>
           </tr>
         );
       }),
@@ -574,7 +719,7 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
   return (
     <Card title="Feuille de Décompte d'Activité du Personnel Navigant EP4">
       <div className="overflow-x-auto">
-        <table className="text-[11px] font-mono w-max border-collapse">
+        <table className="text-[11px] font-mono w-full border-collapse">
           <thead>
             <tr className="bg-zinc-50 dark:bg-zinc-800 text-zinc-500 border-b border-zinc-200 dark:border-zinc-700">
               <Th>Date</Th>
@@ -582,6 +727,8 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
               <Th>Dép.</Th>
               <Th>Arr.</Th>
               <Th>HV réal</Th>
+              <Th>TME</Th>
+              <Th>HV 100%</Th>
               <Th>CMT</Th>
               <Th>HCV</Th>
               <Th>HCT</Th>
@@ -591,7 +738,10 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
               <Th>HCV(r)</Th>
               <Th>H1(r)</Th>
               <Th>H2/HC(r)</Th>
-              <Th>Nuit</Th>
+              <Th>Montant HC(r)</Th>
+              <Th>Majo Nuit</Th>
+              <Th>Majo 10%</Th>
+              <Th>Prime CDB</Th>
             </tr>
           </thead>
           <tbody>{rotRows}</tbody>
@@ -600,7 +750,9 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
               <tr className="border-t-2 border-zinc-400 dark:border-zinc-500 bg-zinc-50 dark:bg-zinc-800/40 font-semibold">
                 <td colSpan={4} className="px-2 py-1 text-[10px] text-zinc-500 uppercase">Total</td>
                 <Td right>{fmt(totHVReal)}</Td>
-                <Td />
+                <Td />{/* TME */}
+                <Td />{/* HV 100% */}
+                <Td />{/* CMT */}
                 <Td right>{fmt(totHCV)}</Td>
                 <Td right>{fmt(totHCT)}</Td>
                 <Td right>{fmt(totHCA)}</Td>
@@ -609,7 +761,10 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
                 <Td right>{fmt(totHCVr)}</Td>
                 <Td right>{fmt(totH1r)}</Td>
                 <Td right>{fmt(totH2HCr)}</Td>
+                <Td right>{fmt(totMontantHCr)}</Td>
                 <Td right>{fmt(totNuit)}</Td>
+                <Td />{/* Majo 10% */}
+                <Td />{/* Prime CDB */}
               </tr>
             </tfoot>
           )}
