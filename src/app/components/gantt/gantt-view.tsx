@@ -571,7 +571,7 @@ export function GanttView({
 
   // Panneau détail paie (flyout fixe à droite du label)
   type DetailPanel = {
-    name: string; rect: DOMRect;
+    name: string; rect: DOMRect; viewportH: number;
     totalPv: number; totalHc: number; seuil75: number; pvEur: number; hsH: number; hsEur: number;
     hsFixeRate: number; hsVolRate: number; tauxMoyen: number;
     difEur: number; mga: number; fixeForFin: number;
@@ -1130,7 +1130,7 @@ export function GanttView({
                       <div className="border-t border-dashed border-zinc-300 dark:border-zinc-600 my-0.5" />
                       <FinRow label="BRUT" value={stats.brut} cls="text-emerald-600 dark:text-emerald-400" bold />
                       <div className="border-t border-dashed border-emerald-300 dark:border-emerald-700/40 my-0.5" />
-                      <FinRow label="A81" value={stats.totalA81} cls="text-emerald-600 dark:text-emerald-400" bold />
+                      <FinRow label="A81" value={stats.totalA81} cls="text-zinc-400" />
                       {stats.totalA81 > 0 && (
                         <div className="flex items-baseline justify-between gap-0.5">
                           <span className="text-[7.5px] font-mono leading-none text-emerald-600/70 dark:text-emerald-400/60">
@@ -1170,6 +1170,7 @@ export function GanttView({
                         const boost      = isFullPrimeMonth(userRegime, mo) && (REGIME_NB30E[userRegime] ?? NB_30E) > 0 ? 30 / (REGIME_NB30E[userRegime] ?? NB_30E) : 1;
                         setDetailPanel({
                           name: scenario.name, rect,
+                          viewportH: window.visualViewport?.height ?? window.innerHeight,
                           totalPv, totalHc: stats.totalHc, seuil75, pvEur, hsH: stats.hsH, hsEur: stats.fin.hs,
                           hsFixeRate: stats.hsFixeRate, hsVolRate: stats.hsVolRate, tauxMoyen,
                           difEur: stats.fin.dif, mga: mgaV, fixeForFin: fixeFF,
@@ -1565,7 +1566,12 @@ export function GanttView({
           <div className="fixed inset-0 z-40" onClick={() => setDetailPanel(null)} />
           <div
             className="fixed z-50 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl shadow-2xl p-3 w-56 overflow-y-auto max-h-[calc(100vh-16px)]"
-            style={{ left: detailPanel.rect.left + LABEL_W + 6, top: Math.max(8, Math.min(detailPanel.rect.top + 4, window.innerHeight - 280)) }}
+            style={{
+              left: detailPanel.rect.left + LABEL_W + 6,
+              ...(detailPanel.rect.top > detailPanel.viewportH / 2
+                ? { bottom: detailPanel.viewportH - detailPanel.rect.top + 4 }
+                : { top: Math.max(8, detailPanel.rect.top + 4) }),
+            }}
           >
             <div className="text-[9px] font-bold text-zinc-400 uppercase tracking-wide mb-2">
               Détail — Scénario {detailPanel.name}

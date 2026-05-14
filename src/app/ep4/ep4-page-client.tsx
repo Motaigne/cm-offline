@@ -2,17 +2,18 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { NavBar } from '@/app/components/nav';
-import { Ep4HoraireConsolidee, Ep4DecompteConsolidee, Ep4FraisDeplacementConsolidee } from '@/app/components/ep4-tables';
+import { Ep4HoraireConsolidee, Ep4DecompteConsolidee, Ep4HoraireEP4Consolidee, Ep4DecompteEP4Consolidee } from '@/app/components/ep4-tables';
 import { getEp4ForMonth, type Ep4MonthResponse } from '@/app/actions/ep4';
 
 type ScenarioName = 'A' | 'B' | 'C';
-type ViewName = 'horaire' | 'decompte' | 'frais';
+type ViewName = 'horaire' | 'decompte' | 'horaire_old' | 'decompte_old';
 
 const SCENARIOS: ScenarioName[] = ['A', 'B', 'C'];
 const VIEWS: { id: ViewName; label: string }[] = [
-  { id: 'horaire',  label: 'Feuille Horaire'   },
-  { id: 'decompte', label: 'Feuille Décompte'  },
-  { id: 'frais',    label: 'Frais Déplacement' },
+  { id: 'horaire',      label: 'Feuille Horaire'       },
+  { id: 'decompte',     label: 'Feuille Décompte'      },
+  { id: 'horaire_old',  label: 'Feuille Horaire (old)' },
+  { id: 'decompte_old', label: 'Feuille Décompte (old)'},
 ];
 
 const MONTH_FR = ['Janvier','Février','Mars','Avril','Mai','Juin',
@@ -173,11 +174,13 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
 
         {data && scenarioFlights.length > 0 && (
           view === 'horaire' ? (
-            <Ep4HoraireConsolidee flights={scenarioFlights} year={y} month={mo} />
+            <Ep4HoraireEP4Consolidee flights={scenarioFlights} year={y} month={mo} />
           ) : view === 'decompte' ? (
-            <Ep4DecompteConsolidee flights={scenarioFlights} year={y} month={mo} />
+            <Ep4DecompteEP4Consolidee flights={scenarioFlights} year={y} month={mo} />
+          ) : view === 'horaire_old' ? (
+            <Ep4HoraireConsolidee flights={scenarioFlights} year={y} month={mo} />
           ) : (
-            <Ep4FraisDeplacementConsolidee flights={scenarioFlights} />
+            <Ep4DecompteConsolidee flights={scenarioFlights} year={y} month={mo} />
           )
         )}
       </main>
