@@ -106,6 +106,14 @@ export async function getCurrentUserScrapeRights(): Promise<{ is_admin: boolean;
   };
 }
 
+export async function setupPassword(password: string) {
+  if (!password || password.length < 8) return { error: 'Mot de passe trop court (8 caractères min).' };
+  const supabase = await createClient();
+  const { error } = await supabase.auth.updateUser({ password });
+  if (error) return { error: error.message };
+  return { success: true };
+}
+
 export async function signOut() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();

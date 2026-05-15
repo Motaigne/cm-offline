@@ -19,6 +19,17 @@ export async function GET(request: NextRequest) {
           meta:    { method: 'magic_link' },
         });
       }
+      // Nouveau compte : pas encore de profil → créer un mot de passe
+      const { data: profile } = await supabase
+        .from('user_profile')
+        .select('user_id')
+        .eq('user_id', data.user.id)
+        .maybeSingle();
+      if (!profile) {
+        const setupUrl = new URL('/setup-password', request.url);
+        if (next !== '/') setupUrl.searchParams.set('next', next);
+        return NextResponse.redirect(setupUrl);
+      }
       return NextResponse.redirect(new URL(next, request.url));
     }
   }
