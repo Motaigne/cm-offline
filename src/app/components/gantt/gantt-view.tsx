@@ -251,18 +251,21 @@ function computeStats(
   // en amont avec proration régime + boost 100% en juillet/août pour TAF*_10_12.
   const primesTotal = finBase.primes + monthlyFixedPrimes;
   const congeAmount = congeDays * (cngPv + cngHs);
-  // DIF = max(0, MGA − (FIXE + PV€ + congeAmount)) : les congés payés comptent
-  // vers le plancher MGA avant que le DIF ne complète.
-  const mga      = finBase.fixe + 85 * (nb30eForFin / 30) * PVEI;
-  const difFinal = Math.max(0, mga - (finBase.fixe + finBase.pv + congeAmount));
+  const mga         = finBase.fixe + 85 * (nb30eForFin / 30) * PVEI;
+  // TOTAL = FIXE + PV + HS (hors primes et hors congés)
+  // DIFF  = TOTAL − MGA (signé, rouge si <0, vert si ≥0)
+  // BRUT  = MAX(MGA ; TOTAL) + primes + congés
+  const totalNew = finBase.fixe + finBase.pv + hsNew;
+  const diffNew  = totalNew - mga;
+  const brut     = Math.max(mga, totalNew) + primesTotal + congeAmount;
   const fin = {
     ...finBase,
-    dif:    difFinal,
     hs:     hsNew,
     primes: primesTotal,
-    total:  finBase.fixe + finBase.pv + hsNew + primesTotal + difFinal,
+    total:  totalNew,
+    mga,
+    diff:   diffNew,
   };
-  const brut = fin.total + congeAmount;
   return {
     flights, onDays, congeDays, totalHcr, totalHc, totalPrime, totalTsvNuit,
     fin, congeAmount, brut,
@@ -572,10 +575,20 @@ export function GanttView({
   // Panneau détail paie (flyout fixe à droite du label)
   type DetailPanel = {
     name: string; rect: DOMRect; viewportH: number;
-    totalPv: number; totalHc: number; seuil75: number; pvEur: number; hsH: number; hsEur: number;
-    hsFixeRate: number; hsVolRate: number; tauxMoyen: number;
-    difEur: number; mga: number; fixeForFin: number;
-    totalPrime: number; bitronconEur: number; incitation: number; a330: number; instruction: number;
+    // PV : HCr × PVEI × KSP, PVnuit = tsvNuit/2 × PVEI × KSP
+    pvEur: number; pvHcrEur: number; pvNuitEur: number;
+    // HS : breakdown
+    totalHc: number; seuil75: number; hsH: number; hsEur: number;
+    hsFixeRate: number; hsVolRate: number;
+    // TOTAL / MGA / DIFF
+    fixeForFin: number; totalNew: number; mga: number; diff: number;
+    // Primes (déjà ventilées) + congés
+    totalPrime: number; bitronconEur: number;
+    incitation: number; a330: number; instruction: number;
+    primeMai: number; primeNoel: number; primesTotal: number;
+    congeDays: number; cngPv: number; cngHs: number; congeAmount: number;
+    // BRUT
+    brut: number;
   };
   const [detailPanel, setDetailPanel] = useState<DetailPanel | null>(null);
 
@@ -648,7 +661,7 @@ export function GanttView({
 
       const hasPending = await hasPendingOps();
       if (hasPending) {
-        const local = await loadFromDB(scenarios);
+        const local = await loadFromDB(scenarios, month);
         setLocalScenarios(local);
         setPendingCount(await pendingOpsCount());
       } else {
@@ -1114,21 +1127,16 @@ export function GanttView({
                       <FinRow label="FIXE" value={stats.fin.fixe} cls="text-zinc-400" />
                       <FinRow label="PV"   value={stats.fin.pv}   cls="text-blue-500" />
                       {stats.fin.hs > 0 ? (
-                        <FinRow label={`HS(${stats.hsH.toFixed(1)})`} value={stats.fin.hs} cls="text-green-500" />
+                        <FinRow label={`HS(${stats.hsH.toFixed(1)}h)`} value={stats.fin.hs} cls="text-green-500" />
                       ) : (
                         <FinRow label={`HS(−${Math.max(0, stats.hsSeuil - stats.totalHc).toFixed(1)}h)`} value={0} cls="text-zinc-400 dark:text-zinc-500" />
                       )}
-                      <FinRow label="P" value={stats.fin.primes} cls="text-amber-500" />
-                      {stats.fin.dif > 0 && (
-                        <FinRow label="DIF" value={stats.fin.dif} cls="text-violet-500" />
-                      )}
                       <div className="border-t border-zinc-300 dark:border-zinc-600 my-0.5" />
-                      <FinRow label={stats.fin.dif > 0 ? '(MGA)' : '='} value={stats.fin.total} cls="text-zinc-700 dark:text-zinc-100" bold />
-                      {stats.congeDays > 0 && (
-                        <FinRow label="+cg" value={stats.congeAmount} cls="text-pink-500" />
-                      )}
+                      <FinRow label="TOTAL" value={stats.fin.total} cls="text-zinc-700 dark:text-zinc-100" bold />
+                      <FinRow label="MGA"   value={stats.fin.mga}   cls="text-zinc-500" />
+                      <FinRow label="DIFF"  value={stats.fin.diff}  cls={stats.fin.diff < 0 ? 'text-red-500' : 'text-emerald-500'} />
                       <div className="border-t border-dashed border-zinc-300 dark:border-zinc-600 my-0.5" />
-                      <FinRow label={stats.fin.dif > 0 ? 'BRUT(MGA)' : 'BRUT'} value={stats.brut} cls="text-emerald-600 dark:text-emerald-400" bold />
+                      <FinRow label="BRUT" value={stats.brut} cls="text-emerald-600 dark:text-emerald-400" bold />
                       <div className="border-t border-dashed border-emerald-300 dark:border-emerald-700/40 my-0.5" />
                       <FinRow label="A81" value={stats.totalA81} cls="text-zinc-400" />
                       {stats.totalA81 > 0 && (
@@ -1156,27 +1164,32 @@ export function GanttView({
                         if (isDetailOpen) { setDetailPanel(null); return; }
                         const rowEl = (e.currentTarget as HTMLElement).closest<HTMLElement>('[data-sr]');
                         const rect  = rowEl?.getBoundingClientRect() ?? e.currentTarget.getBoundingClientRect();
-                        const totalPv    = stats.totalHcr + stats.totalTsvNuit / 2;
-                        const pvEur      = stats.fin.pv;
-                        const tauxMoyen  = stats.totalHc > 0 ? pvEur / stats.totalHc : PVEI * KSP;
-                        const nb30eEff   = Math.max(0, (REGIME_NB30E[userRegime] ?? NB_30E) - stats.congeDays);
-                        const nb30eEff2  = isFullPrimeMonth(userRegime, mo) ? 30 : nb30eEff;
-                        const seuil75    = 75 * (nb30eEff2 / 30);
-                        const nb30eReg2  = REGIME_NB30E[userRegime] ?? NB_30E;
-                        const fixeFF     = isFullPrimeMonth(userRegime, mo) && nb30eReg2 > 0
+                        const pvHcrEur  = stats.totalHcr * PVEI * KSP;
+                        const pvNuitEur = (stats.totalTsvNuit / 2) * PVEI * KSP;
+                        const nb30eEff  = Math.max(0, (REGIME_NB30E[userRegime] ?? NB_30E) - stats.congeDays);
+                        const nb30eEff2 = isFullPrimeMonth(userRegime, mo) ? 30 : nb30eEff;
+                        const seuil75   = 75 * (nb30eEff2 / 30);
+                        const nb30eReg2 = REGIME_NB30E[userRegime] ?? NB_30E;
+                        const fixeFF    = isFullPrimeMonth(userRegime, mo) && nb30eReg2 > 0
                           ? FIXE_MENSUEL * 30 / nb30eReg2 : FIXE_MENSUEL;
-                        const mgaV       = fixeFF + 85 * (nb30eEff2 / 30) * PVEI;
-                        const bitroncon  = stats.totalPrime * 2.5 * PVEI;
-                        const boost      = isFullPrimeMonth(userRegime, mo) && (REGIME_NB30E[userRegime] ?? NB_30E) > 0 ? 30 / (REGIME_NB30E[userRegime] ?? NB_30E) : 1;
+                        const bitroncon = stats.totalPrime * 2.5 * PVEI;
+                        const boost     = isFullPrimeMonth(userRegime, mo) && nb30eReg2 > 0 ? 30 / nb30eReg2 : 1;
                         setDetailPanel({
                           name: scenario.name, rect,
                           viewportH: window.visualViewport?.height ?? window.innerHeight,
-                          totalPv, totalHc: stats.totalHc, seuil75, pvEur, hsH: stats.hsH, hsEur: stats.fin.hs,
-                          hsFixeRate: stats.hsFixeRate, hsVolRate: stats.hsVolRate, tauxMoyen,
-                          difEur: stats.fin.dif, mga: mgaV, fixeForFin: fixeFF,
+                          pvEur: stats.fin.pv, pvHcrEur, pvNuitEur,
+                          totalHc: stats.totalHc, seuil75,
+                          hsH: stats.hsH, hsEur: stats.fin.hs,
+                          hsFixeRate: stats.hsFixeRate, hsVolRate: stats.hsVolRate,
+                          fixeForFin: fixeFF,
+                          totalNew: stats.fin.total, mga: stats.fin.mga, diff: stats.fin.diff,
                           totalPrime: stats.totalPrime, bitronconEur: bitroncon,
                           incitation: incitCount * primeIncitationUnit,
                           a330: primeA330 * boost, instruction: primeInstruction * boost,
+                          primeMai: 0, primeNoel: 0,
+                          primesTotal: stats.fin.primes,
+                          congeDays: stats.congeDays, cngPv, cngHs, congeAmount: stats.congeAmount,
+                          brut: stats.brut,
                         });
                       }}
                       data-sr
@@ -1565,7 +1578,7 @@ export function GanttView({
         <>
           <div className="fixed inset-0 z-40" onClick={() => setDetailPanel(null)} />
           <div
-            className="fixed z-50 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl shadow-2xl p-3 w-56 overflow-y-auto max-h-[calc(100vh-16px)]"
+            className="fixed z-50 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl shadow-2xl p-3 w-64 overflow-y-auto max-h-[calc(100vh-16px)]"
             style={{
               left: detailPanel.rect.left + LABEL_W + 6,
               ...(detailPanel.rect.top > detailPanel.viewportH / 2
@@ -1577,65 +1590,108 @@ export function GanttView({
               Détail — Scénario {detailPanel.name}
             </div>
 
-            {/* HS */}
-            <div className="mb-2">
-              <div className="text-[8px] font-semibold text-green-600 dark:text-green-400 uppercase mb-0.5">Heures supp.</div>
-              <div className="text-[8px] font-mono text-zinc-500 dark:text-zinc-400">
-                HC {detailPanel.totalHc.toFixed(2)} h / seuil {detailPanel.seuil75.toFixed(1)} h
+            {/* FIXE / PV / HS */}
+            <div className="space-y-1.5 mb-2 font-mono text-[9px]">
+              <div className="flex items-baseline justify-between">
+                <span className="text-zinc-500">FIXE</span>
+                <span className="text-zinc-700 dark:text-zinc-200 font-semibold">{Math.round(detailPanel.fixeForFin)}</span>
               </div>
-              {detailPanel.hsH > 0 ? (
-                <>
-                  <div className="text-[8px] font-mono text-zinc-400">
-                    HS.FIXE {detailPanel.hsFixeRate.toFixed(2)} €/h <span className="opacity-60">(fixe×1.25/75)</span>
+
+              <div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-blue-500">PV = HCr + PVnuit</span>
+                  <span className="text-blue-600 dark:text-blue-400 font-semibold">{Math.round(detailPanel.pvEur)}</span>
+                </div>
+                <div className="text-[8px] text-zinc-400 pl-2">
+                  {Math.round(detailPanel.pvHcrEur)} + {Math.round(detailPanel.pvNuitEur)}
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-green-500">
+                    HS = HS.FIXE + HS.VOL
+                    {detailPanel.hsH > 0
+                      ? <span className="text-zinc-400"> ({detailPanel.hsH.toFixed(1)}h)</span>
+                      : <span className="text-zinc-400"> (−{Math.max(0, detailPanel.seuil75 - detailPanel.totalHc).toFixed(1)}h)</span>}
+                  </span>
+                  <span className="text-green-600 dark:text-green-400 font-semibold">{Math.round(detailPanel.hsEur)}</span>
+                </div>
+                {detailPanel.hsH > 0 && (
+                  <div className="text-[8px] text-zinc-400 pl-2">
+                    {Math.round(detailPanel.hsH * detailPanel.hsFixeRate)} + {Math.round(detailPanel.hsH * detailPanel.hsVolRate)}
                   </div>
-                  <div className="text-[8px] font-mono text-zinc-400">
-                    HS.VOL {detailPanel.hsVolRate.toFixed(2)} €/h <span className="opacity-60">(taux_moy×0.25)</span>
-                  </div>
-                  <div className="text-[8px] font-mono text-green-600 dark:text-green-400">
-                    {detailPanel.hsH.toFixed(2)} h × {(detailPanel.hsFixeRate + detailPanel.hsVolRate).toFixed(2)} = {Math.round(detailPanel.hsEur)} €
-                  </div>
-                </>
-              ) : (
-                <div className="text-[8px] text-zinc-400 italic">Sous le seuil ({detailPanel.totalHc.toFixed(2)} h)</div>
-              )}
+                )}
+              </div>
             </div>
 
-            {/* DIF MGA */}
-            {detailPanel.difEur > 0 && (
-              <div className="mb-2">
-                <div className="text-[8px] font-semibold text-violet-600 dark:text-violet-400 uppercase mb-0.5">DIF MGA</div>
-                <div className="text-[8px] font-mono text-zinc-500 dark:text-zinc-400">
-                  MGA {Math.round(detailPanel.mga)} € / FIXE+PV {Math.round(detailPanel.fixeForFin + detailPanel.pvEur)} €
-                </div>
-                <div className="text-[8px] font-mono text-violet-600 dark:text-violet-400">
-                  DIF = {Math.round(detailPanel.difEur)} €
-                </div>
-              </div>
-            )}
+            <div className="border-t border-zinc-200 dark:border-zinc-700 my-1.5" />
 
-            {/* Primes */}
-            <div>
-              <div className="text-[8px] font-semibold text-amber-600 dark:text-amber-400 uppercase mb-0.5">Primes</div>
-              {detailPanel.bitronconEur > 0 && (
-                <div className="text-[8px] font-mono text-zinc-500 dark:text-zinc-400">
-                  Bi-tronçon ×{detailPanel.totalPrime} = {Math.round(detailPanel.bitronconEur)} €
+            {/* TOTAL / MGA / DIFF */}
+            <div className="space-y-1 mb-2 font-mono text-[9px]">
+              <div className="flex items-baseline justify-between">
+                <span className="text-zinc-700 dark:text-zinc-200">TOTAL = FIXE + PV + HS</span>
+                <span className="text-zinc-900 dark:text-zinc-100 font-bold">{Math.round(detailPanel.totalNew)}</span>
+              </div>
+              <div className="flex items-baseline justify-between">
+                <span className="text-zinc-500">MGA</span>
+                <span className="text-zinc-600 dark:text-zinc-300">{Math.round(detailPanel.mga)}</span>
+              </div>
+              <div className="flex items-baseline justify-between">
+                <span className={detailPanel.diff < 0 ? 'text-red-500' : 'text-emerald-500'}>
+                  DIFF = TOTAL − MGA
+                </span>
+                <span className={`font-semibold ${detailPanel.diff < 0 ? 'text-red-500' : 'text-emerald-500'}`}>
+                  {Math.round(detailPanel.diff)}
+                </span>
+              </div>
+            </div>
+
+            <div className="border-t border-zinc-200 dark:border-zinc-700 my-1.5" />
+
+            {/* PRIMES */}
+            <div className="space-y-0.5 mb-2 font-mono text-[9px]">
+              <div className="flex items-baseline justify-between">
+                <span className="text-amber-600 dark:text-amber-400 font-semibold">PRIMES</span>
+                <span className="text-amber-600 dark:text-amber-400 font-bold">{Math.round(detailPanel.primesTotal)}</span>
+              </div>
+              <div className="text-[8px] text-zinc-400 pl-2 space-y-px">
+                <div className="flex justify-between"><span>Incitation</span><span>{Math.round(detailPanel.incitation)}</span></div>
+                <div className="flex justify-between"><span>A330</span><span>{Math.round(detailPanel.a330)}</span></div>
+                <div className="flex justify-between"><span>Mai/Noël</span><span>{Math.round(detailPanel.primeMai + detailPanel.primeNoel)}</span></div>
+                <div className="flex justify-between">
+                  <span>Bi-tronçon{detailPanel.totalPrime > 0 ? ` ×${detailPanel.totalPrime}` : ''}</span>
+                  <span>{Math.round(detailPanel.bitronconEur)}</span>
                 </div>
-              )}
-              {detailPanel.incitation > 0 && (
-                <div className="text-[8px] font-mono text-zinc-500 dark:text-zinc-400">
-                  Incitation = {Math.round(detailPanel.incitation)} €
-                </div>
-              )}
-              {detailPanel.a330 > 0 && (
-                <div className="text-[8px] font-mono text-zinc-500 dark:text-zinc-400">
-                  A330 = {Math.round(detailPanel.a330)} €
-                </div>
-              )}
-              {detailPanel.instruction > 0 && (
-                <div className="text-[8px] font-mono text-zinc-500 dark:text-zinc-400">
-                  Instruction = {Math.round(detailPanel.instruction)} €
-                </div>
-              )}
+                <div className="flex justify-between"><span>Instruction</span><span>{Math.round(detailPanel.instruction)}</span></div>
+              </div>
+            </div>
+
+            {/* CONGÉS */}
+            <div className="space-y-0.5 mb-2 font-mono text-[9px]">
+              <div className="flex items-baseline justify-between">
+                <span className="text-pink-500 font-semibold">
+                  CONGÉS{detailPanel.congeDays > 0 ? ` = ${detailPanel.congeDays} × (${Math.round(detailPanel.cngPv)} + ${Math.round(detailPanel.cngHs)})` : ''}
+                </span>
+                <span className="text-pink-600 dark:text-pink-400 font-bold">{Math.round(detailPanel.congeAmount)}</span>
+              </div>
+            </div>
+
+            <div className="border-t border-zinc-200 dark:border-zinc-700 my-1.5" />
+
+            {/* BRUT */}
+            <div className="font-mono text-[9px]">
+              <div className="flex items-baseline justify-between">
+                <span className="text-emerald-600 dark:text-emerald-400 font-bold">
+                  BRUT = MAX(MGA;TOTAL) + P + cg
+                </span>
+              </div>
+              <div className="flex items-baseline justify-between mt-0.5">
+                <span className="text-[8px] text-zinc-400 pl-2">
+                  {Math.round(Math.max(detailPanel.mga, detailPanel.totalNew))} + {Math.round(detailPanel.primesTotal)} + {Math.round(detailPanel.congeAmount)}
+                </span>
+                <span className="text-emerald-700 dark:text-emerald-300 font-bold text-[10px]">{Math.round(detailPanel.brut)}</span>
+              </div>
             </div>
           </div>
         </>

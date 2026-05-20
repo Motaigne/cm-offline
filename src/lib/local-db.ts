@@ -70,8 +70,46 @@ class CmDatabase extends Dexie {
 
 export const db = new CmDatabase();
 
+// ─── helpers vol à cheval ─────────────────────────────────────────────────────
+
+function shiftMonthStr(m: string, delta: number): string {
+  const [y, mo] = m.split('-').map(Number);
+  const d = new Date(Date.UTC(y, mo - 1 + delta, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+/** Items du mois M-1 dont end_date déborde en M (= spillovers à afficher en M).
+ *  Retourne une Map<scenarioName, items>. Items stockés sous leur draft d'origine
+ *  (mois de départ) — exposés en lecture seule via _isSpillover=true. */
+async function loadSpillovers(month: string): Promise<Map<string, CalendarItem[]>> {
+  const prevMonth = shiftMonthStr(month, -1);
+  const prevDrafts = await db.drafts.where('target_month').equals(prevMonth).toArray();
+  const result = new Map<string, CalendarItem[]>();
+  if (prevDrafts.length === 0) return result;
+
+  const byId = new Map<string, string>(); // draft_id → scenario name
+  for (const d of prevDrafts) byId.set(d.id, d.name);
+
+  const items = await db.items.where('draft_id').anyOf(prevDrafts.map(d => d.id)).toArray();
+  for (const it of items) {
+    if (it.kind !== 'flight') continue;
+    if (it.start_date.slice(0, 7) >= month) continue;
+    if (it.end_date.slice(0, 7) < month) continue;
+    const name = byId.get(it.draft_id);
+    if (!name) continue;
+    const arr = result.get(name) ?? [];
+    arr.push({ ...it, _isSpillover: true } as unknown as CalendarItem);
+    // strip draft_id pour matcher la forme CalendarItem
+    delete (arr[arr.length - 1] as unknown as { draft_id?: string }).draft_id;
+    result.set(name, arr);
+  }
+  return result;
+}
+
 /** Met à jour le cache local pour un mois donné avec les données serveur.
- *  Préserve les items dont l'id est dans sync_queue (add/update non encore synchés). */
+ *  Préserve les items dont l'id est dans sync_queue (add/update non encore synchés).
+ *  Les spillovers (items dont start_date < month) sont ignorés : ils restent
+ *  stockés sous le draft de leur mois de départ et sont injectés à la lecture. */
 export async function hydrateDB(scenarios: Scenario[], month: string): Promise<void> {
   const pendingOps = await db.sync_queue.toArray();
   const pendingIds = new Set(
@@ -92,6 +130,11 @@ export async function hydrateDB(scenarios: Scenario[], month: string): Promise<v
     for (const s of scenarios) {
       await db.drafts.put({ id: s.id, name: s.name, target_month: month });
       for (const item of s.items) {
+        // Skip spillovers : ils appartiennent au draft du mois précédent.
+        // Si on les stockait sous s.id (mois courant) on écraserait leur
+        // vraie position et le mois d'origine perdrait la rotation.
+        if (item._isSpillover) continue;
+        if (item.start_date.slice(0, 7) < month) continue;
         if (!pendingIds.has(item.id)) {
           await db.items.put({ ...item, draft_id: s.id });
         }
@@ -100,15 +143,19 @@ export async function hydrateDB(scenarios: Scenario[], month: string): Promise<v
   });
 }
 
-/** Recharge les scénarios depuis IndexedDB (conserve la forme attendue par GanttView). */
-export async function loadFromDB(scenarios: Scenario[]): Promise<Scenario[]> {
+/** Recharge les scénarios depuis IndexedDB (conserve la forme attendue par GanttView).
+ *  Injecte les spillovers du mois M-1. */
+export async function loadFromDB(scenarios: Scenario[], month: string): Promise<Scenario[]> {
+  const spillovers = await loadSpillovers(month);
   return Promise.all(
     scenarios.map(async (s) => {
       const stored = await db.items.where('draft_id').equals(s.id).toArray();
+      const own = stored.map(({ draft_id: _d, ...item }) => item as CalendarItem);
+      const cross = spillovers.get(s.name) ?? [];
       return {
         id:    s.id,
         name:  s.name,
-        items: stored.map(({ draft_id: _d, ...item }) => item as CalendarItem),
+        items: [...own, ...cross],
       };
     }),
   );
@@ -118,7 +165,8 @@ export async function hasPendingOps(): Promise<boolean> {
   return (await db.sync_queue.count()) > 0;
 }
 
-/** Charge les scénarios depuis IndexedDB pour un mois donné. Retourne null si non caché. */
+/** Charge les scénarios depuis IndexedDB pour un mois donné. Retourne null si non caché.
+ *  Injecte les spillovers du mois M-1. */
 export async function loadScenariosForMonth(month: string): Promise<Scenario[] | null> {
   const drafts = await db.drafts.where('target_month').equals(month).toArray();
   if (drafts.length === 0) return null;
@@ -126,13 +174,16 @@ export async function loadScenariosForMonth(month: string): Promise<Scenario[] |
   // tri explicite par name pour avoir [A, B, C] et éviter le flash de swap au
   // chargement cache-first puis fetch réseau.
   drafts.sort((a, b) => a.name.localeCompare(b.name));
+  const spillovers = await loadSpillovers(month);
   return Promise.all(
     drafts.map(async (d) => {
       const stored = await db.items.where('draft_id').equals(d.id).toArray();
+      const own = stored.map(({ draft_id: _x, ...item }) => item as CalendarItem);
+      const cross = spillovers.get(d.name) ?? [];
       return {
         id:    d.id,
         name:  d.name as Scenario['name'],
-        items: stored.map(({ draft_id: _d, ...item }) => item as CalendarItem),
+        items: [...own, ...cross],
       };
     }),
   );

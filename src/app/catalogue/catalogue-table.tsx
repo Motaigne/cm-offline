@@ -74,6 +74,7 @@ export function CatalogueTable({
   const [sortKey, setSortKey]       = useState<SortKey>('total_eur');
   const [sortDir, setSortDir]       = useState<SortDir>('desc');
   const [filter, setFilter]         = useState('');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // Restaure le dernier mois sélectionné dans le calendrier
   useEffect(() => {
@@ -244,7 +245,13 @@ export function CatalogueTable({
             {rows.map((s, i) => (
               <tr
                 key={s.id}
-                className={`border-b border-zinc-100 dark:border-zinc-800 hover:bg-blue-50 dark:hover:bg-blue-950/20 transition-colors ${i % 2 === 0 ? '' : 'bg-zinc-50/50 dark:bg-zinc-900/30'}`}
+                onClick={() => setSelectedId(prev => prev === s.id ? null : s.id)}
+                className={[
+                  'border-b border-zinc-100 dark:border-zinc-800 transition-colors cursor-pointer',
+                  selectedId === s.id
+                    ? 'bg-zinc-200 dark:bg-zinc-700/60 hover:bg-zinc-200 dark:hover:bg-zinc-700/60'
+                    : `hover:bg-blue-50 dark:hover:bg-blue-950/20 ${i % 2 === 0 ? '' : 'bg-zinc-50/50 dark:bg-zinc-900/30'}`,
+                ].join(' ')}
               >
                 <td className="px-2 py-1.5 font-medium text-zinc-800 dark:text-zinc-100 whitespace-nowrap">{s.rotation_code ?? '—'}</td>
                 <td className="px-2 py-1.5 text-zinc-500">{s.zone ?? '—'}</td>

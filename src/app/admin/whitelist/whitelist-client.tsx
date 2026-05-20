@@ -8,6 +8,10 @@ type AllowedEmail = Pick<Database['public']['Tables']['allowed_email']['Row'], '
 type AuthLog      = Pick<Database['public']['Tables']['auth_log']['Row'], 'id' | 'email' | 'kind' | 'created_at' | 'meta'>;
 type UserProfile  = { user_id: string; display_name: string | null; is_admin: boolean; is_scraper: boolean };
 
+// Bascule pour réafficher les outils de maintenance (Recalculer tsv_nuit,
+// Backfill RPC repos avant/après). Cachés par défaut depuis instructions.md.
+const SHOW_MAINT_TOOLS = false;
+
 const KIND_LABELS: Record<AuthLog['kind'], { label: string; cls: string }> = {
   signin_denied:      { label: 'Refusé',     cls: 'text-red-500' },
   signin_requested:   { label: 'Demande',    cls: 'text-zinc-500' },
@@ -116,6 +120,7 @@ export function WhitelistClient({ emails, logs, profiles }: { emails: AllowedEma
     <div className="space-y-6">
 
       {/* Outils admin */}
+      {SHOW_MAINT_TOOLS && (
       <section className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-4">
         <h2 className="text-sm font-semibold mb-1">Outils</h2>
         <p className="text-[11px] text-zinc-400 mb-3">Maintenance DB.</p>
@@ -185,6 +190,7 @@ export function WhitelistClient({ emails, logs, profiles }: { emails: AllowedEma
           </div>
         )}
       </section>
+      )}
 
       {/* Scrapers : toggle per profile */}
       <section className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800">

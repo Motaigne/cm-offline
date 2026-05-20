@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { getAvailableMonths, getRotationsForMonth } from '@/app/actions/search';
 import { getScenariosWithItems } from '@/app/actions/planning';
 import { getCurrentUserIsAdmin } from '@/app/actions/auth';
 import { cacheRotations, hydrateDB } from '@/lib/local-db';
 import { syncNow, pendingOpsCount } from '@/lib/sync-service';
+import { downloadBackup, parseBackup, importBackup } from '@/lib/backup';
 import { ReleaseBanner } from '@/app/components/release-banner';
 
 const TABS = [
@@ -98,6 +99,9 @@ export function NavBar() {
   const [swReady, setSwReady] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
+  const [backupMenuOpen, setBackupMenuOpen] = useState(false);
+  const [backupStatus, setBackupStatus] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     void (async () => {
@@ -163,6 +167,34 @@ export function NavBar() {
     } finally {
       setSyncing(false);
       setDlProgress('');
+    }
+  }
+
+  async function handleExportBackup() {
+    setBackupMenuOpen(false);
+    try {
+      await downloadBackup();
+      setBackupStatus('✓ exporté');
+    } catch (e) {
+      setBackupStatus(`! ${String(e)}`);
+    } finally {
+      setTimeout(() => setBackupStatus(''), 3000);
+    }
+  }
+
+  async function handleImportBackupFile(file: File) {
+    try {
+      const text = await file.text();
+      const backup = parseBackup(text);
+      const months = Array.from(new Set(backup.drafts.map(d => d.target_month))).sort().join(', ');
+      if (!confirm(`Restaurer le backup ?\n\nMois remplacés : ${months || '(aucun)'}\nItems : ${backup.items.length}\nOps en queue : ${backup.sync_queue.length}\n\nLes autres mois resteront intacts.`)) return;
+      const summary = await importBackup(backup);
+      setBackupStatus(`✓ ${summary.itemsImported} items restaurés`);
+      router.refresh();
+    } catch (e) {
+      setBackupStatus(`! ${String(e)}`);
+    } finally {
+      setTimeout(() => setBackupStatus(''), 4000);
     }
   }
 
@@ -242,6 +274,53 @@ export function NavBar() {
               </span>
             )}
           </button>
+          <div className="relative">
+            <button
+              onClick={() => setBackupMenuOpen(o => !o)}
+              title="Backup local du calendrier"
+              className="px-2 h-8 flex items-center text-sm text-zinc-500 hover:text-zinc-300 rounded hover:bg-zinc-800 transition-colors"
+            >
+              ⤓
+            </button>
+            {backupMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setBackupMenuOpen(false)} />
+                <div className="absolute right-0 top-full mt-1 z-50 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-lg py-1 min-w-44">
+                  <button
+                    onClick={handleExportBackup}
+                    className="block w-full text-left px-4 py-2 text-sm text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-700"
+                  >
+                    Exporter (.json)
+                  </button>
+                  <button
+                    onClick={() => { setBackupMenuOpen(false); fileInputRef.current?.click(); }}
+                    className="block w-full text-left px-4 py-2 text-sm text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-700"
+                  >
+                    Importer…
+                  </button>
+                  <p className="px-4 py-1.5 text-[10px] text-zinc-400 border-t border-zinc-100 dark:border-zinc-700">
+                    Remplace uniquement les mois présents dans le fichier.
+                  </p>
+                </div>
+              </>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={e => {
+                const f = e.target.files?.[0];
+                if (f) void handleImportBackupFile(f);
+                e.target.value = '';
+              }}
+            />
+          </div>
+          {backupStatus && (
+            <span className={`text-[10px] font-mono ${backupStatus.startsWith('✓') ? 'text-emerald-500' : 'text-red-500'}`}>
+              {backupStatus}
+            </span>
+          )}
           <button
             onClick={handleReset}
             title="Vider le cache et recharger"
