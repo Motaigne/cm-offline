@@ -168,6 +168,8 @@ function computeStats(
   let totalHcr = 0, totalHc = 0, totalPrime = 0, totalTsvNuit = 0;
   // 1ère passe : agrégats simples sur les non-flights + collect des flights pour A81
   const flightItems: CalendarItem[] = [];
+  /** Décomposition par vol pour le panneau détail : PV ventilé HCr / PVnuit. */
+  const flightBreakdown: { destination: string; hcrEur: number; pvNuitEur: number; instanceId: string | null }[] = [];
   for (const item of items) {
     const clip = clipItem(item, year, mo);
     if (clip) {
@@ -193,6 +195,12 @@ function computeStats(
     totalHc      += hc;
     totalPrime   += typeof m.prime === 'number' ? (m.prime as number) : 0;
     totalTsvNuit += tsvNuit;
+    flightBreakdown.push({
+      destination: typeof m.destination === 'string' ? m.destination as string : '?',
+      hcrEur:      hcr * PVEI * KSP,
+      pvNuitEur:   (tsvNuit / 2) * PVEI * KSP,
+      instanceId:  item.pairing_instance_id ?? null,
+    });
   }
 
   // 2e passe : Article 81 avec plafond annuel — sort chronologique pour appliquer
@@ -257,10 +265,12 @@ function computeStats(
   const mga         = fixeForFin + 85 * (nb30eBase / 30) * PVEI;
   // TOTAL = FIXE + PV + HS (hors primes et hors congés)
   // DIFF  = TOTAL − MGA (signé, rouge si <0, vert si ≥0)
-  // BRUT  = MAX(MGA ; TOTAL) + primes + congés + IR/MF
+  // BRUT : si (TOTAL + congés) ≥ MGA → on garde TOTAL + congés (et on ajoute
+  //        primes + IR/MF). Sinon MGA absorbe les congés et seuls primes + IR/MF
+  //        s'ajoutent en plus.
   const totalNew = finBase.fixe + finBase.pv + hsNew;
   const diffNew  = totalNew - mga;
-  const brut     = Math.max(mga, totalNew) + primesTotal + congeAmount + irMfEur;
+  const brut     = Math.max(mga, totalNew + congeAmount) + primesTotal + irMfEur;
   const fin = {
     ...finBase,
     hs:     hsNew,
@@ -274,6 +284,7 @@ function computeStats(
     fin, congeAmount, brut,
     totalA81, totalA81Net, cumulJoursRunning, plafondJours,
     hsH, hsFixeRate, hsVolRate, hsSeuil,
+    flightBreakdown,
   };
 }
 
@@ -496,6 +507,7 @@ export function GanttView({
   article81Data = null, valeurJour = 600,
   a81CumulBefore = { A: 0, B: 0, C: 0 },
   irMfByScenario,
+  irMfPerFlightByScenario,
   prorataThresholds = [],
 }: {
   month: string;
@@ -519,6 +531,8 @@ export function GanttView({
   /** Totaux IR/MF (compte + €) par scénario pour le mois courant — pré-calculés
    *  côté serveur via raw_detail (cf. getMonthlyIrMfEuros). */
   irMfByScenario?: Record<'A' | 'B' | 'C', { ir: number; mf: number; ir_eur: number; mf_eur: number; skipped: number }>;
+  /** Détail IR/MF par vol (instance_id + destination + €) pour le panneau détail. */
+  irMfPerFlightByScenario?: Record<'A' | 'B' | 'C', { instance_id: string; destination: string; ir_eur: number; mf_eur: number }[]>;
   /** Seuils prorata DDA OFF depuis annexe_table slug='prorata'. */
   prorataThresholds?: ProrataThreshold[];
 }) {
@@ -580,6 +594,8 @@ export function GanttView({
     name: string; rect: DOMRect; viewportH: number;
     // PV : HCr × PVEI × KSP, PVnuit = tsvNuit/2 × PVEI × KSP
     pvEur: number; pvHcrEur: number; pvNuitEur: number;
+    /** Décomposition par vol pour le détail PV. */
+    flightBreakdown: { destination: string; hcrEur: number; pvNuitEur: number; instanceId: string | null }[];
     // HS : breakdown
     totalHc: number; seuil75: number; hsH: number; hsEur: number;
     hsFixeRate: number; hsVolRate: number;
@@ -591,6 +607,8 @@ export function GanttView({
     primeMai: number; primeNoel: number; primesTotal: number;
     congeDays: number; cngPv: number; cngHs: number; congeAmount: number;
     irEur: number; mfEur: number;
+    /** Détail IR/MF par vol (récupéré du serveur). */
+    irMfPerFlight: { destination: string; ir_eur: number; mf_eur: number }[];
     // BRUT
     brut: number;
   };
@@ -1193,6 +1211,7 @@ export function GanttView({
                           name: scenario.name, rect,
                           viewportH: window.visualViewport?.height ?? window.innerHeight,
                           pvEur: stats.fin.pv, pvHcrEur, pvNuitEur,
+                          flightBreakdown: stats.flightBreakdown,
                           totalHc: stats.totalHc, seuil75: stats.hsSeuil,
                           hsH: stats.hsH, hsEur: stats.fin.hs,
                           hsFixeRate: stats.hsFixeRate, hsVolRate: stats.hsVolRate,
@@ -1206,6 +1225,7 @@ export function GanttView({
                           congeDays: stats.congeDays, cngPv, cngHs, congeAmount: stats.congeAmount,
                           irEur: irMfScn?.ir_eur ?? 0,
                           mfEur: irMfScn?.mf_eur ?? 0,
+                          irMfPerFlight: irMfPerFlightByScenario?.[scenario.name] ?? [],
                           brut: stats.brut,
                         });
                       }}
@@ -1624,9 +1644,22 @@ export function GanttView({
                   <span className="text-blue-500">PV = HCr + PVnuit</span>
                   <span className="text-blue-600 dark:text-blue-400 font-semibold">{Math.round(detailPanel.pvEur)}</span>
                 </div>
-                <div className="text-[8px] text-zinc-400 pl-2">
-                  {Math.round(detailPanel.pvHcrEur)} + {Math.round(detailPanel.pvNuitEur)}
-                </div>
+                {detailPanel.flightBreakdown.length > 0 ? (
+                  <div className="text-[8px] text-zinc-400 pl-2 space-y-px">
+                    {detailPanel.flightBreakdown.map((f, i) => (
+                      <div key={i} className="flex justify-between gap-2">
+                        <span className="truncate">{f.destination}</span>
+                        <span className="font-mono">
+                          {Math.round(f.hcrEur)} + {Math.round(f.pvNuitEur)} = {Math.round(f.hcrEur + f.pvNuitEur)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-[8px] text-zinc-400 pl-2">
+                    {Math.round(detailPanel.pvHcrEur)} + {Math.round(detailPanel.pvNuitEur)}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -1702,34 +1735,52 @@ export function GanttView({
             {/* IR / MF */}
             <div className="space-y-0.5 mb-2 font-mono text-[9px]">
               <div className="flex items-baseline justify-between">
-                <span className="text-orange-500 font-semibold">
-                  IR / MF = IR + MF
-                </span>
+                <span className="text-orange-500 font-semibold">IR / MF = IR + MF</span>
                 <span className="text-orange-600 dark:text-orange-400 font-bold">{Math.round(detailPanel.irEur + detailPanel.mfEur)}</span>
               </div>
-              {(detailPanel.irEur > 0 || detailPanel.mfEur > 0) && (
+              {detailPanel.irMfPerFlight.length > 0 ? (
+                <div className="text-[8px] text-zinc-400 pl-2 space-y-px">
+                  {detailPanel.irMfPerFlight.map((f, i) => (
+                    <div key={i} className="flex justify-between gap-2">
+                      <span className="truncate">{f.destination}</span>
+                      <span className="font-mono">
+                        {Math.round(f.ir_eur)} + {Math.round(f.mf_eur)} = {Math.round(f.ir_eur + f.mf_eur)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (detailPanel.irEur > 0 || detailPanel.mfEur > 0) ? (
                 <div className="text-[8px] text-zinc-400 pl-2">
                   {Math.round(detailPanel.irEur)} + {Math.round(detailPanel.mfEur)}
                 </div>
-              )}
+              ) : null}
             </div>
 
             <div className="border-t border-zinc-200 dark:border-zinc-700 my-1.5" />
 
-            {/* BRUT */}
-            <div className="font-mono text-[9px]">
-              <div className="flex items-baseline justify-between">
-                <span className="text-emerald-600 dark:text-emerald-400 font-bold">
-                  BRUT = MAX(MGA;TOTAL) + P + cg + IR/MF
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between mt-0.5">
-                <span className="text-[8px] text-zinc-400 pl-2">
-                  {Math.round(Math.max(detailPanel.mga, detailPanel.totalNew))} + {Math.round(detailPanel.primesTotal)} + {Math.round(detailPanel.congeAmount)} + {Math.round(detailPanel.irEur + detailPanel.mfEur)}
-                </span>
-                <span className="text-emerald-700 dark:text-emerald-300 font-bold text-[10px]">{Math.round(detailPanel.brut)}</span>
-              </div>
-            </div>
+            {/* BRUT — branche selon TOTAL+congés vs MGA */}
+            {(() => {
+              const totalPlusCg  = detailPanel.totalNew + detailPanel.congeAmount;
+              const totalWins    = totalPlusCg >= detailPanel.mga;
+              const irMfEur      = detailPanel.irEur + detailPanel.mfEur;
+              const formulaLabel = totalWins
+                ? 'BRUT = TOTAL + cg + P + IR/MF'
+                : 'BRUT = MGA + P + IR/MF';
+              const breakdown    = totalWins
+                ? `${Math.round(detailPanel.totalNew)} + ${Math.round(detailPanel.congeAmount)} + ${Math.round(detailPanel.primesTotal)} + ${Math.round(irMfEur)}`
+                : `${Math.round(detailPanel.mga)} + ${Math.round(detailPanel.primesTotal)} + ${Math.round(irMfEur)}`;
+              return (
+                <div className="font-mono text-[9px]">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-emerald-600 dark:text-emerald-400 font-bold">{formulaLabel}</span>
+                  </div>
+                  <div className="flex items-baseline justify-between mt-0.5">
+                    <span className="text-[8px] text-zinc-400 pl-2">{breakdown}</span>
+                    <span className="text-emerald-700 dark:text-emerald-300 font-bold text-[10px]">{Math.round(detailPanel.brut)}</span>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </>
       )}

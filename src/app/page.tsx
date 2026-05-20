@@ -123,6 +123,7 @@ export default async function Home({
       valeurJour={valeurJour}
       a81CumulBefore={a81Cumul.byScenarioBefore}
       irMfByScenario={irMfMonth.byScenario}
+      irMfPerFlightByScenario={irMfMonth.perFlightByScenario}
       prorataThresholds={prorataThresholds}
     />
   );

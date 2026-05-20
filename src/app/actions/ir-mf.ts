@@ -16,8 +16,17 @@ export interface MonthlyIrMfTotal {
   skipped: number;
 }
 
+export interface IrMfPerFlight {
+  instance_id: string;
+  destination: string;
+  ir_eur: number;
+  mf_eur: number;
+}
+
 export interface MonthlyIrMfResponse {
   byScenario: Record<'A' | 'B' | 'C', MonthlyIrMfTotal>;
+  /** Détail par vol pour affichage du panneau détail (clé = scénario). */
+  perFlightByScenario: Record<'A' | 'B' | 'C', IrMfPerFlight[]>;
   /** Escales pour lesquelles aucun taux n'a été trouvé (déduplique cross-scénarios). */
   missingRateEscales: string[];
 }
@@ -49,6 +58,7 @@ export async function getMonthlyIrMfEuros(month: string): Promise<MonthlyIrMfRes
 
   const empty: MonthlyIrMfResponse = {
     byScenario: { A: { ...EMPTY_TOTAL }, B: { ...EMPTY_TOTAL }, C: { ...EMPTY_TOTAL } },
+    perFlightByScenario: { A: [], B: [], C: [] },
     missingRateEscales: [],
   };
   if (!drafts?.length) return empty;
@@ -86,7 +96,7 @@ export async function getMonthlyIrMfEuros(month: string): Promise<MonthlyIrMfRes
   const sigIds = [...new Set((instances ?? []).map(i => i.signature_id))];
   const { data: sigs } = await supabase
     .from('pairing_signature')
-    .select('id, raw_detail')
+    .select('id, raw_detail, rotation_code')
     .in('id', sigIds);
   const sigById = new Map((sigs ?? []).map(s => [s.id, s]));
 
@@ -101,6 +111,7 @@ export async function getMonthlyIrMfEuros(month: string): Promise<MonthlyIrMfRes
   // 5. Agrégat par scénario
   const result: MonthlyIrMfResponse = {
     byScenario: { A: { ...EMPTY_TOTAL }, B: { ...EMPTY_TOTAL }, C: { ...EMPTY_TOTAL } },
+    perFlightByScenario: { A: [], B: [], C: [] },
     missingRateEscales: [],
   };
   const missingSet = new Set<string>();
@@ -124,6 +135,12 @@ export async function getMonthlyIrMfEuros(month: string): Promise<MonthlyIrMfRes
     result.byScenario[name].mf     += irMf.mf;
     result.byScenario[name].ir_eur += irMf.ir_eur;
     result.byScenario[name].mf_eur += irMf.mf_eur;
+    result.perFlightByScenario[name].push({
+      instance_id: inst.id,
+      destination: (sig.rotation_code as string | null) ?? '?',
+      ir_eur:      Math.round(irMf.ir_eur * 100) / 100,
+      mf_eur:      Math.round(irMf.mf_eur * 100) / 100,
+    });
     irMf.missingRateEscales.forEach(e => missingSet.add(e));
   }
 
