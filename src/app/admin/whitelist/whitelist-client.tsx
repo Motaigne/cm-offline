@@ -9,8 +9,9 @@ type AuthLog      = Pick<Database['public']['Tables']['auth_log']['Row'], 'id' |
 type UserProfile  = { user_id: string; display_name: string | null; is_admin: boolean; is_scraper: boolean };
 
 // Bascule pour réafficher les outils de maintenance (Recalculer tsv_nuit,
-// Backfill RPC repos avant/après). Cachés par défaut depuis instructions.md.
-const SHOW_MAINT_TOOLS = false;
+// Backfill RPC repos avant/après). Réactivé pour patcher RPC LAX-PPT-LAX et
+// autres erreurs ponctuelles en attendant le fix B (RPC par-instance).
+const SHOW_MAINT_TOOLS = true;
 
 const KIND_LABELS: Record<AuthLog['kind'], { label: string; cls: string }> = {
   signin_denied:      { label: 'Refusé',     cls: 'text-red-500' },
