@@ -106,20 +106,28 @@ export async function POST(req: Request) {
 
   let updated = 0, unchanged = 0, missing = 0;
 
-  // Met à jour signatures (legacy)
-  for (const sig of sigs) {
-    if (!sig.activity_number) continue;
-    const rest = sigRest.get(sig.activity_number);
-    if (!rest) continue;
-    if (sig.rest_before_h !== rest.before || sig.rest_after_h !== rest.after) {
-      await supabase
+  // Met à jour signatures (legacy) — en parallèle, batches de 20
+  const sigUpdates = sigs
+    .filter(sig => {
+      if (!sig.activity_number) return false;
+      const rest = sigRest.get(sig.activity_number);
+      if (!rest) return false;
+      return sig.rest_before_h !== rest.before || sig.rest_after_h !== rest.after;
+    })
+    .map(sig => {
+      const rest = sigRest.get(sig.activity_number!)!;
+      return supabase
         .from('pairing_signature')
         .update({ rest_before_h: rest.before, rest_after_h: rest.after })
         .eq('id', sig.id);
-    }
+    });
+  const CHUNK = 20;
+  for (let i = 0; i < sigUpdates.length; i += CHUNK) {
+    await Promise.all(sigUpdates.slice(i, i + CHUNK));
   }
 
-  // Met à jour instances (vraie source de vérité par instance)
+  // Met à jour instances (vraie source de vérité par instance) — en parallèle, batches de 20
+  const instUpdates: PromiseLike<unknown>[] = [];
   for (const inst of insts) {
     if (!inst.activity_id) { missing++; continue; }
     const rest = instRest.get(inst.activity_id);
@@ -131,16 +139,21 @@ export async function POST(req: Request) {
       unchanged++;
       continue;
     }
-    await supabase
-      .from('pairing_instance')
-      .update({
-        rest_before_h: rest.before,
-        rest_after_h:  rest.after,
-        scheduled_begin_activity_at: rest.beginActivityAt,
-        scheduled_end_activity_at:   rest.endActivityAt,
-      })
-      .eq('id', inst.id);
+    instUpdates.push(
+      supabase
+        .from('pairing_instance')
+        .update({
+          rest_before_h: rest.before,
+          rest_after_h:  rest.after,
+          scheduled_begin_activity_at: rest.beginActivityAt,
+          scheduled_end_activity_at:   rest.endActivityAt,
+        })
+        .eq('id', inst.id),
+    );
     updated++;
+  }
+  for (let i = 0; i < instUpdates.length; i += CHUNK) {
+    await Promise.all(instUpdates.slice(i, i + CHUNK));
   }
 
   return Response.json({ updated, unchanged, missing, total: insts.length });
