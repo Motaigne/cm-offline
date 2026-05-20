@@ -166,6 +166,9 @@ function computeStats(
   let onDays = 0, congeDays = 0;
   const flights = items.filter(i => i.kind === 'flight').length;
   let totalHcr = 0, totalHc = 0, totalPrime = 0, totalTsvNuit = 0;
+  // HCr forfaitaires hors-vol : activités sol (réserve, visite méd., autre) =
+  // 4 HCr/jour ; simulateur = 5 HCr/jour. Contribuent à PV via totalHcr.
+  let solDays = 0, simDays = 0;
   // 1ère passe : agrégats simples sur les non-flights + collect des flights pour A81
   const flightItems: CalendarItem[] = [];
   /** Décomposition par vol pour le panneau détail : PV ventilé HCr / PVnuit. */
@@ -173,8 +176,11 @@ function computeStats(
   for (const item of items) {
     const clip = clipItem(item, year, mo);
     if (clip) {
-      if (item.kind === 'flight') onDays   += clip.end - clip.start + 1;
-      if (item.kind === 'conge')  congeDays += clip.end - clip.start + 1;
+      const days = clip.end - clip.start + 1;
+      if (item.kind === 'flight') onDays   += days;
+      if (item.kind === 'conge')  congeDays += days;
+      if (item.kind === 'sol' || item.kind === 'medical' || item.kind === 'autre') solDays += days;
+      if (item.kind === 'sim') simDays += days;
     }
     if (item.kind !== 'flight') continue;
     flightItems.push(item);
@@ -202,6 +208,15 @@ function computeStats(
       instanceId:  item.pairing_instance_id ?? null,
     });
   }
+
+  // Cumul HCr sol + sim — comptés en HCr (heures-crédit) qui contribuent à PV.
+  // HC (utilisé pour seuil HS) n'est PAS modifié — ce sont des heures-crédit
+  // forfaitaires, pas des heures de vol effectives.
+  const solHcr    = solDays * 4;
+  const simHcr    = simDays * 5;
+  const solHcrEur = solHcr * PVEI * KSP;
+  const simHcrEur = simHcr * PVEI * KSP;
+  totalHcr += solHcr + simHcr;
 
   // 2e passe : Article 81 avec plafond annuel — sort chronologique pour appliquer
   // le cap "tant que cumulJours ≤ plafond". Cumul = tSej24 entier de la rotation
@@ -285,6 +300,7 @@ function computeStats(
     totalA81, totalA81Net, cumulJoursRunning, plafondJours,
     hsH, hsFixeRate, hsVolRate, hsSeuil,
     flightBreakdown,
+    solDays, simDays, solHcrEur, simHcrEur,
   };
 }
 
@@ -596,6 +612,8 @@ export function GanttView({
     pvEur: number; pvHcrEur: number; pvNuitEur: number;
     /** Décomposition par vol pour le détail PV. */
     flightBreakdown: { destination: string; hcrEur: number; pvNuitEur: number; instanceId: string | null }[];
+    /** HCr forfaitaires hors-vol (sol = réserve+méd+autre, sim = simulateur). */
+    solDays: number; simDays: number; solHcrEur: number; simHcrEur: number;
     // HS : breakdown
     totalHc: number; seuil75: number; hsH: number; hsEur: number;
     hsFixeRate: number; hsVolRate: number;
@@ -1212,6 +1230,8 @@ export function GanttView({
                           viewportH: window.visualViewport?.height ?? window.innerHeight,
                           pvEur: stats.fin.pv, pvHcrEur, pvNuitEur,
                           flightBreakdown: stats.flightBreakdown,
+                          solDays: stats.solDays, simDays: stats.simDays,
+                          solHcrEur: stats.solHcrEur, simHcrEur: stats.simHcrEur,
                           totalHc: stats.totalHc, seuil75: stats.hsSeuil,
                           hsH: stats.hsH, hsEur: stats.fin.hs,
                           hsFixeRate: stats.hsFixeRate, hsVolRate: stats.hsVolRate,
@@ -1644,7 +1664,7 @@ export function GanttView({
                   <span className="text-blue-500">PV = HCr + PVnuit</span>
                   <span className="text-blue-600 dark:text-blue-400 font-semibold">{Math.round(detailPanel.pvEur)}</span>
                 </div>
-                {detailPanel.flightBreakdown.length > 0 ? (
+                {(detailPanel.flightBreakdown.length > 0 || detailPanel.solDays > 0 || detailPanel.simDays > 0) ? (
                   <div className="text-[8px] text-zinc-400 pl-2 space-y-px">
                     {detailPanel.flightBreakdown.map((f, i) => (
                       <div key={i} className="flex justify-between gap-2">
@@ -1654,6 +1674,18 @@ export function GanttView({
                         </span>
                       </div>
                     ))}
+                    {detailPanel.solDays > 0 && (
+                      <div className="flex justify-between gap-2">
+                        <span className="truncate">Sol ({detailPanel.solDays}j × 4 HCr)</span>
+                        <span className="font-mono">{Math.round(detailPanel.solHcrEur)}</span>
+                      </div>
+                    )}
+                    {detailPanel.simDays > 0 && (
+                      <div className="flex justify-between gap-2">
+                        <span className="truncate">Sim ({detailPanel.simDays}j × 5 HCr)</span>
+                        <span className="font-mono">{Math.round(detailPanel.simHcrEur)}</span>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="text-[8px] text-zinc-400 pl-2">
