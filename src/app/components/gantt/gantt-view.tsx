@@ -1174,13 +1174,6 @@ export function GanttView({
                           )}
                         </div>
                       )}
-                      {irMfByScenario && (irMfByScenario[scenario.name]?.ir_eur > 0 || irMfByScenario[scenario.name]?.mf_eur > 0) && (
-                        <>
-                          <div className="border-t border-dashed border-orange-300 dark:border-orange-700/40 my-0.5" />
-                          <FinRow label="IR" value={irMfByScenario[scenario.name].ir_eur} cls="text-orange-600 dark:text-orange-400" bold />
-                          <FinRow label="MF" value={irMfByScenario[scenario.name].mf_eur} cls="text-orange-700 dark:text-orange-300" />
-                        </>
-                      )}
                     </div>
 
                     {/* Bouton détail — toujours épinglé en bas */}
