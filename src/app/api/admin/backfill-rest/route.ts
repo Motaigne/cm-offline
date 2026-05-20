@@ -44,19 +44,24 @@ export async function POST(req: Request) {
 
   if (!snap) return new Response('Aucun snapshot success pour ce mois', { status: 404 });
 
-  // Phase 1 : 1 seule requête pairingsearch → valeurs correctes
+  // Phase 1 : 1 seule requête pairingsearch → valeurs correctes par instance
   const pairings = await fetchAllPairings(month, { cookie, sn, userId });
 
-  // Map activityNumber → { restBeforeH, restAfterH }
-  const restMap = new Map<string, { before: number; after: number }>();
+  // Map actId → { before, after } : per-instance RPC.
+  // Map activityNumber → { before, after } depuis la 1ère instance vue :
+  // utilisé pour synchroniser le legacy `pairing_signature.rest_*_h`.
+  const instRest = new Map<string, { before: number; after: number }>();
+  const sigRest  = new Map<string, { before: number; after: number }>();
   for (const p of pairings) {
-    restMap.set(p.activityNumber, {
+    const v = {
       before: p.pairingDetail.restBeforeHaulDuration,
       after:  p.pairingDetail.restPostHaulDuration,
-    });
+    };
+    instRest.set(String(p.actId), v);
+    if (!sigRest.has(p.activityNumber)) sigRest.set(p.activityNumber, v);
   }
 
-  // Signatures existantes du snapshot
+  // Signatures existantes du snapshot (pour MAJ legacy rest_*_h signature-level)
   const sigs = await fetchAllPaginated<{ id: string; activity_number: string | null; rest_before_h: number | null; rest_after_h: number | null }>(
     (from, to) => supabase
       .from('pairing_signature')
@@ -64,25 +69,49 @@ export async function POST(req: Request) {
       .eq('snapshot_id', snap.id)
       .range(from, to),
   );
+  const sigIds = sigs.map(s => s.id);
+
+  // Instances existantes (du snapshot, via signature_id) — pour MAJ rest_*_h par instance
+  const insts = sigIds.length
+    ? await fetchAllPaginated<{ id: string; activity_id: string; rest_before_h: number | null; rest_after_h: number | null }>(
+        (from, to) => supabase
+          .from('pairing_instance')
+          .select('id, activity_id, rest_before_h, rest_after_h')
+          .in('signature_id', sigIds)
+          .range(from, to),
+      )
+    : [];
 
   let updated = 0, unchanged = 0, missing = 0;
 
+  // Met à jour signatures (legacy)
   for (const sig of sigs) {
-    if (!sig.activity_number) { missing++; continue; }
-    const rest = restMap.get(sig.activity_number);
-    if (!rest) { missing++; continue; }
+    if (!sig.activity_number) continue;
+    const rest = sigRest.get(sig.activity_number);
+    if (!rest) continue;
+    if (sig.rest_before_h !== rest.before || sig.rest_after_h !== rest.after) {
+      await supabase
+        .from('pairing_signature')
+        .update({ rest_before_h: rest.before, rest_after_h: rest.after })
+        .eq('id', sig.id);
+    }
+  }
 
-    if (sig.rest_before_h === rest.before && sig.rest_after_h === rest.after) {
+  // Met à jour instances (vraie source de vérité par instance)
+  for (const inst of insts) {
+    if (!inst.activity_id) { missing++; continue; }
+    const rest = instRest.get(inst.activity_id);
+    if (!rest) { missing++; continue; }
+    if (inst.rest_before_h === rest.before && inst.rest_after_h === rest.after) {
       unchanged++;
       continue;
     }
-
     await supabase
-      .from('pairing_signature')
+      .from('pairing_instance')
       .update({ rest_before_h: rest.before, rest_after_h: rest.after })
-      .eq('id', sig.id);
+      .eq('id', inst.id);
     updated++;
   }
 
-  return Response.json({ updated, unchanged, missing, total: sigs.length });
+  return Response.json({ updated, unchanged, missing, total: insts.length });
 }

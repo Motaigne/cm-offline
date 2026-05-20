@@ -86,8 +86,10 @@ function RotationCard({
       nb_on_days:    sig.nb_on_days,
       a81:           sig.a81,
       prime:         sig.prime,
-      rest_before_h: sig.rest_before_h,
-      rest_after_h:  sig.rest_after_h,
+      // Per-instance RPC (fallback sur signature pour les instances anciennes
+      // dont rest_*_h n'ont pas encore été backfilled).
+      rest_before_h: inst.rest_before_h ?? sig.rest_before_h,
+      rest_after_h:  inst.rest_after_h  ?? sig.rest_after_h,
       tsv_nuit:      sig.tsv_nuit,
       temps_sej:     sig.temps_sej,
       depart_at:     inst.depart_at,

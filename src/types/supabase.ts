@@ -160,6 +160,8 @@ export type Database = {
           depart_date: string;
           depart_at: string;
           arrivee_at: string;
+          rest_before_h: number | null;
+          rest_after_h: number | null;
         };
         Insert: Partial<Database['public']['Tables']['pairing_instance']['Row']> & {
           signature_id: string;

@@ -10,6 +10,10 @@ export type RotationInstance = {
   depart_date: string;   // "YYYY-MM-DD"
   depart_at: string;     // ISO timestamptz (block-off)
   arrivee_at: string;    // ISO timestamptz (block-on)
+  /** Repos avant la rotation (h), spécifique à cette instance. */
+  rest_before_h: number | null;
+  /** Repos après la rotation (h), spécifique à cette instance. */
+  rest_after_h: number | null;
 };
 
 export type RotationSignature = {
@@ -80,10 +84,11 @@ export async function getRotationsForMonth(month: string): Promise<RotationSigna
   const instances = await fetchAllPaginated<{
     id: string; activity_id: string; signature_id: string;
     depart_date: string; depart_at: string; arrivee_at: string;
+    rest_before_h: number | null; rest_after_h: number | null;
   }>((from, to) =>
     supabase
       .from('pairing_instance')
-      .select('id, activity_id, signature_id, depart_date, depart_at, arrivee_at')
+      .select('id, activity_id, signature_id, depart_date, depart_at, arrivee_at, rest_before_h, rest_after_h')
       .in('signature_id', sigIds)
       .order('depart_date')
       .range(from, to),
@@ -113,11 +118,13 @@ export async function getRotationsForMonth(month: string): Promise<RotationSigna
   }
   for (const inst of instances) {
     sigMap.get(inst.signature_id)?.instances.push({
-      id:          inst.id,
-      activity_id: inst.activity_id,
-      depart_date: inst.depart_date,
-      depart_at:   inst.depart_at,
-      arrivee_at:  inst.arrivee_at,
+      id:            inst.id,
+      activity_id:   inst.activity_id,
+      depart_date:   inst.depart_date,
+      depart_at:     inst.depart_at,
+      arrivee_at:    inst.arrivee_at,
+      rest_before_h: inst.rest_before_h,
+      rest_after_h:  inst.rest_after_h,
     });
   }
 

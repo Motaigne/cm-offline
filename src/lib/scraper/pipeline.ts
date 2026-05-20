@@ -296,11 +296,15 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
       if (sigErr || !sig) continue;
 
       const rows = instances.map(inst => ({
-        signature_id: sig.id,
-        activity_id:  String(inst.actId),
-        depart_date:  msToDateStr(inst.beginBlockDate),
-        depart_at:    new Date(inst.beginBlockDate).toISOString(),
-        arrivee_at:   new Date(inst.endBlockDate).toISOString(),
+        signature_id:   sig.id,
+        activity_id:    String(inst.actId),
+        depart_date:    msToDateStr(inst.beginBlockDate),
+        depart_at:      new Date(inst.beginBlockDate).toISOString(),
+        arrivee_at:     new Date(inst.endBlockDate).toISOString(),
+        // RPC par instance (chaque instance peut avoir un repos différent
+        // selon le créneau de la semaine).
+        rest_before_h:  inst.pairingDetail.restBeforeHaulDuration ?? null,
+        rest_after_h:   inst.pairingDetail.restPostHaulDuration   ?? null,
       }));
 
       await supabase.from('pairing_instance').insert(rows);
