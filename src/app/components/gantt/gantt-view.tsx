@@ -209,14 +209,14 @@ function computeStats(
     });
   }
 
-  // Cumul HCr sol + sim — comptés en HCr (heures-crédit) qui contribuent à PV.
-  // HC (utilisé pour seuil HS) n'est PAS modifié — ce sont des heures-crédit
-  // forfaitaires, pas des heures de vol effectives.
+  // Cumul forfaitaire sol + sim — comptés à la fois en HCr (→ PV) et en HC
+  // (→ seuil HS). sol = 4/j (réserve+méd+autre), sim = 5/j.
   const solHcr    = solDays * 4;
   const simHcr    = simDays * 5;
   const solHcrEur = solHcr * PVEI * KSP;
   const simHcrEur = simHcr * PVEI * KSP;
   totalHcr += solHcr + simHcr;
+  totalHc  += solHcr + simHcr;
 
   // 2e passe : Article 81 avec plafond annuel — sort chronologique pour appliquer
   // le cap "tant que cumulJours ≤ plafond". Cumul = tSej24 entier de la rotation
