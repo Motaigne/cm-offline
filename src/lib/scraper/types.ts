@@ -13,6 +13,12 @@ export interface PairingSummary {
   endBlockDate: number;
   beginDutyDate: number;
   endDutyDate: number;
+  /** Fin de l'activité (rotation officiellement close pour le crew). Utilisé
+   *  pour calculer le RPC réel : (endActivityDate - endBlockDate) en ms.
+   *  Les valeurs `pairingDetail.restPostHaulDuration` des endpoints SEARCH
+   *  et DETAIL sont incohérentes — les timestamps sont la source de vérité. */
+  scheduledEndActivityDate: number;
+  scheduledBeginActivityDate: number;
   pairingDetail: {
     nbOnDays: number;
     workedFlightTime: number;

@@ -44,19 +44,29 @@ export async function POST(req: Request) {
 
   if (!snap) return new Response('Aucun snapshot success pour ce mois', { status: 404 });
 
-  // Phase 1 : 1 seule requête pairingsearch → valeurs correctes par instance
+  // Phase 1 : 1 seule requête pairingsearch → on recalcule le RPC depuis les
+  // timestamps (scheduledEndActivityDate - endBlockDate). Les champs
+  // restPostHaulDuration des endpoints SEARCH et DETAIL sont menteurs (chacun
+  // dans des cas différents) ; les timestamps sont la source de vérité.
   const pairings = await fetchAllPairings(month, { cookie, sn, userId });
 
-  // Map actId → { before, after } : per-instance RPC.
+  function computeRest(p: typeof pairings[number]): { before: number | null; after: number | null } {
+    // rest_after = endActivity - endBlock (timestamps, source de vérité)
+    // rest_before reste sur la valeur API (pas de formule validée).
+    const before = p.pairingDetail.restBeforeHaulDuration ?? null;
+    const after  = (p.scheduledEndActivityDate > 0 && p.endBlockDate > 0)
+      ? (p.scheduledEndActivityDate - p.endBlockDate) / 3_600_000
+      : (p.pairingDetail.restPostHaulDuration ?? null);
+    return { before, after };
+  }
+
+  // Map actId → { before, after } : per-instance RPC (depuis timestamps).
   // Map activityNumber → { before, after } depuis la 1ère instance vue :
   // utilisé pour synchroniser le legacy `pairing_signature.rest_*_h`.
-  const instRest = new Map<string, { before: number; after: number }>();
-  const sigRest  = new Map<string, { before: number; after: number }>();
+  const instRest = new Map<string, { before: number | null; after: number | null }>();
+  const sigRest  = new Map<string, { before: number | null; after: number | null }>();
   for (const p of pairings) {
-    const v = {
-      before: p.pairingDetail.restBeforeHaulDuration,
-      after:  p.pairingDetail.restPostHaulDuration,
-    };
+    const v = computeRest(p);
     instRest.set(String(p.actId), v);
     if (!sigRest.has(p.activityNumber)) sigRest.set(p.activityNumber, v);
   }

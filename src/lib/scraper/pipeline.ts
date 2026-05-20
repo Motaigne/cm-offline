@@ -252,8 +252,14 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
       const tempsSej    = detail ? computeTempsSej(detail) : 0;
       const prime       = detail ? computePrime(detail) : 0;
       const tsvNuit     = detail ? computeTsvNuit(detail) : 0;
+      // RPC (rest_after) calculé depuis les timestamps — source de vérité.
+      // Les champs `restPostHaulDuration` des endpoints SEARCH et DETAIL sont
+      // incohérents entre eux selon les rotations.
+      // rest_before reste sur la valeur API (pas de formule timestamps validée).
       const restBeforeH = repr.pairingDetail.restBeforeHaulDuration ?? null;
-      const restAfterH  = repr.pairingDetail.restPostHaulDuration   ?? null;
+      const restAfterH  = (repr.scheduledEndActivityDate > 0 && repr.endBlockDate > 0)
+        ? (repr.scheduledEndActivityDate - repr.endBlockDate) / 3_600_000
+        : (repr.pairingDetail.restPostHaulDuration ?? null);
 
       const firstDuty  = detail?.flightDuty?.[0];
       const lastDuty   = detail?.flightDuty?.[detail.flightDuty.length - 1];
@@ -295,17 +301,20 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
 
       if (sigErr || !sig) continue;
 
-      const rows = instances.map(inst => ({
-        signature_id:   sig.id,
-        activity_id:    String(inst.actId),
-        depart_date:    msToDateStr(inst.beginBlockDate),
-        depart_at:      new Date(inst.beginBlockDate).toISOString(),
-        arrivee_at:     new Date(inst.endBlockDate).toISOString(),
-        // RPC par instance (chaque instance peut avoir un repos différent
-        // selon le créneau de la semaine).
-        rest_before_h:  inst.pairingDetail.restBeforeHaulDuration ?? null,
-        rest_after_h:   inst.pairingDetail.restPostHaulDuration   ?? null,
-      }));
+      const rows = instances.map(inst => {
+        const restAfter = (inst.scheduledEndActivityDate > 0 && inst.endBlockDate > 0)
+          ? (inst.scheduledEndActivityDate - inst.endBlockDate) / 3_600_000
+          : (inst.pairingDetail.restPostHaulDuration ?? null);
+        return {
+          signature_id:   sig.id,
+          activity_id:    String(inst.actId),
+          depart_date:    msToDateStr(inst.beginBlockDate),
+          depart_at:      new Date(inst.beginBlockDate).toISOString(),
+          arrivee_at:     new Date(inst.endBlockDate).toISOString(),
+          rest_before_h:  inst.pairingDetail.restBeforeHaulDuration ?? null,
+          rest_after_h:   restAfter,
+        };
+      });
 
       await supabase.from('pairing_instance').insert(rows);
 

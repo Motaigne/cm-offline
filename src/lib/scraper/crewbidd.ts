@@ -113,6 +113,8 @@ export async function fetchAllPairings(
         endBlockDate:       r.endBlockDate   ?? r.scheduledEndBlockDate   ?? 0,
         beginDutyDate:      r.beginDutyDate  ?? r.scheduledBeginDutyDate  ?? 0,
         endDutyDate:        r.endDutyDate    ?? r.scheduledEndDutyDate    ?? 0,
+        scheduledBeginActivityDate: r.scheduledBeginActivityDate ?? r.beginActivityDate ?? 0,
+        scheduledEndActivityDate:   r.scheduledEndActivityDate   ?? r.endActivityDate   ?? 0,
         pairingDetail: {
           nbOnDays:               r.pairingDetail?.nbOnDays               ?? 0,
           workedFlightTime:       r.pairingDetail?.workedFlightTime       ?? 0,
