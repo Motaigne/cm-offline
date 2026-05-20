@@ -90,6 +90,18 @@ async function clearAllCaches(): Promise<void> {
   await Promise.all(keys.map(k => caches.delete(k)));
 }
 
+/** Wrap une promesse avec un timeout — résout à `fallback` si dépassé.
+ *  Évite que Sync ne se bloque indéfiniment sur un fetch qui hang
+ *  (wifi instable, server action lente, etc.). */
+function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise<T>(resolve => {
+    let done = false;
+    const t = setTimeout(() => { if (!done) { done = true; resolve(fallback); } }, ms);
+    p.then(v => { if (!done) { done = true; clearTimeout(t); resolve(v); } })
+     .catch(() => { if (!done) { done = true; clearTimeout(t); resolve(fallback); } });
+  });
+}
+
 export function NavBar() {
   const path = usePathname();
   const router = useRouter();
@@ -138,14 +150,17 @@ export function NavBar() {
       setSyncStatus('pull');
       const ready = await waitForSWController();
       if (ready) {
-        const months = await getAvailableMonths();
+        const months = await withTimeout(getAvailableMonths(), 15000, [] as string[]);
         for (let i = 0; i < months.length; i++) {
           setDlProgress(`${i + 1}/${months.length}`);
           const m = months[i];
+          // Timeout par requête (30s) — un fetch bloqué fait basculer ce mois en
+          // skip et passe au suivant au lieu de bloquer Sync à jamais à "i/N".
           const [rots, scs] = await Promise.all([
-            getRotationsForMonth(m),
-            getScenariosWithItems(m),
+            withTimeout(getRotationsForMonth(m), 30000, []),
+            withTimeout(getScenariosWithItems(m), 30000, []),
           ]);
+          if (rots.length === 0 && scs.length === 0) continue;
           await Promise.all([cacheRotations(rots, m), hydrateDB(scs, m)]);
         }
         setDlProgress('');
@@ -156,7 +171,8 @@ export function NavBar() {
             for (const m of months) urlVariants.push(`${url}?m=${m}`);
           }
         }
-        await Promise.all(urlVariants.map(url => precachePage(url)));
+        // Timeout par page (20s) — empêche un fetch qui hang de bloquer Sync.
+        await Promise.all(urlVariants.map(url => withTimeout(precachePage(url), 20000, false)));
         localStorage.setItem(DL_KEY, String(Date.now()));
       }
       setSyncStatus('ok');

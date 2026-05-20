@@ -39,6 +39,18 @@ function shiftMonth(month: string, delta: number): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
+/** Ratio (0..1) de la rotation qui tombe dans le mois [year, mo].
+ *  Identique à la proration HCr/tsv_nuit côté client. */
+function monthRatio(departAt: string, arriveeAt: string, month: string): number {
+  const [y, mo] = month.split('-').map(Number);
+  const monthStart = Date.UTC(y, mo - 1, 1);
+  const monthEnd   = Date.UTC(y, mo,     1);
+  const dep = new Date(departAt).getTime();
+  const arr = new Date(arriveeAt).getTime();
+  if (arr <= dep) return 1;
+  return Math.max(0, (Math.min(arr, monthEnd) - Math.max(dep, monthStart)) / (arr - dep));
+}
+
 /** Résume les totaux IR + MF (compte + €) par scénario A/B/C pour le mois M.
  *  Inclut les vols à cheval venus du mois précédent (compte UNIQUEMENT pour la
  *  partie qui chevauche M, en proratant via temps_sej). */
@@ -85,11 +97,11 @@ export async function getMonthlyIrMfEuros(month: string): Promise<MonthlyIrMfRes
     return draftMonth === prevMonth && it.end_date.slice(0, 7) >= monthPrefix;
   });
 
-  // 3. instances → signatures
+  // 3. instances → signatures (avec depart_at/arrivee_at pour proration)
   const instanceIds = [...new Set(filteredItems.map(it => it.pairing_instance_id as string))];
   const { data: instances } = await supabase
     .from('pairing_instance')
-    .select('id, signature_id')
+    .select('id, signature_id, depart_at, arrivee_at')
     .in('id', instanceIds);
   const instById = new Map((instances ?? []).map(i => [i.id, i]));
 
@@ -131,15 +143,20 @@ export async function getMonthlyIrMfEuros(month: string): Promise<MonthlyIrMfRes
     }
 
     const irMf = computeIRandMF(sig.raw_detail as unknown as PairingDetail, irRates, getPlanPrestation);
-    result.byScenario[name].ir     += irMf.ir;
-    result.byScenario[name].mf     += irMf.mf;
-    result.byScenario[name].ir_eur += irMf.ir_eur;
-    result.byScenario[name].mf_eur += irMf.mf_eur;
+    // Proration : pour les vols à cheval, ne compte que la part dans le mois M.
+    const ratio = (typeof inst.depart_at === 'string' && typeof inst.arrivee_at === 'string')
+      ? monthRatio(inst.depart_at, inst.arrivee_at, month) : 1;
+    const irEur = irMf.ir_eur * ratio;
+    const mfEur = irMf.mf_eur * ratio;
+    result.byScenario[name].ir     += irMf.ir * ratio;
+    result.byScenario[name].mf     += irMf.mf * ratio;
+    result.byScenario[name].ir_eur += irEur;
+    result.byScenario[name].mf_eur += mfEur;
     result.perFlightByScenario[name].push({
       instance_id: inst.id,
       destination: (sig.rotation_code as string | null) ?? '?',
-      ir_eur:      Math.round(irMf.ir_eur * 100) / 100,
-      mf_eur:      Math.round(irMf.mf_eur * 100) / 100,
+      ir_eur:      Math.round(irEur * 100) / 100,
+      mf_eur:      Math.round(mfEur * 100) / 100,
     });
     irMf.missingRateEscales.forEach(e => missingSet.add(e));
   }
