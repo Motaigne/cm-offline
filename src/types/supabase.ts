@@ -162,6 +162,8 @@ export type Database = {
           arrivee_at: string;
           rest_before_h: number | null;
           rest_after_h: number | null;
+          scheduled_begin_activity_at: string | null;
+          scheduled_end_activity_at: string | null;
         };
         Insert: Partial<Database['public']['Tables']['pairing_instance']['Row']> & {
           signature_id: string;

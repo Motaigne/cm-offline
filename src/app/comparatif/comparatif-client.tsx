@@ -12,8 +12,13 @@ import type { Article81Data } from '@/lib/article81';
 type SigInstance = {
   id: string;
   depart_date: string;   // "YYYY-MM-DD"
-  depart_at: string;     // ISO UTC
-  arrivee_at: string;    // ISO UTC
+  depart_at: string;     // ISO UTC (= scheduledBeginBlockDate)
+  arrivee_at: string;    // ISO UTC (= scheduledEndBlockDate)
+  /** ISO UTC, peut être null si non encore backfilled depuis pairingsearch. */
+  scheduled_begin_activity_at?: string | null;
+  scheduled_end_activity_at?: string | null;
+  rest_before_h?: number | null;
+  rest_after_h?: number | null;
 };
 
 type Sig = {
@@ -92,6 +97,10 @@ function rotToSig(s: RotationSignature): Sig {
     instances: s.instances.map(i => ({
       id: i.id, depart_date: i.depart_date,
       depart_at: i.depart_at, arrivee_at: i.arrivee_at,
+      rest_before_h: i.rest_before_h,
+      rest_after_h:  i.rest_after_h,
+      scheduled_begin_activity_at: (i as { scheduled_begin_activity_at?: string | null }).scheduled_begin_activity_at ?? null,
+      scheduled_end_activity_at:   (i as { scheduled_end_activity_at?:   string | null }).scheduled_end_activity_at   ?? null,
     })),
   };
 }
@@ -391,6 +400,33 @@ export function ComparatifClient({
                 <Row label="Temps séjour"     db={fmt(sig.temps_sej, 1)}       calc={fmt(sig.temps_sej, 1)}          formula="Durée entre 1er atterrissage et dernier décollage (h)" />
                 <Row label="Repos avant"      db={fmt(sig.rest_before_h, 1)}   calc={fmt(sig.rest_before_h, 1)}      formula="Rest before haul (h)" />
                 <Row label="Repos après"      db={fmt(sig.rest_after_h, 1)}    calc={fmt(sig.rest_after_h, 1)}       formula="Rest after haul (h)" />
+                {(() => {
+                  // Affichage debug des timestamps activity (pris sur la 1ère instance
+                  // — chaque instance peut avoir ses propres timestamps).
+                  const inst = sig.instances[0];
+                  if (!inst) return null;
+                  const beginAct = inst.scheduled_begin_activity_at;
+                  const endAct   = inst.scheduled_end_activity_at;
+                  const beginBlock = inst.depart_at;
+                  const endBlock   = inst.arrivee_at;
+                  const restBeforeCalc = (beginAct && beginBlock)
+                    ? ((new Date(beginBlock).getTime() - new Date(beginAct).getTime()) / 3_600_000)
+                    : null;
+                  const restAfterCalc  = (endAct && endBlock)
+                    ? ((new Date(endAct).getTime() - new Date(endBlock).getTime()) / 3_600_000)
+                    : null;
+                  const fmtIso = (s: string | null | undefined) => s ? new Date(s).toISOString().replace('T', ' ').slice(0, 16) : '—';
+                  return (
+                    <>
+                      <Row label="scheduledBeginActivityDate" db={fmtIso(beginAct)}   calc={fmtIso(beginAct)}   formula="début d'activité (briefing) — pairing_instance.scheduled_begin_activity_at" />
+                      <Row label="scheduledBeginBlockDate"    db={fmtIso(beginBlock)} calc={fmtIso(beginBlock)} formula="départ (block-off) — pairing_instance.depart_at" />
+                      <Row label="scheduledEndBlockDate"      db={fmtIso(endBlock)}   calc={fmtIso(endBlock)}   formula="arrivée (block-on) — pairing_instance.arrivee_at" />
+                      <Row label="scheduledEndActivityDate"   db={fmtIso(endAct)}     calc={fmtIso(endAct)}     formula="fin d'activité (closeout) — pairing_instance.scheduled_end_activity_at" />
+                      <Row label="rest_before_h (formule)" db={fmt(sig.rest_before_h, 1)} calc={restBeforeCalc != null ? fmt(restBeforeCalc, 1) : '—'} formula="(scheduledBeginBlockDate − scheduledBeginActivityDate) / 1h" />
+                      <Row label="rest_after_h (formule)"  db={fmt(sig.rest_after_h, 1)}  calc={restAfterCalc != null  ? fmt(restAfterCalc, 1)  : '—'} formula="(scheduledEndActivityDate − scheduledEndBlockDate) / 1h" highlight />
+                    </>
+                  );
+                })()}
               </tbody>
             </table>
           </div>

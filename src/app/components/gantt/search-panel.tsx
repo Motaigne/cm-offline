@@ -94,6 +94,10 @@ function RotationCard({
       temps_sej:     sig.temps_sej,
       depart_at:     inst.depart_at,
       arrivee_at:    inst.arrivee_at,
+      // Timestamps activity pour les barres pré/post du Gantt (source de vérité
+      // pour le RPC). Peut être null si l'instance n'a pas encore été backfilled.
+      scheduled_begin_activity_at: inst.scheduled_begin_activity_at,
+      scheduled_end_activity_at:   inst.scheduled_end_activity_at,
     };
     const newItem: CalendarItem = {
       id, kind: 'flight',

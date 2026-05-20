@@ -46,23 +46,25 @@ export default async function ComparatifPage({
         .order('rotation_code')
     : { data: null };
 
-  // Instances pour toutes les signatures (dates + timestamps)
+  // Instances pour toutes les signatures (dates + timestamps + activity dates pour debug)
   const sigIds = (sigs ?? []).map(s => s.id);
   const instances = sigIds.length
     ? await fetchAllPaginated<{
         id: string; signature_id: string;
         depart_date: string; depart_at: string; arrivee_at: string;
+        rest_before_h: number | null; rest_after_h: number | null;
+        scheduled_begin_activity_at: string | null; scheduled_end_activity_at: string | null;
       }>((from, to) =>
         supabase
           .from('pairing_instance')
-          .select('id, signature_id, depart_date, depart_at, arrivee_at')
+          .select('id, signature_id, depart_date, depart_at, arrivee_at, rest_before_h, rest_after_h, scheduled_begin_activity_at, scheduled_end_activity_at')
           .in('signature_id', sigIds)
           .order('depart_date')
           .range(from, to),
       )
     : [];
 
-  const instMap = new Map<string, { id: string; depart_date: string; depart_at: string; arrivee_at: string }[]>();
+  const instMap = new Map<string, typeof instances>();
   for (const inst of instances) {
     if (!instMap.has(inst.signature_id)) instMap.set(inst.signature_id, []);
     instMap.get(inst.signature_id)!.push(inst);

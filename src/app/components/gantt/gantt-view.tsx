@@ -353,6 +353,8 @@ function DraggableBar({
   const restAfterH   = typeof metaObj?.rest_after_h  === 'number' ? metaObj.rest_after_h  as number : 0;
   const departAt     = typeof metaObj?.depart_at     === 'string' ? metaObj.depart_at     as string : null;
   const arriveeAt    = typeof metaObj?.arrivee_at    === 'string' ? metaObj.arrivee_at    as string : null;
+  const beginActAt   = typeof metaObj?.scheduled_begin_activity_at === 'string' ? metaObj.scheduled_begin_activity_at as string : null;
+  const endActAt     = typeof metaObj?.scheduled_end_activity_at   === 'string' ? metaObj.scheduled_end_activity_at   as string : null;
   const tsvNuit      = typeof metaObj?.tsv_nuit === 'number' ? metaObj.tsv_nuit as number : 0;
 
   const hcrDisplay = hcrCrew !== null && departAt && arriveeAt
@@ -376,20 +378,23 @@ function DraggableBar({
     leftPct = Math.max(0, (startFrac - 1) / dim * 100);
     wPct    = Math.max(0.3, (Math.min(endFrac, dim + 1) - Math.max(startFrac, 1)) / dim * 100);
 
-    if (restBeforeH > 0) {
-      const rFrac = dayFrac(
-        new Date(new Date(departAt).getTime() - restBeforeH * 3_600_000).toISOString(),
-        year, mo, dim,
-      );
+    // Barre pré-activité : du début d'activité (briefing) jusqu'au block-off.
+    // Source de vérité : scheduled_begin_activity_at ; fallback sur rest_before_h
+    // (durée en heures, soustraite du block-off) si pas de timestamp.
+    const preStartIso = beginActAt
+      ?? (restBeforeH > 0 ? new Date(new Date(departAt).getTime() - restBeforeH * 3_600_000).toISOString() : null);
+    if (preStartIso) {
+      const rFrac = dayFrac(preStartIso, year, mo, dim);
       const rLeft = Math.max(0, (rFrac - 1) / dim * 100);
       const rW    = leftPct - rLeft;
       if (rW > 0.05) restBeforeBar = { left: rLeft, width: rW };
     }
-    if (restAfterH > 0) {
-      const rFrac = dayFrac(
-        new Date(new Date(arriveeAt).getTime() + restAfterH * 3_600_000).toISOString(),
-        year, mo, dim,
-      );
+    // Barre post-activité : du block-on jusqu'à la fin d'activité (closeout).
+    // Source de vérité : scheduled_end_activity_at ; fallback sur rest_after_h.
+    const postEndIso = endActAt
+      ?? (restAfterH > 0 ? new Date(new Date(arriveeAt).getTime() + restAfterH * 3_600_000).toISOString() : null);
+    if (postEndIso) {
+      const rFrac = dayFrac(postEndIso, year, mo, dim);
       const rLeft = leftPct + wPct;
       const rW    = Math.max(0, (Math.min(rFrac, dim + 1) - 1) / dim * 100 - rLeft);
       if (rW > 0.05) restAfterBar = { left: rLeft, width: rW };

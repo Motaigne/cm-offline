@@ -8,12 +8,16 @@ export type RotationInstance = {
   id: string;
   activity_id: string;
   depart_date: string;   // "YYYY-MM-DD"
-  depart_at: string;     // ISO timestamptz (block-off)
-  arrivee_at: string;    // ISO timestamptz (block-on)
+  depart_at: string;     // ISO timestamptz (block-off / scheduledBeginBlockDate)
+  arrivee_at: string;    // ISO timestamptz (block-on  / scheduledEndBlockDate)
   /** Repos avant la rotation (h), spécifique à cette instance. */
   rest_before_h: number | null;
   /** Repos après la rotation (h), spécifique à cette instance. */
   rest_after_h: number | null;
+  /** scheduledBeginActivityDate — début d'activité (briefing). Null si pas backfilled. */
+  scheduled_begin_activity_at: string | null;
+  /** scheduledEndActivityDate — fin d'activité (closeout). Null si pas backfilled. */
+  scheduled_end_activity_at: string | null;
 };
 
 export type RotationSignature = {
@@ -85,10 +89,11 @@ export async function getRotationsForMonth(month: string): Promise<RotationSigna
     id: string; activity_id: string; signature_id: string;
     depart_date: string; depart_at: string; arrivee_at: string;
     rest_before_h: number | null; rest_after_h: number | null;
+    scheduled_begin_activity_at: string | null; scheduled_end_activity_at: string | null;
   }>((from, to) =>
     supabase
       .from('pairing_instance')
-      .select('id, activity_id, signature_id, depart_date, depart_at, arrivee_at, rest_before_h, rest_after_h')
+      .select('id, activity_id, signature_id, depart_date, depart_at, arrivee_at, rest_before_h, rest_after_h, scheduled_begin_activity_at, scheduled_end_activity_at')
       .in('signature_id', sigIds)
       .order('depart_date')
       .range(from, to),
@@ -125,6 +130,8 @@ export async function getRotationsForMonth(month: string): Promise<RotationSigna
       arrivee_at:    inst.arrivee_at,
       rest_before_h: inst.rest_before_h,
       rest_after_h:  inst.rest_after_h,
+      scheduled_begin_activity_at: inst.scheduled_begin_activity_at,
+      scheduled_end_activity_at:   inst.scheduled_end_activity_at,
     });
   }
 

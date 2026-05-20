@@ -50,25 +50,33 @@ export async function POST(req: Request) {
   // dans des cas différents) ; les timestamps sont la source de vérité.
   const pairings = await fetchAllPairings(month, { cookie, sn, userId });
 
-  function computeRest(p: typeof pairings[number]): { before: number | null; after: number | null } {
-    // rest_after = endActivity - endBlock (timestamps, source de vérité)
-    // rest_before reste sur la valeur API (pas de formule validée).
+  type PerInst = {
+    before: number | null;
+    after: number | null;
+    beginActivityAt: string | null;
+    endActivityAt: string | null;
+  };
+  function computePerInst(p: typeof pairings[number]): PerInst {
     const before = p.pairingDetail.restBeforeHaulDuration ?? null;
     const after  = (p.scheduledEndActivityDate > 0 && p.endBlockDate > 0)
       ? (p.scheduledEndActivityDate - p.endBlockDate) / 3_600_000
       : (p.pairingDetail.restPostHaulDuration ?? null);
-    return { before, after };
+    const beginActivityAt = p.scheduledBeginActivityDate > 0
+      ? new Date(p.scheduledBeginActivityDate).toISOString() : null;
+    const endActivityAt = p.scheduledEndActivityDate > 0
+      ? new Date(p.scheduledEndActivityDate).toISOString() : null;
+    return { before, after, beginActivityAt, endActivityAt };
   }
 
-  // Map actId → { before, after } : per-instance RPC (depuis timestamps).
+  // Map actId → PerInst : RPC + timestamps activity par instance.
   // Map activityNumber → { before, after } depuis la 1ère instance vue :
   // utilisé pour synchroniser le legacy `pairing_signature.rest_*_h`.
-  const instRest = new Map<string, { before: number | null; after: number | null }>();
+  const instRest = new Map<string, PerInst>();
   const sigRest  = new Map<string, { before: number | null; after: number | null }>();
   for (const p of pairings) {
-    const v = computeRest(p);
+    const v = computePerInst(p);
     instRest.set(String(p.actId), v);
-    if (!sigRest.has(p.activityNumber)) sigRest.set(p.activityNumber, v);
+    if (!sigRest.has(p.activityNumber)) sigRest.set(p.activityNumber, { before: v.before, after: v.after });
   }
 
   // Signatures existantes du snapshot (pour MAJ legacy rest_*_h signature-level)
@@ -81,12 +89,16 @@ export async function POST(req: Request) {
   );
   const sigIds = sigs.map(s => s.id);
 
-  // Instances existantes (du snapshot, via signature_id) — pour MAJ rest_*_h par instance
+  // Instances existantes (du snapshot, via signature_id) — pour MAJ rest_*_h + activity timestamps par instance
   const insts = sigIds.length
-    ? await fetchAllPaginated<{ id: string; activity_id: string; rest_before_h: number | null; rest_after_h: number | null }>(
+    ? await fetchAllPaginated<{
+        id: string; activity_id: string;
+        rest_before_h: number | null; rest_after_h: number | null;
+        scheduled_begin_activity_at: string | null; scheduled_end_activity_at: string | null;
+      }>(
         (from, to) => supabase
           .from('pairing_instance')
-          .select('id, activity_id, rest_before_h, rest_after_h')
+          .select('id, activity_id, rest_before_h, rest_after_h, scheduled_begin_activity_at, scheduled_end_activity_at')
           .in('signature_id', sigIds)
           .range(from, to),
       )
@@ -112,13 +124,21 @@ export async function POST(req: Request) {
     if (!inst.activity_id) { missing++; continue; }
     const rest = instRest.get(inst.activity_id);
     if (!rest) { missing++; continue; }
-    if (inst.rest_before_h === rest.before && inst.rest_after_h === rest.after) {
+    const sameRest = inst.rest_before_h === rest.before && inst.rest_after_h === rest.after;
+    const sameActivity = inst.scheduled_begin_activity_at === rest.beginActivityAt
+      && inst.scheduled_end_activity_at === rest.endActivityAt;
+    if (sameRest && sameActivity) {
       unchanged++;
       continue;
     }
     await supabase
       .from('pairing_instance')
-      .update({ rest_before_h: rest.before, rest_after_h: rest.after })
+      .update({
+        rest_before_h: rest.before,
+        rest_after_h:  rest.after,
+        scheduled_begin_activity_at: rest.beginActivityAt,
+        scheduled_end_activity_at:   rest.endActivityAt,
+      })
       .eq('id', inst.id);
     updated++;
   }

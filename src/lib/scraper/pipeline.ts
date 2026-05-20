@@ -302,8 +302,10 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
       if (sigErr || !sig) continue;
 
       const rows = instances.map(inst => {
-        const restAfter = (inst.scheduledEndActivityDate > 0 && inst.endBlockDate > 0)
-          ? (inst.scheduledEndActivityDate - inst.endBlockDate) / 3_600_000
+        const beginAct = inst.scheduledBeginActivityDate;
+        const endAct   = inst.scheduledEndActivityDate;
+        const restAfter = (endAct > 0 && inst.endBlockDate > 0)
+          ? (endAct - inst.endBlockDate) / 3_600_000
           : (inst.pairingDetail.restPostHaulDuration ?? null);
         return {
           signature_id:   sig.id,
@@ -313,6 +315,8 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
           arrivee_at:     new Date(inst.endBlockDate).toISOString(),
           rest_before_h:  inst.pairingDetail.restBeforeHaulDuration ?? null,
           rest_after_h:   restAfter,
+          scheduled_begin_activity_at: beginAct > 0 ? new Date(beginAct).toISOString() : null,
+          scheduled_end_activity_at:   endAct   > 0 ? new Date(endAct).toISOString()   : null,
         };
       });
 
