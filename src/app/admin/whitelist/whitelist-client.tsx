@@ -64,7 +64,9 @@ export function WhitelistClient({ emails, logs, profiles }: { emails: AllowedEma
       if (!res.ok) { setRpcStatus(`! ${await res.text()}`); return; }
       const j = await res.json() as { updated: number; unchanged: number; missing: number; total: number };
       setRpcStatus(`✓ ${j.updated} mises à jour · ${j.unchanged} inchangées · ${j.missing} absentes search · ${j.total} totales`);
-      setShowRpcForm(false);
+      // Ne pas fermer le formulaire automatiquement : le rpcStatus est rendu
+      // à l'intérieur, donc le fermer fait disparaître le récap aussitôt.
+      // L'admin ferme manuellement après avoir lu le résultat.
     } catch (e) {
       setRpcStatus(`! ${String(e)}`);
     } finally {
