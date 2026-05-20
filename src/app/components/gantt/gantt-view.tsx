@@ -161,6 +161,7 @@ function computeStats(
   article81Data: Article81Data | null = null,
   valeurJour = 600,
   a81CumulBefore = 0,
+  irMfEur = 0,
 ) {
   let onDays = 0, congeDays = 0;
   const flights = items.filter(i => i.kind === 'flight').length;
@@ -225,26 +226,26 @@ function computeStats(
     totalA81 += montant;
   }
   const totalA81Net = totalA81 * 0.82;
-  // HS seuil proratisé : 75 × (nb30e_effectif/30) où
-  //   nb30e_effectif = max(0, nb30e_base − congeDays)
-  // nb30e_base dépend du régime ET du mois : pour TAF*_10_12 en juillet/août,
-  // le pilote est en temps plein (nb30e = 30), donc la base passe à 30 ces
-  // mois-ci. Les congés sont toujours soustraits (même en full-prime).
+  // nb30e_base : régime × mois (full-prime = 30 en jul/aoû pour TAF*_10_12).
+  // nb30e_eff  : base − congés (utilisé pour HS seuil uniquement).
+  // MGA utilise nb30e_base (indépendant des congés).
   const nb30eRegime = REGIME_NB30E[regime] ?? NB_30E;
   const fullPrime   = isFullPrimeMonth(regime, mo);
   const nb30eBase   = fullPrime ? 30 : nb30eRegime;
-  const nb30eForFin = Math.max(0, nb30eBase - congeDays);
+  const nb30eEff    = Math.max(0, nb30eBase - congeDays);
   const fixeForFin  = fullPrime && nb30eRegime > 0 ? FIXE_MENSUEL * 30 / nb30eRegime : FIXE_MENSUEL;
-  const finBase = monthlyFinancialsP(totalHcr, totalPrime, totalTsvNuit, { pvei: PVEI, ksp: KSP, fixe: fixeForFin, nb30e: nb30eForFin });
+  // Le nb30e passé à monthlyFinancialsP n'a pas d'effet sur les valeurs qu'on
+  // garde (fixe, pv, primes) — on override hs/total/mga avec les bonnes formules.
+  const finBase = monthlyFinancialsP(totalHcr, totalPrime, totalTsvNuit, { pvei: PVEI, ksp: KSP, fixe: fixeForFin, nb30e: nb30eEff });
   // HS : nouvelle formule HS.FIXE + HS.VOL
   // HS.FIXE = fixe × 1.25 / 75 (1/75e du fixe × 1.25)
   // HS.VOL  = taux_moyen × 0.25 ; taux_moyen = PV€ / totalHC (HC, pas HCr)
   const totalPv    = totalHcr + totalTsvNuit / 2;
   const pvEur      = totalPv * PVEI * KSP;
   const tauxMoyen  = totalHc > 0 ? pvEur / totalHc : PVEI * KSP;
-  const hsFixeRate = nb30eForFin > 0 ? fixeForFin * 1.25 / 75 : 0;
+  const hsFixeRate = nb30eEff > 0 ? fixeForFin * 1.25 / 75 : 0;
   const hsVolRate  = tauxMoyen * 0.25;
-  const hsSeuil    = 75 * (nb30eForFin / 30);
+  const hsSeuil    = 75 * (nb30eEff / 30);
   const hsH        = Math.max(0, totalHc - hsSeuil);
   const hsNew      = hsH * (hsFixeRate + hsVolRate);
   // PRIME = bi-tronçon (sommée par vol via finBase.primes) + primes mensuelles
@@ -252,13 +253,14 @@ function computeStats(
   // en amont avec proration régime + boost 100% en juillet/août pour TAF*_10_12.
   const primesTotal = finBase.primes + monthlyFixedPrimes;
   const congeAmount = congeDays * (cngPv + cngHs);
-  const mga         = finBase.fixe + 85 * (nb30eForFin / 30) * PVEI;
+  // MGA est indépendant des congés (n'utilise PAS nb30eEff).
+  const mga         = fixeForFin + 85 * (nb30eBase / 30) * PVEI;
   // TOTAL = FIXE + PV + HS (hors primes et hors congés)
   // DIFF  = TOTAL − MGA (signé, rouge si <0, vert si ≥0)
-  // BRUT  = MAX(MGA ; TOTAL) + primes + congés
+  // BRUT  = MAX(MGA ; TOTAL) + primes + congés + IR/MF
   const totalNew = finBase.fixe + finBase.pv + hsNew;
   const diffNew  = totalNew - mga;
-  const brut     = Math.max(mga, totalNew) + primesTotal + congeAmount;
+  const brut     = Math.max(mga, totalNew) + primesTotal + congeAmount + irMfEur;
   const fin = {
     ...finBase,
     hs:     hsNew,
@@ -583,11 +585,12 @@ export function GanttView({
     hsFixeRate: number; hsVolRate: number;
     // TOTAL / MGA / DIFF
     fixeForFin: number; totalNew: number; mga: number; diff: number;
-    // Primes (déjà ventilées) + congés
+    // Primes (déjà ventilées) + congés + IR/MF
     totalPrime: number; bitronconEur: number;
     incitation: number; a330: number; instruction: number;
     primeMai: number; primeNoel: number; primesTotal: number;
     congeDays: number; cngPv: number; cngHs: number; congeAmount: number;
+    irEur: number; mfEur: number;
     // BRUT
     brut: number;
   };
@@ -629,22 +632,37 @@ export function GanttView({
     if (!resetTarget) return;
     setResetting(true);
     const targets: ('A' | 'B' | 'C')[] = resetTarget === 'tout' ? ['A', 'B', 'C'] : [resetTarget];
-    // Optimistic UI : vide les scénarios concernés localement avant l'await DB.
-    // (router.refresh ne re-render pas toujours visiblement sur iPad PWA, cf bug
-    // search-panel — l'user croit que reset a échoué et retry.)
+
+    // Snapshot des items non-spillover à supprimer (avant de vider localScenarios)
+    // — sert au fallback offline qui queue un delete par item.
+    const itemIdsToDelete = localScenarios
+      .filter(s => targets.includes(s.name))
+      .flatMap(s => s.items.filter(i => !i._isSpillover).map(i => i.id));
+
+    // Optimistic UI immédiat : vide les scénarios cibles (garde les spillovers).
     setLocalScenarios(prev => prev.map(s =>
       targets.includes(s.name) ? { ...s, items: s.items.filter(i => i._isSpillover) } : s,
     ));
+    // Ferme le pop-up tout de suite — il ne doit pas dépendre du succès serveur.
+    setResetTarget(null);
+
+    // Purge IndexedDB + ops de queue concernant ces items, en local (offline-safe).
+    await purgeScenarios(currentMonth, targets);
+
     try {
-      await resetPlanningScenarios(currentMonth, targets);
-      // Purge le cache local pour ces scénarios — sans ça, naviguer ailleurs
-      // puis revenir ressort les items zombies depuis IndexedDB (loadScenariosForMonth)
-      // ou flicker quand changeMonth fait du cache-first puis refresh réseau.
-      await purgeScenarios(currentMonth, targets);
-      setPendingCount(await pendingOpsCount());
-      router.refresh();
-      setResetTarget(null);
+      if (navigator.onLine) {
+        await resetPlanningScenarios(currentMonth, targets);
+        router.refresh();
+      } else {
+        // Offline : queue chaque delete pour qu'ils partent au prochain Sync.
+        for (const id of itemIdsToDelete) await enqueueDelete(id);
+      }
+    } catch (e) {
+      console.error('[reset] server call failed', e);
+      // Fallback : queue les deletes (au cas où le serveur n'aurait rien fait).
+      for (const id of itemIdsToDelete) await enqueueDelete(id);
     } finally {
+      setPendingCount(await pendingOpsCount());
       setResetting(false);
     }
   }
@@ -844,30 +862,33 @@ export function GanttView({
       return;
     }
 
-    startTransition(async () => {
-      if (sheet.mode === 'edit' && sheet.item) {
-        applyUpdate(sheet.item.id, start, end);
-        await enqueueUpdate(sheet.item.id, start, end);
-        setPendingCount(c => c + 1);
-      } else {
-        const id = crypto.randomUUID();
-        const newItem: CalendarItem = { id, kind: addKind, start_date: start, end_date: end, bid_category: null, meta: null };
-        applyAdd(newItem, sheet.scenarioId);
-        await enqueueAdd(newItem, sheet.scenarioId);
-        setPendingCount(c => c + 1);
-      }
+    if (sheet.mode === 'edit' && sheet.item) {
+      const itemId = sheet.item.id;
+      applyUpdate(itemId, start, end);
       setSheet(null);
-    });
+      setPendingCount(c => c + 1);
+      void enqueueUpdate(itemId, start, end);
+    } else {
+      const id = crypto.randomUUID();
+      const newItem: CalendarItem = { id, kind: addKind, start_date: start, end_date: end, bid_category: null, meta: null };
+      const scenarioId = sheet.scenarioId;
+      applyAdd(newItem, scenarioId);
+      setSheet(null);
+      setPendingCount(c => c + 1);
+      void enqueueAdd(newItem, scenarioId);
+    }
   }
 
   function handleDelete() {
     if (!sheet?.item) return;
-    startTransition(async () => {
-      applyDelete(sheet.item!.id);
-      await enqueueDelete(sheet.item!.id);
-      setPendingCount(c => c + 1);
-      setSheet(null);
-    });
+    // Updates locaux en synchrone — sortir du startTransition pour éviter
+    // que l'écran grise (opacity-60 + pointer-events-none déclenchés par
+    // isPending) tant que enqueueDelete n'a pas résolu ses promesses Dexie.
+    const itemId = sheet.item.id;
+    applyDelete(itemId);
+    setSheet(null);
+    setPendingCount(c => c + 1);
+    void enqueueDelete(itemId);
   }
 
   // ── propagation A → B / A → C ───────────────────────────────────────────────
@@ -900,6 +921,9 @@ export function GanttView({
       start_date: it.start_date,
       end_date: it.end_date,
       bid_category: it.bid_category,
+      // Propage pairing_instance_id — sinon les vols copiés perdent leur lien
+      // vers pairing_instance et disparaissent de EP4 / IR-MF / A81.
+      pairing_instance_id: it.pairing_instance_id,
       meta: it.meta,
     }));
 
@@ -908,17 +932,12 @@ export function GanttView({
     setLocalScenarios(prev => prev.map(s =>
       s.name === target ? { ...s, items: [...newItems, ...targetSpillovers] } : s,
     ));
+    setPendingCount(c => c + targetExisting.length + newItems.length);
 
-    startTransition(async () => {
-      for (const it of targetExisting) {
-        await enqueueDelete(it.id);
-        setPendingCount(c => c + 1);
-      }
-      for (const it of newItems) {
-        await enqueueAdd(it, targetScenario.id);
-        setPendingCount(c => c + 1);
-      }
-    });
+    void (async () => {
+      for (const it of targetExisting) await enqueueDelete(it.id);
+      for (const it of newItems) await enqueueAdd(it, targetScenario.id);
+    })();
 
     setPropagateMsg(`A → ${target} : ${newItems.length} activité${newItems.length > 1 ? 's' : ''} copiée${newItems.length > 1 ? 's' : ''}`);
     setTimeout(() => setPropagateMsg(null), 3500);
@@ -957,10 +976,8 @@ export function GanttView({
     if (hasOverlap(scenario.items, newStartStr, newEndStr, item.id)) return;
 
     applyUpdate(item.id, newStartStr, newEndStr);
-    startTransition(async () => {
-      await enqueueUpdate(item.id, newStartStr, newEndStr);
-      setPendingCount(c => c + 1);
-    });
+    setPendingCount(c => c + 1);
+    void enqueueUpdate(item.id, newStartStr, newEndStr);
   }
 
   // ── sorted kinds (exclude flight from manual add) ─────────────────────────
@@ -1097,7 +1114,9 @@ export function GanttView({
                 + (primeA330 + primeInstruction) * a330InstrBoost
                 + primeMai + primeNoel;
               const cumulBeforeForScenario = a81CumulBefore[scenario.name] ?? 0;
-              const stats = computeStats(scenario.items, year, mo, cngPv, cngHs, userRegime, monthlyFixedPrimes, article81Data, valeurJour, cumulBeforeForScenario);
+              const irMfScn = irMfByScenario?.[scenario.name];
+              const irMfEur = (irMfScn?.ir_eur ?? 0) + (irMfScn?.mf_eur ?? 0);
+              const stats = computeStats(scenario.items, year, mo, cngPv, cngHs, userRegime, monthlyFixedPrimes, article81Data, valeurJour, cumulBeforeForScenario, irMfEur);
               const isLast = idx === localScenarios.length - 1;
               const tafDays      = tafOk ? tafDur : 0;
               const joursProrata = stats.congeDays + tafDays;
@@ -1192,6 +1211,8 @@ export function GanttView({
                           primeMai: 0, primeNoel: 0,
                           primesTotal: stats.fin.primes,
                           congeDays: stats.congeDays, cngPv, cngHs, congeAmount: stats.congeAmount,
+                          irEur: irMfScn?.ir_eur ?? 0,
+                          mfEur: irMfScn?.mf_eur ?? 0,
                           brut: stats.brut,
                         });
                       }}
@@ -1685,18 +1706,33 @@ export function GanttView({
               </div>
             </div>
 
+            {/* IR / MF */}
+            <div className="space-y-0.5 mb-2 font-mono text-[9px]">
+              <div className="flex items-baseline justify-between">
+                <span className="text-orange-500 font-semibold">
+                  IR / MF = IR + MF
+                </span>
+                <span className="text-orange-600 dark:text-orange-400 font-bold">{Math.round(detailPanel.irEur + detailPanel.mfEur)}</span>
+              </div>
+              {(detailPanel.irEur > 0 || detailPanel.mfEur > 0) && (
+                <div className="text-[8px] text-zinc-400 pl-2">
+                  {Math.round(detailPanel.irEur)} + {Math.round(detailPanel.mfEur)}
+                </div>
+              )}
+            </div>
+
             <div className="border-t border-zinc-200 dark:border-zinc-700 my-1.5" />
 
             {/* BRUT */}
             <div className="font-mono text-[9px]">
               <div className="flex items-baseline justify-between">
                 <span className="text-emerald-600 dark:text-emerald-400 font-bold">
-                  BRUT = MAX(MGA;TOTAL) + P + cg
+                  BRUT = MAX(MGA;TOTAL) + P + cg + IR/MF
                 </span>
               </div>
               <div className="flex items-baseline justify-between mt-0.5">
                 <span className="text-[8px] text-zinc-400 pl-2">
-                  {Math.round(Math.max(detailPanel.mga, detailPanel.totalNew))} + {Math.round(detailPanel.primesTotal)} + {Math.round(detailPanel.congeAmount)}
+                  {Math.round(Math.max(detailPanel.mga, detailPanel.totalNew))} + {Math.round(detailPanel.primesTotal)} + {Math.round(detailPanel.congeAmount)} + {Math.round(detailPanel.irEur + detailPanel.mfEur)}
                 </span>
                 <span className="text-emerald-700 dark:text-emerald-300 font-bold text-[10px]">{Math.round(detailPanel.brut)}</span>
               </div>
