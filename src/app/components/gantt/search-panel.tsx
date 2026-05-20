@@ -93,7 +93,13 @@ function RotationCard({
       depart_at:     inst.depart_at,
       arrivee_at:    inst.arrivee_at,
     };
-    const newItem: CalendarItem = { id, kind: 'flight', start_date: inst.depart_date, end_date: endDate, bid_category: null, meta };
+    const newItem: CalendarItem = {
+      id, kind: 'flight',
+      start_date: inst.depart_date, end_date: endDate,
+      bid_category: null,
+      pairing_instance_id: inst.id,
+      meta,
+    };
     onItemAdded?.(newItem, scenario.id);
     startTransition(async () => {
       await enqueueAdd(newItem, scenario.id);

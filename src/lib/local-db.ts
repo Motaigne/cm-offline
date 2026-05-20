@@ -165,6 +165,31 @@ export async function hasPendingOps(): Promise<boolean> {
   return (await db.sync_queue.count()) > 0;
 }
 
+/** Purge les items d'un mois pour les scénarios donnés + les ops de queue
+ *  qui les concernent. Appelé après un Reset pour éviter que `loadScenariosForMonth`
+ *  ressorte les items zombies au prochain changement de mois. */
+export async function purgeScenarios(month: string, scenarioNames: string[]): Promise<void> {
+  await db.transaction('rw', db.drafts, db.items, db.sync_queue, async () => {
+    const drafts = await db.drafts.where('target_month').equals(month).toArray();
+    const targets = drafts.filter(d => scenarioNames.includes(d.name));
+    if (targets.length === 0) return;
+    const ids = targets.map(d => d.id);
+    const items = await db.items.where('draft_id').anyOf(ids).toArray();
+    const itemIds = new Set(items.map(i => i.id));
+    if (itemIds.size > 0) await db.items.bulkDelete([...itemIds]);
+
+    const queue = await db.sync_queue.toArray();
+    const opsToDelete: number[] = [];
+    for (const op of queue) {
+      try {
+        const id = (JSON.parse(op.payload) as { id?: string }).id;
+        if (id && itemIds.has(id) && op.id != null) opsToDelete.push(op.id);
+      } catch {}
+    }
+    if (opsToDelete.length) await db.sync_queue.bulkDelete(opsToDelete);
+  });
+}
+
 /** Charge les scénarios depuis IndexedDB pour un mois donné. Retourne null si non caché.
  *  Injecte les spillovers du mois M-1. */
 export async function loadScenariosForMonth(month: string): Promise<Scenario[] | null> {

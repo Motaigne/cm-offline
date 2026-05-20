@@ -23,7 +23,7 @@ import { rotationValue, monthlyFinancialsP, PRIME_BITRONCON, PVEI, KSP, FIXE_MEN
 import { computeArticle81, computeTSej24, getPlafondJours } from '@/lib/article81';
 import type { Article81Data } from '@/lib/article81';
 import { createClient } from '@/lib/supabase/client';
-import { db, hydrateDB, loadFromDB, hasPendingOps, loadScenariosForMonth, cacheRotations } from '@/lib/local-db';
+import { db, hydrateDB, loadFromDB, hasPendingOps, loadScenariosForMonth, cacheRotations, purgeScenarios } from '@/lib/local-db';
 import { enqueueAdd, enqueueDelete, enqueueUpdate, pendingOpsCount } from '@/lib/sync-service';
 import { getRotationsForMonth } from '@/app/actions/search';
 import { getCurrentUserScrapeRights } from '@/app/actions/auth';
@@ -225,15 +225,16 @@ function computeStats(
     totalA81 += montant;
   }
   const totalA81Net = totalA81 * 0.82;
-  // HS seuil proratisé : 75 × (nb30e_regime - congeDays) / 30
+  // HS seuil proratisé : 75 × (nb30e_effectif/30) où
+  //   nb30e_effectif = max(0, nb30e_base − congeDays)
+  // nb30e_base dépend du régime ET du mois : pour TAF*_10_12 en juillet/août,
+  // le pilote est en temps plein (nb30e = 30), donc la base passe à 30 ces
+  // mois-ci. Les congés sont toujours soustraits (même en full-prime).
   const nb30eRegime = REGIME_NB30E[regime] ?? NB_30E;
-  const nb30eEff    = Math.max(0, nb30eRegime - congeDays);
-  // En juillet/août pour TAF*_10_12 : pilote off, MGA passe en temps plein.
-  // On boost fixe (× 30/nb30e) + nb30e=30 pour que monthlyFinancialsP calcule
-  // mga_TP = fixe_TP + 85×PVEI, et donc DIF compense jusqu'au temps plein.
-  const fullPrime = isFullPrimeMonth(regime, mo);
+  const fullPrime   = isFullPrimeMonth(regime, mo);
+  const nb30eBase   = fullPrime ? 30 : nb30eRegime;
+  const nb30eForFin = Math.max(0, nb30eBase - congeDays);
   const fixeForFin  = fullPrime && nb30eRegime > 0 ? FIXE_MENSUEL * 30 / nb30eRegime : FIXE_MENSUEL;
-  const nb30eForFin = fullPrime ? 30 : nb30eEff;
   const finBase = monthlyFinancialsP(totalHcr, totalPrime, totalTsvNuit, { pvei: PVEI, ksp: KSP, fixe: fixeForFin, nb30e: nb30eForFin });
   // HS : nouvelle formule HS.FIXE + HS.VOL
   // HS.FIXE = fixe × 1.25 / 75 (1/75e du fixe × 1.25)
@@ -636,6 +637,11 @@ export function GanttView({
     ));
     try {
       await resetPlanningScenarios(currentMonth, targets);
+      // Purge le cache local pour ces scénarios — sans ça, naviguer ailleurs
+      // puis revenir ressort les items zombies depuis IndexedDB (loadScenariosForMonth)
+      // ou flicker quand changeMonth fait du cache-first puis refresh réseau.
+      await purgeScenarios(currentMonth, targets);
+      setPendingCount(await pendingOpsCount());
       router.refresh();
       setResetTarget(null);
     } finally {
@@ -1166,9 +1172,6 @@ export function GanttView({
                         const rect  = rowEl?.getBoundingClientRect() ?? e.currentTarget.getBoundingClientRect();
                         const pvHcrEur  = stats.totalHcr * PVEI * KSP;
                         const pvNuitEur = (stats.totalTsvNuit / 2) * PVEI * KSP;
-                        const nb30eEff  = Math.max(0, (REGIME_NB30E[userRegime] ?? NB_30E) - stats.congeDays);
-                        const nb30eEff2 = isFullPrimeMonth(userRegime, mo) ? 30 : nb30eEff;
-                        const seuil75   = 75 * (nb30eEff2 / 30);
                         const nb30eReg2 = REGIME_NB30E[userRegime] ?? NB_30E;
                         const fixeFF    = isFullPrimeMonth(userRegime, mo) && nb30eReg2 > 0
                           ? FIXE_MENSUEL * 30 / nb30eReg2 : FIXE_MENSUEL;
@@ -1178,7 +1181,7 @@ export function GanttView({
                           name: scenario.name, rect,
                           viewportH: window.visualViewport?.height ?? window.innerHeight,
                           pvEur: stats.fin.pv, pvHcrEur, pvNuitEur,
-                          totalHc: stats.totalHc, seuil75,
+                          totalHc: stats.totalHc, seuil75: stats.hsSeuil,
                           hsH: stats.hsH, hsEur: stats.fin.hs,
                           hsFixeRate: stats.hsFixeRate, hsVolRate: stats.hsVolRate,
                           fixeForFin: fixeFF,
@@ -1524,7 +1527,12 @@ export function GanttView({
           <div className="fixed inset-0 z-40" onClick={() => setScenarioPicker(null)} />
           <div
             className="fixed z-50 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-2xl shadow-2xl p-3 flex flex-col gap-2"
-            style={{ bottom: window.innerHeight - scenarioPicker.rect.top + 8, left: scenarioPicker.rect.left }}
+            style={{
+              bottom: window.innerHeight - scenarioPicker.rect.top + 8,
+              // Aligne le bord droit du popup sur le bord droit du bouton Rotations
+              // (qui est à droite de l'écran) — évite que C dépasse hors écran sur iPad.
+              right: Math.max(8, window.innerWidth - scenarioPicker.rect.right),
+            }}
           >
             <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide">Ajouter dans</span>
             <div className="flex gap-2">

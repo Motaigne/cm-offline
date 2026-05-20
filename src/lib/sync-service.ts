@@ -13,6 +13,7 @@ type AddPayload = {
   start_date: string;
   end_date: string;
   bid_category: BidCategory | null;
+  pairing_instance_id?: string | null;
   meta: Json | null;
 };
 type DeletePayload = { id: string };
@@ -22,13 +23,14 @@ type UpdatePayload  = { id: string; start_date: string; end_date: string };
 
 export async function enqueueAdd(item: CalendarItem, draftId: string): Promise<void> {
   const payload: AddPayload = {
-    id:           item.id,
-    draft_id:     draftId,
-    kind:         item.kind,
-    start_date:   item.start_date,
-    end_date:     item.end_date,
-    bid_category: item.bid_category,
-    meta:         item.meta as Json | null,
+    id:                  item.id,
+    draft_id:            draftId,
+    kind:                item.kind,
+    start_date:          item.start_date,
+    end_date:            item.end_date,
+    bid_category:        item.bid_category,
+    pairing_instance_id: item.pairing_instance_id ?? null,
+    meta:                item.meta as Json | null,
   };
   await db.transaction('rw', db.items, db.sync_queue, async () => {
     await db.items.put({ ...item, draft_id: draftId });

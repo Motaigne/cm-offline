@@ -17,6 +17,8 @@ export type CalendarItem = {
   start_date: string;
   end_date: string;
   bid_category: BidCategory | null;
+  /** Référence vers pairing_instance — requis pour EP4 / IR-MF / Article 81. */
+  pairing_instance_id?: string | null;
   meta: import('@/types/supabase').Json | null;
   /** Flag runtime (non persisté) — vol à cheval issu du mois précédent. */
   _isSpillover?: boolean;

@@ -130,7 +130,7 @@ export async function getScenariosWithItems(month: string): Promise<{ name: Scen
 
   const { data: allItems } = await supabase
     .from('planning_item')
-    .select('id, kind, start_date, end_date, bid_category, meta, draft_id')
+    .select('id, kind, start_date, end_date, bid_category, pairing_instance_id, meta, draft_id')
     .in('draft_id', draftIds);
 
   // Spillovers : drafts du mois précédent (s'ils existent) avec leurs vols se prolongeant en M
@@ -151,7 +151,7 @@ export async function getScenariosWithItems(month: string): Promise<{ name: Scen
   if (prevDraftByName.size > 0) {
     const { data: prevItems } = await supabase
       .from('planning_item')
-      .select('id, kind, start_date, end_date, bid_category, meta, draft_id')
+      .select('id, kind, start_date, end_date, bid_category, pairing_instance_id, meta, draft_id')
       .in('draft_id', Array.from(prevDraftByName.values()))
       .eq('kind', 'flight')
       .gte('end_date', `${monthPrefix}-01`);
