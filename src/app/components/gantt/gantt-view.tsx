@@ -27,8 +27,8 @@ import { db, hydrateDB, loadFromDB, hasPendingOps, loadScenariosForMonth, cacheR
 import { enqueueAdd, enqueueDelete, enqueueUpdate, pendingOpsCount } from '@/lib/sync-service';
 import { getRotationsForMonth } from '@/app/actions/search';
 import { getCurrentUserScrapeRights } from '@/app/actions/auth';
-import { getMonthlyIrMfEuros } from '@/app/actions/ir-mf';
 import { getYearA81CumulBefore } from '@/app/actions/article81';
+import { computeMonthlyIrMfFromLocalCache } from '@/lib/ir-mf-local';
 import { NavBar } from '@/app/components/nav';
 
 type RegimeEnum = Database['public']['Enums']['regime_enum'];
@@ -636,6 +636,29 @@ export function GanttView({
   }, [irMfByScenario, irMfPerFlightByScenario]);
   useEffect(() => { setA81CumulBeforeState(a81CumulBefore); }, [a81CumulBefore]);
 
+  // Recalcul IR/MF local à chaque changement de mois ou d'items (add / delete /
+  // edit). Lecture depuis le cache rotations IndexedDB (mois M + M-1 spillovers),
+  // donc fonctionne offline. Le calcul par signature est pré-fait au scrape.
+  // Si le cache est vide pour ce mois (premier accès, jamais Sync) → on garde
+  // l'état précédent (prop initiale serveur ou valeur post-fetch).
+  useEffect(() => {
+    let cancelled = false;
+    void computeMonthlyIrMfFromLocalCache(localScenarios, currentMonth)
+      .then(res => {
+        if (cancelled) return;
+        // Distingue "pas d'items" (résultat valide à 0) de "items mais cache
+        // rotations vide" (où on ne veut pas écraser la prop serveur).
+        const flightItems = localScenarios.flatMap(s =>
+          s.items.filter(i => i.kind === 'flight' && i.pairing_instance_id),
+        ).length;
+        const totalSkipped = res.byScenario.A.skipped + res.byScenario.B.skipped + res.byScenario.C.skipped;
+        if (flightItems > 0 && totalSkipped === flightItems) return; // tout skipped → cache vide
+        setIrMfState({ byScenario: res.byScenario, perFlightByScenario: res.perFlightByScenario });
+      })
+      .catch(() => { /* erreur Dexie : on garde l'état courant */ });
+    return () => { cancelled = true; };
+  }, [localScenarios, currentMonth]);
+
   // sheet
   const [sheet, setSheet]         = useState<SheetState | null>(null);
   const [addKind, setAddKind]     = useState<ActivityKind>('off');
@@ -883,24 +906,32 @@ export function GanttView({
     }
 
     try {
-      const scs = await getScenariosWithItems(newMonth);
+      // Scenarios + rotations en parallèle : rotations indispensables pour
+      // l'agrégation IR/MF locale (lookup par instance_id). Sans elles,
+      // arrivée sur un mois non syncé = IR/MF à 0 jusqu'au prochain Sync.
+      const [scs, rots] = await Promise.all([
+        getScenariosWithItems(newMonth),
+        getRotationsForMonth(newMonth),
+      ]);
       if (myToken !== navTokenRef.current) return;
       setLocalScenarios(scs);
-      await hydrateDB(scs, newMonth);
+      await Promise.all([hydrateDB(scs, newMonth), cacheRotations(rots, newMonth)]);
       setMonthLoading(false);
       // Pré-cache silencieux des mois adjacents
       void preCacheMonthBg(shiftMonth(newMonth, 1));
       void preCacheMonthBg(shiftMonth(newMonth, -1));
-      // IR/MF + A81 cumul : recalculés serveur pour le nouveau mois — sans ça,
-      // l'affichage utiliserait toujours les valeurs du mois initial.
+      // A81 cumul : recalculé serveur (pas de version offline disponible).
       const [yy, mm] = newMonth.split('-').map(Number);
-      Promise.all([getMonthlyIrMfEuros(newMonth), getYearA81CumulBefore(yy, mm)])
-        .then(([irMf, a81]) => {
-          if (myToken !== navTokenRef.current) return;
-          setIrMfState({ byScenario: irMf.byScenario, perFlightByScenario: irMf.perFlightByScenario });
-          setA81CumulBeforeState(a81.byScenarioBefore);
-        })
+      getYearA81CumulBefore(yy, mm)
+        .then(a81 => { if (myToken === navTokenRef.current) setA81CumulBeforeState(a81.byScenarioBefore); })
         .catch(() => { /* offline ou erreur : on garde les valeurs courantes */ });
+      // IR/MF : recalculé client à partir du cache rotations fraîchement mis à jour.
+      // (Le useEffect [localScenarios,currentMonth] est déjà déclenché par le setState
+      //  plus haut, mais à ce moment-là cacheRotations n'avait pas encore tourné.)
+      void computeMonthlyIrMfFromLocalCache(scs, newMonth).then(res => {
+        if (myToken !== navTokenRef.current) return;
+        setIrMfState({ byScenario: res.byScenario, perFlightByScenario: res.perFlightByScenario });
+      });
     } catch {
       if (myToken !== navTokenRef.current) return;
       if (!cached) { setNoCache(true); setLocalScenarios([]); }

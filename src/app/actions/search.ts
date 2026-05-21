@@ -3,6 +3,10 @@
 import { createClient } from '@/lib/supabase/server';
 import { fetchAllPaginated } from '@/lib/supabase/paginate';
 import { redirect } from 'next/navigation';
+import { computeIRandMF, type IrMfResult } from '@/lib/ep4/ir';
+import type { IrMfRate } from '@/lib/ir-rates';
+import type { PairingDetail } from '@/lib/scraper/types';
+import { getPlanPrestation } from '@/lib/plan-prestation';
 
 export type RotationInstance = {
   id: string;
@@ -44,6 +48,15 @@ export type RotationSignature = {
   first_layover: string | null;
   layovers: number;
   instances: RotationInstance[];
+  /** IR + MF par rotation (entiers de comptage). Pré-calculé serveur depuis
+   *  raw_detail pour permettre l'agrégation offline côté client. */
+  ir: number;
+  mf: number;
+  /** IR + MF convertis en € via la table annexe ir_mf_rates. */
+  ir_eur: number;
+  mf_eur: number;
+  /** Escales pour lesquelles aucun taux n'a été trouvé. */
+  missing_rate_escales: string[];
 };
 
 export async function getAvailableMonths(): Promise<string[]> {
@@ -79,10 +92,22 @@ export async function getRotationsForMonth(month: string): Promise<RotationSigna
 
   const { data: sigs } = await supabase
     .from('pairing_signature')
-    .select('id, rotation_code, nb_on_days, aircraft_code, zone, hc, hcr_crew, hdv, a81, heure_debut, heure_fin, temps_sej, legs_number, prime, rest_before_h, rest_after_h, tsv_nuit, dead_head, mep_flight, peq, first_layover, layovers')
+    .select('id, rotation_code, nb_on_days, aircraft_code, zone, hc, hcr_crew, hdv, a81, heure_debut, heure_fin, temps_sej, legs_number, prime, rest_before_h, rest_after_h, tsv_nuit, dead_head, mep_flight, peq, first_layover, layovers, raw_detail')
     .eq('snapshot_id', snap.id);
 
   if (!sigs?.length) return [];
+
+  // Pré-calcul IR/MF par signature (besoin pour l'agrégation offline côté client).
+  const { data: irRow } = await supabase
+    .from('annexe_table').select('data').eq('slug', 'ir_mf_rates').single();
+  const irRates = (irRow?.data ?? []) as unknown as IrMfRate[];
+  const irMfBySig = new Map<string, IrMfResult>();
+  for (const s of sigs) {
+    if (!s.raw_detail) continue;
+    try {
+      irMfBySig.set(s.id, computeIRandMF(s.raw_detail as unknown as PairingDetail, irRates, getPlanPrestation));
+    } catch { /* skip — raw_detail invalide */ }
+  }
 
   const sigIds = sigs.map(s => s.id);
   const instances = await fetchAllPaginated<{
@@ -101,8 +126,12 @@ export async function getRotationsForMonth(month: string): Promise<RotationSigna
 
   const sigMap = new Map<string, RotationSignature>();
   for (const s of sigs) {
+    const irMf = irMfBySig.get(s.id);
+    // raw_detail n'est pas exposé au client (lourd) — on ne garde que l'IR/MF calculé.
+    const { raw_detail: _rd, ...rest } = s;
+    void _rd;
     sigMap.set(s.id, {
-      ...s,
+      ...rest,
       rotation_code:  s.rotation_code ?? '',
       hc:             Number(s.hc),
       hcr_crew:       Number(s.hcr_crew),
@@ -119,6 +148,11 @@ export async function getRotationsForMonth(month: string): Promise<RotationSigna
       first_layover:  s.first_layover ?? null,
       layovers:       Number(s.layovers ?? 0),
       instances: [],
+      ir:                   irMf?.ir     ?? 0,
+      mf:                   irMf?.mf     ?? 0,
+      ir_eur:               irMf?.ir_eur ?? 0,
+      mf_eur:               irMf?.mf_eur ?? 0,
+      missing_rate_escales: irMf?.missingRateEscales ?? [],
     });
   }
   for (const inst of instances) {

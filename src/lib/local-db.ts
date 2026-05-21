@@ -118,6 +118,22 @@ export async function hydrateDB(scenarios: Scenario[], month: string): Promise<v
       .map(op => (JSON.parse(op.payload) as { id: string }).id),
   );
 
+  // Prépare les payloads HORS transaction pour ne pas casser la zone Dexie
+  // (un long for+await peut faire commit/abort prématurément la tx).
+  const draftRows: StoredDraft[] = scenarios.map(s => ({
+    id: s.id, name: s.name, target_month: month,
+  }));
+  const itemRows: StoredItem[] = [];
+  for (const s of scenarios) {
+    for (const item of s.items) {
+      // Skip spillovers : appartiennent au draft du mois précédent.
+      if (item._isSpillover) continue;
+      if (item.start_date.slice(0, 7) < month) continue;
+      if (pendingIds.has(item.id)) continue;
+      itemRows.push({ ...item, draft_id: s.id });
+    }
+  }
+
   await db.transaction('rw', db.drafts, db.items, async () => {
     const existing = await db.drafts.where('target_month').equals(month).toArray();
     const ids = existing.map(d => d.id);
@@ -126,20 +142,8 @@ export async function hydrateDB(scenarios: Scenario[], month: string): Promise<v
       await db.items.bulkDelete(all.filter(i => !pendingIds.has(i.id)).map(i => i.id));
     }
     await db.drafts.where('target_month').equals(month).delete();
-
-    for (const s of scenarios) {
-      await db.drafts.put({ id: s.id, name: s.name, target_month: month });
-      for (const item of s.items) {
-        // Skip spillovers : ils appartiennent au draft du mois précédent.
-        // Si on les stockait sous s.id (mois courant) on écraserait leur
-        // vraie position et le mois d'origine perdrait la rotation.
-        if (item._isSpillover) continue;
-        if (item.start_date.slice(0, 7) < month) continue;
-        if (!pendingIds.has(item.id)) {
-          await db.items.put({ ...item, draft_id: s.id });
-        }
-      }
-    }
+    await db.drafts.bulkPut(draftRows);
+    if (itemRows.length) await db.items.bulkPut(itemRows);
   });
 }
 
