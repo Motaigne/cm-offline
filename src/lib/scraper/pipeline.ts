@@ -255,8 +255,12 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
       // RPC (rest_after) calculé depuis les timestamps — source de vérité.
       // Les champs `restPostHaulDuration` des endpoints SEARCH et DETAIL sont
       // incohérents entre eux selon les rotations.
-      // rest_before reste sur la valeur API (pas de formule timestamps validée).
-      const restBeforeH = repr.pairingDetail.restBeforeHaulDuration ?? null;
+      // rest_before / rest_after : calculés depuis timestamps (briefing → block,
+      // block-off → fin activity). L'API restBefore/PostHaulDuration sert de
+      // fallback uniquement si les timestamps sont absents.
+      const restBeforeH = (repr.beginBlockDate > 0 && repr.scheduledBeginActivityDate > 0)
+        ? (repr.beginBlockDate - repr.scheduledBeginActivityDate) / 3_600_000
+        : (repr.pairingDetail.restBeforeHaulDuration ?? null);
       const restAfterH  = (repr.scheduledEndActivityDate > 0 && repr.endBlockDate > 0)
         ? (repr.scheduledEndActivityDate - repr.endBlockDate) / 3_600_000
         : (repr.pairingDetail.restPostHaulDuration ?? null);
@@ -304,6 +308,9 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
       const rows = instances.map(inst => {
         const beginAct = inst.scheduledBeginActivityDate;
         const endAct   = inst.scheduledEndActivityDate;
+        const restBefore = (beginAct > 0 && inst.beginBlockDate > 0)
+          ? (inst.beginBlockDate - beginAct) / 3_600_000
+          : (inst.pairingDetail.restBeforeHaulDuration ?? null);
         const restAfter = (endAct > 0 && inst.endBlockDate > 0)
           ? (endAct - inst.endBlockDate) / 3_600_000
           : (inst.pairingDetail.restPostHaulDuration ?? null);
@@ -313,7 +320,7 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
           depart_date:    msToDateStr(inst.beginBlockDate),
           depart_at:      new Date(inst.beginBlockDate).toISOString(),
           arrivee_at:     new Date(inst.endBlockDate).toISOString(),
-          rest_before_h:  inst.pairingDetail.restBeforeHaulDuration ?? null,
+          rest_before_h:  restBefore,
           rest_after_h:   restAfter,
           scheduled_begin_activity_at: beginAct > 0 ? new Date(beginAct).toISOString() : null,
           scheduled_end_activity_at:   endAct   > 0 ? new Date(endAct).toISOString()   : null,

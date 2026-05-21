@@ -57,7 +57,9 @@ export async function POST(req: Request) {
     endActivityAt: string | null;
   };
   function computePerInst(p: typeof pairings[number]): PerInst {
-    const before = p.pairingDetail.restBeforeHaulDuration ?? null;
+    const before = (p.scheduledBeginActivityDate > 0 && p.beginBlockDate > 0)
+      ? (p.beginBlockDate - p.scheduledBeginActivityDate) / 3_600_000
+      : (p.pairingDetail.restBeforeHaulDuration ?? null);
     const after  = (p.scheduledEndActivityDate > 0 && p.endBlockDate > 0)
       ? (p.scheduledEndActivityDate - p.endBlockDate) / 3_600_000
       : (p.pairingDetail.restPostHaulDuration ?? null);
