@@ -170,6 +170,11 @@ function fmtEp4Time(ms: number): string {
   return `${d.getUTCDate()} | ${String(d.getUTCHours()).padStart(2, '0')}.${String(d.getUTCMinutes()).padStart(2, '0')}`;
 }
 
+/** day | HH.MM en local (UTC + offset en heures de l'escale) */
+function fmtEp4TimeLocal(ms: number, offsetH: number): string {
+  return fmtEp4Time(ms + offsetH * 3_600_000);
+}
+
 /** DD/MM/YY UTC */
 function fmtDateCourt(ms: number): string {
   const d = new Date(ms);
@@ -404,14 +409,14 @@ export function Ep4FraisEP4Consolidee({ flights }: { flights: ConsoFlight[] }) {
             <Td>{firstLeg?.flightNumber ?? ''}</Td>
             {/* Départ */}
             <Td>{firstLeg?.dep ?? ''}</Td>
-            <Td>{firstLeg ? fmtEp4Time(firstLeg.begin_ms) : ''}</Td>
+            <Td>{firstLeg ? fmtEp4TimeLocal(firstLeg.begin_ms, firstLeg.dep_utc_offset) : ''}</Td>
             <Td right>{dec > 0 ? String(dec) : ''}</Td>
             <Td>{/* Pdéj */}</Td>
             <Td right>{irDep > 0 ? String(irDep) : ''}</Td>
             <Td right>{mfDep > 0 ? String(mfDep) : ''}</Td>
             {/* Arrivée */}
             <Td>{lastLeg?.arr ?? ''}</Td>
-            <Td>{lastLeg ? fmtEp4Time(lastLeg.end_ms) : ''}</Td>
+            <Td>{lastLeg ? fmtEp4TimeLocal(lastLeg.end_ms, lastLeg.arr_utc_offset) : ''}</Td>
             <Td>{/* Dec arr */}</Td>
             <Td>{/* Pdéj arr */}</Td>
             <Td right>{irArr > 0 ? String(irArr) : ''}</Td>
@@ -680,6 +685,7 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
   let totHVReal = 0, totTME = 0, totHCV = 0, totHCT = 0, totHCA = 0;
   let totH1 = 0, totH2HC = 0, totHCVr = 0, totH1r = 0, totH2HCr = 0;
   let totMontantHCr = 0, totNuit = 0, totMontantNuit = 0;
+  let totHv100 = 0, totHv100r = 0;
 
   const rotRows: ReactNode[][] = flights.map(({ ep4, is_spillover }) => {
     const allLegs = ep4.services.flatMap((svc, si) =>
@@ -698,6 +704,7 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
         totH1r    += svc.H1r;
         totNuit   += svc.tsv_nuit;
         totMontantNuit += svc.tsv_nuit * PVEI;
+        svc.legs.forEach(l => { totHv100 += l.hv100; totHv100r += l.hv100r; });
       });
       totHCA        += ep4.HCA;
       totH2HC       += ep4.H2HC;
@@ -729,13 +736,13 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
             <Td right>{fmt(leg.tdv_troncon)}</Td>
             <Td right>{isFirstLegOfSvc ? fmt(svc.TME) : ''}</Td>
             <Td right>{isFirstLegOfSvc ? fmt(svc.CMT, 4) : ''}</Td>
-            <Td>{/* HV 100% — non calculé */}</Td>
+            <Td right>{fmt(leg.hv100)}</Td>
             <Td right>{isFirstLegOfSvc ? fmt(svc.HCV) : ''}</Td>
             <Td right>{isFirstLegOfSvc ? fmt(svc.HCT) : ''}</Td>
             <Td right>{isFirstLegOfRot ? fmt(ep4.HCA) : ''}</Td>
             <Td right>{isFirstLegOfSvc ? fmt(svc.H1) : ''}</Td>
             <Td right>{isFirstLegOfRot ? fmt(ep4.H2HC) : ''}</Td>
-            <Td>{/* HV 100%(r) — non calculé */}</Td>
+            <Td right>{fmt(leg.hv100r)}</Td>
             <Td right>{isFirstLegOfSvc ? fmt(svc.HCVr) : ''}</Td>
             <Td right>{isFirstLegOfSvc ? fmt(svc.H1r) : ''}</Td>
             <Td right>{isFirstLegOfRot ? fmt(ep4.H2HCr) : ''}</Td>
@@ -788,13 +795,13 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
                 <Td right>{fmt(totHVReal)}</Td>
                 <Td right>{fmt(totTME)}</Td>
                 <Td />{/* CMT */}
-                <Td />{/* HV 100% */}
+                <Td right>{fmt(totHv100)}</Td>
                 <Td right>{fmt(totHCV)}</Td>
                 <Td right>{fmt(totHCT)}</Td>
                 <Td right>{fmt(totHCA)}</Td>
                 <Td right>{fmt(totH1)}</Td>
                 <Td right>{fmt(totH2HC)}</Td>
-                <Td />{/* HV 100%(r) */}
+                <Td right>{fmt(totHv100r)}</Td>
                 <Td right>{fmt(totHCVr)}</Td>
                 <Td right>{fmt(totH1r)}</Td>
                 <Td right>{fmt(totH2HCr)}</Td>

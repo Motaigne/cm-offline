@@ -13,6 +13,12 @@ export interface Ep4Leg {
   arr_utc_h: number;
   /** Heure locale de départ (UTC + offset escale, mod 24). */
   dep_loc_h: number;
+  /** Heure locale d'arrivée (UTC + offset escale, mod 24). */
+  arr_loc_h: number;
+  /** Offset UTC (h) de l'escale de départ — depuis schDepStationCodeTz. */
+  dep_utc_offset: number;
+  /** Offset UTC (h) de l'escale d'arrivée — depuis schArrStationCodeTz. */
+  arr_utc_offset: number;
   /** Timestamp ms UTC. */
   begin_ms: number;
   end_ms: number;
@@ -20,6 +26,9 @@ export interface Ep4Leg {
   tdv_troncon: number;
   /** Index 1..N dans le service. */
   troncon_index: number;
+  /** HV 100% = MAX(TDV réalisé, TDV de référence). Faute de TDV ref dispo, on
+   *  utilise le block-block (= tdv_troncon). À distinguer pour l'évolution future. */
+  hv100: number;
   /** tdv_troncon + 0.58. */
   hv100r: number;
   /** Proration mensuelle de HCV au prorata des ms passées dans le mois M. */

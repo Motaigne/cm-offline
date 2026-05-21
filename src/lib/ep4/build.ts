@@ -211,6 +211,7 @@ export function buildEp4Rotation(
       const dep_utc_h = utcHour(leg.dep_ms);
       const arr_utc_h = utcHour(leg.arr_ms);
       const dep_loc_h = adjustHour(dep_utc_h + leg.dep_utc_offset);
+      const arr_loc_h = adjustHour(arr_utc_h + leg.arr_utc_offset);
       return {
         flightNumber: leg.flightNumber,
         aircraft: leg.aircraft,
@@ -219,10 +220,14 @@ export function buildEp4Rotation(
         dep_utc_h: r2(dep_utc_h),
         arr_utc_h: r2(arr_utc_h),
         dep_loc_h: r2(dep_loc_h),
+        arr_loc_h: r2(arr_loc_h),
+        dep_utc_offset: leg.dep_utc_offset,
+        arr_utc_offset: leg.arr_utc_offset,
         begin_ms: leg.dep_ms,
         end_ms: leg.arr_ms,
         tdv_troncon,
         troncon_index: i + 1,
+        hv100:  tdv_troncon, // alias tant qu'on n'a pas le TDV de référence
         hv100r: r2(tdv_troncon + 0.58),
         hcv_mois_m: 0, // rempli juste après HCV
         dead_head: leg.dead_head,
