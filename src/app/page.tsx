@@ -125,6 +125,10 @@ export default async function Home({
       irMfByScenario={irMfMonth.byScenario}
       irMfPerFlightByScenario={irMfMonth.perFlightByScenario}
       prorataThresholds={prorataThresholds}
+      transport={profile.transport}
+      navigoEur={Number(profile.navigo_eur ?? 0)}
+      voitureKmAller={Number(profile.voiture_km_aller ?? 0)}
+      voitureIndemniteKm={Number(profile.voiture_indemnite_km ?? 0)}
     />
   );
 }

@@ -70,6 +70,10 @@ export function ProfilForm({
   const [echelon,   setEchelon]   = useState(initialData?.echelon?.toString() ?? '4');
   const [bonusAtpl, setBonusAtpl] = useState(initialData?.bonus_atpl          ?? false);
   const [transport, setTransport] = useState(initialData?.transport           ?? '');
+  // IT — valeurs par-mode (défauts : Navigo 81.40 €/mois, Voiture 0.3837 €/km)
+  const [navigoEur,          setNavigoEur]          = useState(String(initialData?.navigo_eur           ?? 81.40));
+  const [voitureKmAller,     setVoitureKmAller]     = useState(initialData?.voiture_km_aller != null ? String(initialData.voiture_km_aller) : '');
+  const [voitureIndemniteKm, setVoitureIndemniteKm] = useState(String(initialData?.voiture_indemnite_km ?? 0.3837));
   const [aircraft,  setAircraft]  = useState(initialData?.aircraft_principal  ?? 'A335');
   const [cngPv,     setCngPv]     = useState(String(initialData?.cng_pv       ?? 0));
   const [cngHs,     setCngHs]     = useState(String(initialData?.cng_hs       ?? 0));
@@ -137,6 +141,9 @@ export function ProfilForm({
       echelon:            echelon  !== '' ? Number(echelon) : null,
       bonus_atpl:         bonusAtpl,
       transport:          transport || null,
+      navigo_eur:           transport === 'Navigo'  ? (parseFloat(navigoEur) || 0) : null,
+      voiture_km_aller:     transport === 'Voiture' && voitureKmAller !== '' ? parseFloat(voitureKmAller) : null,
+      voiture_indemnite_km: transport === 'Voiture' ? (parseFloat(voitureIndemniteKm) || 0) : null,
       aircraft_principal: aircraft,
       cng_pv:             parseFloat(cngPv) || 0,
       cng_hs:             parseFloat(cngHs) || 0,
@@ -301,6 +308,41 @@ export function ProfilForm({
             </button>
           ))}
         </div>
+
+        {transport === 'Navigo' && (
+          <div className="mt-3">
+            <label className="block text-xs text-zinc-500 mb-1">Navigo (€ / mois)</label>
+            <input type="number" step="0.01" min={0} value={navigoEur}
+              onChange={e => setNavigoEur(e.target.value)} placeholder="81.40"
+              className={`${input} w-32 text-center font-mono`} />
+            <p className="mt-1 text-[10px] text-zinc-400">IT mensuelle fixe (si ≥ 1 activité sur le mois).</p>
+          </div>
+        )}
+
+        {transport === 'Voiture' && (
+          <div className="mt-3 space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-zinc-500 mb-1">km aller</label>
+                <input type="number" step="0.1" min={0} value={voitureKmAller}
+                  onChange={e => setVoitureKmAller(e.target.value)} placeholder="0"
+                  className={`${input} text-center font-mono`} />
+              </div>
+              <div>
+                <label className="block text-xs text-zinc-500 mb-1">Indemnité / km (€)</label>
+                <input type="number" step="0.0001" min={0} value={voitureIndemniteKm}
+                  onChange={e => setVoitureIndemniteKm(e.target.value)} placeholder="0.3837"
+                  className={`${input} text-center font-mono`} />
+              </div>
+            </div>
+            <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
+              Par activité = 2 × km aller × indemnité/km =
+              <span className="ml-1 font-mono text-zinc-700 dark:text-zinc-200">
+                {(2 * (parseFloat(voitureKmAller) || 0) * (parseFloat(voitureIndemniteKm) || 0)).toFixed(2)} €
+              </span>
+            </div>
+          </div>
+        )}
       </Section>
 
       {/* Article 81 — valeur jour + TMI */}

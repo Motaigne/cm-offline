@@ -138,6 +138,38 @@ function lookupJI(n: number, thresholds: ProrataThreshold[]): number {
 
 // ─── prorata mois (rotations à cheval) ───────────────────────────────────────
 
+// Activités qui comptent pour l'Indemnité Transport (IT) :
+// vol AR, sol/réserve, visite médicale, simulateur, autre. Pas conge / off.
+const IT_ACTIVITY_KINDS: ReadonlySet<ActivityKind> = new Set(['flight', 'sol', 'medical', 'sim', 'autre']);
+
+/** Nombre d'activités (au sens IT) visibles sur un mois donné. Item à cheval
+ *  (start_date dans mois M, end_date dans mois M±1) = 0.5 sur chaque mois. */
+function countItActivities(items: CalendarItem[], year: number, mo: number): number {
+  const monthStr = `${year}-${String(mo).padStart(2, '0')}`;
+  let n = 0;
+  for (const item of items) {
+    if (!IT_ACTIVITY_KINDS.has(item.kind)) continue;
+    if (!clipItem(item, year, mo)) continue;
+    const startInMonth = item.start_date.slice(0, 7) === monthStr;
+    const endInMonth   = item.end_date.slice(0, 7) === monthStr;
+    n += (startInMonth && endInMonth) ? 1 : 0.5;
+  }
+  return n;
+}
+
+/** IT mensuelle selon le mode profil. Navigo = forfait (0 si aucune activité). */
+function computeItEur(
+  transport: string | null,
+  nbActivites: number,
+  navigoEur: number,
+  voitureKmAller: number,
+  voitureIndemniteKm: number,
+): number {
+  if (transport === 'Navigo')  return nbActivites > 0 ? navigoEur : 0;
+  if (transport === 'Voiture') return nbActivites * 2 * voitureKmAller * voitureIndemniteKm;
+  return 0;
+}
+
 function prorateForMonth(val: number, departAt: string, arriveeAt: string, year: number, mo: number): number {
   const monthStart = Date.UTC(year, mo - 1, 1);
   const monthEnd   = Date.UTC(year, mo,     1);
@@ -162,6 +194,7 @@ function computeStats(
   valeurJour = 600,
   a81CumulBefore = 0,
   irMfEur = 0,
+  itEur = 0,
 ) {
   let onDays = 0, congeDays = 0;
   const flights = items.filter(i => i.kind === 'flight').length;
@@ -285,7 +318,10 @@ function computeStats(
   //        s'ajoutent en plus.
   const totalNew = finBase.fixe + finBase.pv + hsNew;
   const diffNew  = totalNew - mga;
-  const brut     = Math.max(mga, totalNew + congeAmount) + primesTotal + irMfEur;
+  // IT (Indemnité Transport) ajoutée au BRUT comme IR/MF — calculée en amont
+  // par le caller selon profil.transport (Navigo = forfait mensuel ; Voiture =
+  // nbActivités × 2 × km_aller × indemnité_km, vol à cheval = 0.5/mois).
+  const brut     = Math.max(mga, totalNew + congeAmount) + primesTotal + irMfEur + itEur;
   const fin = {
     ...finBase,
     hs:     hsNew,
@@ -530,6 +566,10 @@ export function GanttView({
   irMfByScenario,
   irMfPerFlightByScenario,
   prorataThresholds = [],
+  transport = null,
+  navigoEur = 0,
+  voitureKmAller = 0,
+  voitureIndemniteKm = 0,
 }: {
   month: string;
   scenarios: Scenario[];
@@ -543,6 +583,14 @@ export function GanttView({
   primeA330?: number;
   /** Prime mensuelle d'instruction (TRI). */
   primeInstruction?: number;
+  /** Mode transport profil pour calcul IT ('Navigo' | 'Voiture' | null). */
+  transport?: string | null;
+  /** IT mensuelle forfaitaire si transport = Navigo. */
+  navigoEur?: number;
+  /** Km aller (Voiture). */
+  voitureKmAller?: number;
+  /** Indemnité par km (Voiture). */
+  voitureIndemniteKm?: number;
   /** Matrice Article 81 (taux de séjour par zone × durée). */
   article81Data?: Article81Data | null;
   /** Valeur jour (€) pour Article 81 — depuis profil. */
@@ -632,6 +680,11 @@ export function GanttView({
     irEur: number; mfEur: number;
     /** Détail IR/MF par vol (récupéré du serveur). */
     irMfPerFlight: { destination: string; ir_eur: number; mf_eur: number }[];
+    /** Indemnité Transport (IT) + métadonnées pour breakdown. */
+    itEur: number;
+    itMode: string | null;             // 'Navigo' | 'Voiture' | null
+    itNbActivites: number;
+    itPerActivite: number;             // (Voiture) 2 × km × ind/km
     // BRUT
     brut: number;
   };
@@ -1157,7 +1210,9 @@ export function GanttView({
               const cumulBeforeForScenario = a81CumulBefore[scenario.name] ?? 0;
               const irMfScn = irMfByScenario?.[scenario.name];
               const irMfEur = (irMfScn?.ir_eur ?? 0) + (irMfScn?.mf_eur ?? 0);
-              const stats = computeStats(scenario.items, year, mo, cngPv, cngHs, userRegime, monthlyFixedPrimes, article81Data, valeurJour, cumulBeforeForScenario, irMfEur);
+              const nbActivites = countItActivities(scenario.items, year, mo);
+              const itEur = computeItEur(transport, nbActivites, navigoEur, voitureKmAller, voitureIndemniteKm);
+              const stats = computeStats(scenario.items, year, mo, cngPv, cngHs, userRegime, monthlyFixedPrimes, article81Data, valeurJour, cumulBeforeForScenario, irMfEur, itEur);
               const isLast = idx === localScenarios.length - 1;
               const tafDays      = tafOk ? tafDur : 0;
               const joursProrata = stats.congeDays + tafDays;
@@ -1251,6 +1306,10 @@ export function GanttView({
                           irEur: irMfScn?.ir_eur ?? 0,
                           mfEur: irMfScn?.mf_eur ?? 0,
                           irMfPerFlight: irMfPerFlightByScenario?.[scenario.name] ?? [],
+                          itEur,
+                          itMode: transport,
+                          itNbActivites: nbActivites,
+                          itPerActivite: 2 * voitureKmAller * voitureIndemniteKm,
                           brut: stats.brut,
                         });
                       }}
@@ -1793,6 +1852,20 @@ export function GanttView({
               ) : null}
             </div>
 
+            {/* IT — Indemnité Transport */}
+            {detailPanel.itMode && (
+              <div className="space-y-0.5 mb-2 font-mono text-[9px]">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-cyan-600 dark:text-cyan-400 font-semibold">
+                    IT {detailPanel.itMode === 'Navigo'
+                      ? `(Navigo${detailPanel.itEur === 0 ? ' — 0 activité' : ''})`
+                      : `= ${detailPanel.itNbActivites} × ${detailPanel.itPerActivite.toFixed(2)}`}
+                  </span>
+                  <span className="text-cyan-700 dark:text-cyan-300 font-bold">{detailPanel.itEur.toFixed(2)}</span>
+                </div>
+              </div>
+            )}
+
             <div className="border-t border-zinc-200 dark:border-zinc-700 my-1.5" />
 
             {/* BRUT — branche selon TOTAL+congés vs MGA */}
@@ -1800,12 +1873,15 @@ export function GanttView({
               const totalPlusCg  = detailPanel.totalNew + detailPanel.congeAmount;
               const totalWins    = totalPlusCg >= detailPanel.mga;
               const irMfEur      = detailPanel.irEur + detailPanel.mfEur;
+              const itEur        = detailPanel.itEur;
+              const itSuffix     = detailPanel.itMode ? ' + IT' : '';
+              const itValSuffix  = detailPanel.itMode ? ` + ${Math.round(itEur)}` : '';
               const formulaLabel = totalWins
-                ? 'BRUT = TOTAL + cg + P + IR/MF'
-                : 'BRUT = MGA + P + IR/MF';
+                ? `BRUT = TOTAL + cg + P + IR/MF${itSuffix}`
+                : `BRUT = MGA + P + IR/MF${itSuffix}`;
               const breakdown    = totalWins
-                ? `${Math.round(detailPanel.totalNew)} + ${Math.round(detailPanel.congeAmount)} + ${Math.round(detailPanel.primesTotal)} + ${Math.round(irMfEur)}`
-                : `${Math.round(detailPanel.mga)} + ${Math.round(detailPanel.primesTotal)} + ${Math.round(irMfEur)}`;
+                ? `${Math.round(detailPanel.totalNew)} + ${Math.round(detailPanel.congeAmount)} + ${Math.round(detailPanel.primesTotal)} + ${Math.round(irMfEur)}${itValSuffix}`
+                : `${Math.round(detailPanel.mga)} + ${Math.round(detailPanel.primesTotal)} + ${Math.round(irMfEur)}${itValSuffix}`;
               return (
                 <div className="font-mono text-[9px]">
                   <div className="flex items-baseline justify-between">

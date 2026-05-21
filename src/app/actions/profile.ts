@@ -16,6 +16,9 @@ export interface ProfileData {
   echelon:       number | null;
   bonus_atpl:    boolean;
   transport:     string | null;
+  navigo_eur:           number | null;
+  voiture_km_aller:     number | null;
+  voiture_indemnite_km: number | null;
   aircraft_principal: string;
   cng_pv:        number;
   cng_hs:        number;

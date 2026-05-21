@@ -32,6 +32,9 @@ export type Database = {
           echelon: number | null;
           bonus_atpl: boolean;
           transport: string | null;
+          navigo_eur: number | null;
+          voiture_km_aller: number | null;
+          voiture_indemnite_km: number | null;
           aircraft_principal: string | null;
           cng_pv: number | null;
           cng_hs: number | null;
