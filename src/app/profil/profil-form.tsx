@@ -142,7 +142,7 @@ export function ProfilForm({
       bonus_atpl:         bonusAtpl,
       transport:          transport || null,
       navigo_eur:           transport === 'Navigo'  ? (parseFloat(navigoEur) || 0) : null,
-      voiture_km_aller:     transport === 'Voiture' && voitureKmAller !== '' ? parseFloat(voitureKmAller) : null,
+      voiture_km_aller:     transport === 'Voiture' && voitureKmAller !== '' ? Math.min(45, parseFloat(voitureKmAller)) : null,
       voiture_indemnite_km: transport === 'Voiture' ? (parseFloat(voitureIndemniteKm) || 0) : null,
       aircraft_principal: aircraft,
       cng_pv:             parseFloat(cngPv) || 0,
@@ -323,8 +323,8 @@ export function ProfilForm({
           <div className="mt-3 space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs text-zinc-500 mb-1">km aller</label>
-                <input type="number" step="0.1" min={0} value={voitureKmAller}
+                <label className="block text-xs text-zinc-500 mb-1">km aller (max 45)</label>
+                <input type="number" step="0.1" min={0} max={45} value={voitureKmAller}
                   onChange={e => setVoitureKmAller(e.target.value)} placeholder="0"
                   className={`${input} text-center font-mono`} />
               </div>
