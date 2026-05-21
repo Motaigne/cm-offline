@@ -27,6 +27,8 @@ import { db, hydrateDB, loadFromDB, hasPendingOps, loadScenariosForMonth, cacheR
 import { enqueueAdd, enqueueDelete, enqueueUpdate, pendingOpsCount } from '@/lib/sync-service';
 import { getRotationsForMonth } from '@/app/actions/search';
 import { getCurrentUserScrapeRights } from '@/app/actions/auth';
+import { getMonthlyIrMfEuros } from '@/app/actions/ir-mf';
+import { getYearA81CumulBefore } from '@/app/actions/article81';
 import { NavBar } from '@/app/components/nav';
 
 type RegimeEnum = Database['public']['Enums']['regime_enum'];
@@ -618,6 +620,22 @@ export function GanttView({
   const [localScenarios, setLocalScenarios] = useState<Scenario[]>(scenarios);
   const [pendingCount, setPendingCount]     = useState(0);
 
+  // IR/MF + A81 cumul : props serveur figées au render initial, on copie en
+  // state pour pouvoir les rafraîchir lors d'une navigation client-side
+  // (changeMonth) — sinon le mois courant utilise les valeurs du mois initial.
+  const [irMfState, setIrMfState] = useState(() => ({
+    byScenario: irMfByScenario,
+    perFlightByScenario: irMfPerFlightByScenario,
+  }));
+  const [a81CumulBeforeState, setA81CumulBeforeState] = useState(a81CumulBefore);
+
+  // Resync depuis les props quand le serveur renvoie de nouvelles valeurs
+  // (router.refresh après Sync / mount initial sur un autre mois via URL).
+  useEffect(() => {
+    setIrMfState({ byScenario: irMfByScenario, perFlightByScenario: irMfPerFlightByScenario });
+  }, [irMfByScenario, irMfPerFlightByScenario]);
+  useEffect(() => { setA81CumulBeforeState(a81CumulBefore); }, [a81CumulBefore]);
+
   // sheet
   const [sheet, setSheet]         = useState<SheetState | null>(null);
   const [addKind, setAddKind]     = useState<ActivityKind>('off');
@@ -868,6 +886,16 @@ export function GanttView({
       // Pré-cache silencieux des mois adjacents
       void preCacheMonthBg(shiftMonth(newMonth, 1));
       void preCacheMonthBg(shiftMonth(newMonth, -1));
+      // IR/MF + A81 cumul : recalculés serveur pour le nouveau mois — sans ça,
+      // l'affichage utiliserait toujours les valeurs du mois initial.
+      const [yy, mm] = newMonth.split('-').map(Number);
+      Promise.all([getMonthlyIrMfEuros(newMonth), getYearA81CumulBefore(yy, mm)])
+        .then(([irMf, a81]) => {
+          if (myToken !== navTokenRef.current) return;
+          setIrMfState({ byScenario: irMf.byScenario, perFlightByScenario: irMf.perFlightByScenario });
+          setA81CumulBeforeState(a81.byScenarioBefore);
+        })
+        .catch(() => { /* offline ou erreur : on garde les valeurs courantes */ });
     } catch {
       if (myToken !== navTokenRef.current) return;
       if (!cached) { setNoCache(true); setLocalScenarios([]); }
@@ -1207,8 +1235,8 @@ export function GanttView({
                 primeIncitationUnit * incitCount
                 + (primeA330 + primeInstruction) * a330InstrBoost
                 + primeMai + primeNoel;
-              const cumulBeforeForScenario = a81CumulBefore[scenario.name] ?? 0;
-              const irMfScn = irMfByScenario?.[scenario.name];
+              const cumulBeforeForScenario = a81CumulBeforeState[scenario.name] ?? 0;
+              const irMfScn = irMfState.byScenario?.[scenario.name];
               const irMfEur = (irMfScn?.ir_eur ?? 0) + (irMfScn?.mf_eur ?? 0);
               const nbActivites = countItActivities(scenario.items, year, mo);
               const itEur = computeItEur(transport, nbActivites, navigoEur, voitureKmAller, voitureIndemniteKm);
@@ -1305,7 +1333,7 @@ export function GanttView({
                           congeDays: stats.congeDays, cngPv, cngHs, congeAmount: stats.congeAmount,
                           irEur: irMfScn?.ir_eur ?? 0,
                           mfEur: irMfScn?.mf_eur ?? 0,
-                          irMfPerFlight: irMfPerFlightByScenario?.[scenario.name] ?? [],
+                          irMfPerFlight: irMfState.perFlightByScenario?.[scenario.name] ?? [],
                           itEur,
                           itMode: transport,
                           itNbActivites: nbActivites,
