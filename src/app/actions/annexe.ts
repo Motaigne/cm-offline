@@ -17,7 +17,7 @@ export async function loadAnnexe(): Promise<Partial<AnnexeData>> {
     taux_avion:            (u.taux_avion            ?? []) as AnnexeData['taux_avion'],
     prime_incitation:      (u.prime_incitation      ?? []) as AnnexeData['prime_incitation'],
     prime_incitation_330:  (u.prime_incitation_330  ?? []) as AnnexeData['prime_incitation_330'],
-    prime_instruction:     (u.prime_instruction     ?? []) as AnnexeData['prime_instruction'],
+    prime_instruction:     (u.prime_instruction     ?? { icpl_a1: 0, tri_opl_b1: 0, multiplier: 1, max_annee: 5 }) as AnnexeData['prime_instruction'],
     traitement_base:       (u.traitement_base       ?? { base_cdb_a1: 2559.19, coef_opl: 0.665 }) as AnnexeData['traitement_base'],
   };
 }

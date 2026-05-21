@@ -2,6 +2,7 @@
 
 import { useState, useTransition, type ReactNode } from 'react';
 import { saveAnnexeTable } from '@/app/actions/annexe';
+import { computePrimeInstructionMontant, type PrimeInstruction } from '@/lib/annexe';
 import type { Json } from '@/types/supabase';
 
 type AnnexeRow = { slug: string; name: string; description: string | null; data: Json; updated_at: string; };
@@ -222,13 +223,16 @@ function ProrataCard({ table, canEdit }: { table: AnnexeRow; canEdit: boolean })
 }
 
 // ── Section 5: prime_instruction ──────────────────────────────────────────────
-type PrimeInstRow = { annee: number; montant: number; fonction: string };
-
+// Stockage : { icpl_a1, tri_opl_b1, multiplier, max_annee }
+// Le tableau affiché est dérivé (compound depuis valeur arrondie).
 function PrimeInstructionCard({ table, canEdit }: { table: AnnexeRow; canEdit: boolean }) {
-  const all = table.data as PrimeInstRow[];
-  const years   = [...new Set(all.map(r => r.annee))].sort((a, b) => a - b);
-  const fonctions = [...new Set(all.map(r => r.fonction))];
-  const byKey = Object.fromEntries(all.map(r => [`${r.fonction}-${r.annee}`, r.montant]));
+  const cfg = table.data as unknown as PrimeInstruction;
+  const years = Array.from({ length: cfg.max_annee }, (_, i) => i + 1);
+  const fonctions: { key: string; label: string }[] = [
+    { key: 'ICPL',    label: 'ICPL' },
+    { key: 'TRI_OPL', label: 'TRI OPL' },
+  ];
+  const yearLabel = (y: number) => (y === cfg.max_annee ? `${y} ou plus` : String(y));
   return (
     <Card title="Prime mensuelle d'instruction" table={table} canEdit={canEdit}>
       <table className="w-full">
@@ -236,25 +240,26 @@ function PrimeInstructionCard({ table, canEdit }: { table: AnnexeRow; canEdit: b
           <tr className="bg-zinc-50 dark:bg-zinc-800/60">
             <th className="px-2.5 py-1.5 text-left text-[10px] font-medium text-zinc-400 uppercase tracking-wide whitespace-nowrap">Année</th>
             {years.map(y => (
-              <th key={y} className="px-2.5 py-1.5 text-center text-[10px] font-medium text-zinc-400 uppercase tracking-wide">{y}</th>
+              <th key={y} className="px-2.5 py-1.5 text-center text-[10px] font-medium text-zinc-400 uppercase tracking-wide">{yearLabel(y)}</th>
             ))}
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
           {fonctions.map((fn, i) => (
-            <tr key={fn} className={i % 2 ? 'bg-zinc-50/50 dark:bg-zinc-800/20' : ''}>
-              <td className="px-2.5 py-1 text-xs font-medium text-zinc-500 whitespace-nowrap">
-                {fn === 'TRI_OPL' ? 'TRI OPL' : fn}
-              </td>
+            <tr key={fn.key} className={i % 2 ? 'bg-zinc-50/50 dark:bg-zinc-800/20' : ''}>
+              <td className="px-2.5 py-1 text-xs font-medium text-zinc-500 whitespace-nowrap">{fn.label}</td>
               {years.map(y => (
                 <td key={y} className="px-2.5 py-1 text-center text-xs font-mono text-zinc-700 dark:text-zinc-300">
-                  {byKey[`${fn}-${y}`]?.toLocaleString('fr-FR', { minimumFractionDigits: 2 }) ?? '—'}
+                  {computePrimeInstructionMontant(cfg, fn.key, y).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </td>
               ))}
             </tr>
           ))}
         </tbody>
       </table>
+      <p className="px-3 py-2 text-[10px] text-zinc-400 dark:text-zinc-500 border-t border-zinc-100 dark:border-zinc-800">
+        Valeurs calculées : année N = round(année N−1 × {cfg.multiplier}, 2). Seuls a1 (ICPL) et b1 (TRI OPL) sont stockés ; éditer via &laquo;&nbsp;Modifier&nbsp;&raquo;.
+      </p>
     </Card>
   );
 }

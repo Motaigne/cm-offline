@@ -4,7 +4,12 @@ export interface CatAnciennete { categorie: string; echelon: number; coefficient
 export interface CoefClasse    { role: 'CDB' | 'OPL'; classe: number; coefficient: number; }
 export interface TauxAvion     { avion: string; taux: number; }
 export interface PrimeIncitation     { role: 'CDB' | 'OPL'; type: 'LC' | 'MC'; montant: number; }
-export interface PrimeInstruction    { fonction: string; annee: number; montant: number; }
+export interface PrimeInstruction {
+  icpl_a1: number;       // valeur année 1 pour ICPL (TRI_CDB)
+  tri_opl_b1: number;    // valeur année 1 pour TRI_OPL
+  multiplier: number;    // progression annuelle (ex. 1.05)
+  max_annee: number;     // au-delà : valeur figée (ex. 5 = "5 ou plus")
+}
 export interface PrimeIncitation330  { seuil: string; mois_max?: number; avions_max?: number; valeur_pvei: number; }
 export interface TraitementBase      { base_cdb_a1: number; coef_opl: number; note?: string; }
 
@@ -14,7 +19,7 @@ export interface AnnexeData {
   taux_avion:            TauxAvion[];
   prime_incitation:      PrimeIncitation[];
   prime_incitation_330?: PrimeIncitation330[];
-  prime_instruction:     PrimeInstruction[];
+  prime_instruction:     PrimeInstruction;
   traitement_base:       TraitementBase;
 }
 
@@ -26,6 +31,24 @@ const CAT_PVEI: Record<string, number> = { A: 0.70, B: 0.85, C: 1.00 };
 
 function toRole(fonction: string): 'CDB' | 'OPL' {
   return (fonction === 'CDB' || fonction === 'TRI_CDB') ? 'CDB' : 'OPL';
+}
+
+// Prime d'instruction : compound depuis valeur arrondie (chaque année
+// = round(année_précédente × multiplier)), arrondi 2 décimales.
+// Au-delà de max_annee, valeur figée (= prime de max_annee).
+export function computePrimeInstructionMontant(
+  cfg: PrimeInstruction,
+  fonction: string,
+  annee: number,
+): number {
+  const base = fonction === 'ICPL'    ? cfg.icpl_a1
+             : fonction === 'TRI_OPL' ? cfg.tri_opl_b1
+             : 0;
+  if (!base || annee < 1) return 0;
+  const n = Math.min(annee, cfg.max_annee);
+  let v = base;
+  for (let i = 1; i < n; i++) v = Math.round(v * cfg.multiplier * 100) / 100;
+  return v;
 }
 
 // PVEI = Taux_avion × (Coef_Classe + ATPL) × Cat_PVEI
@@ -82,11 +105,10 @@ export function computeFullProfile(
   const hsSeuil = 75 * (nb30e / 30);
 
   // Prime instruction : proratisée par nb30e/30 comme A330 (CCT pilote).
+  // Stockée comme a1/b1 + multiplier ; années 2+ calculées (compound depuis arrondi).
   let primeInstruction = 0;
   if (primeInstFonction && primeInstAnnee) {
-    const montant = a.prime_instruction.find(
-      r => r.fonction === primeInstFonction && r.annee === primeInstAnnee
-    )?.montant ?? 0;
+    const montant = computePrimeInstructionMontant(a.prime_instruction, primeInstFonction, primeInstAnnee);
     primeInstruction = montant * (nb30e / 30);
   }
 
