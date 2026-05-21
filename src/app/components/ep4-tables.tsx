@@ -474,11 +474,11 @@ export function Ep4FraisEP4Consolidee({ flights }: { flights: ConsoFlight[] }) {
                 <Td />
                 <Td right>{totIR > 0 ? String(totIR) : '—'}</Td>
                 <Td right>{totMF > 0 ? String(totMF) : '—'}</Td>
-                <td colSpan={5} />
+                <td colSpan={4} />
                 <Td right>{totIR > 0 ? String(totIR) : '—'}</Td>
                 <Td right>{totMF > 0 ? String(totMF) : '—'}</Td>
                 <Td right>{fmt(totTotalIndem)}</Td>
-                <td colSpan={4} />
+                <td colSpan={5} />
               </tr>
             </tfoot>
           )}
@@ -760,7 +760,7 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
   return (
     <Card title="Feuille de Décompte d'Activité du Personnel Navigant EP4">
       <div className="overflow-x-auto">
-        <table className="text-[11px] font-mono w-full border-collapse">
+        <table className="text-[11px] font-mono w-full border-collapse [&_td]:px-3 [&_th]:px-3">
           <thead>
             <tr className="bg-zinc-50 dark:bg-zinc-800 text-zinc-500 border-b border-zinc-200 dark:border-zinc-700">
               <Th>Date</Th>

@@ -860,6 +860,11 @@ export function GanttView({
     localStorage.setItem('cm-selected-month', newMonth);
     window.history.replaceState(null, '', `/?m=${newMonth}`);
 
+    // IR/MF + A81 cumul : reset à blanc pour ne pas afficher les valeurs du
+    // mois précédent en attendant le re-fetch (et restent à blanc si offline).
+    setIrMfState({ byScenario: undefined, perFlightByScenario: undefined });
+    setA81CumulBeforeState({ A: 0, B: 0, C: 0 });
+
     // 1. Cache-first : affichage immédiat depuis IndexedDB si dispo
     const cached = await loadScenariosForMonth(newMonth);
     if (myToken !== navTokenRef.current) return;

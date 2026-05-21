@@ -161,7 +161,14 @@ export function NavBar() {
           const scs  = await withTimeout(getScenariosWithItems(m), 8000, [] as Awaited<ReturnType<typeof getScenariosWithItems>>);
           if (rots.length === 0 && scs.length === 0) { failed++; continue; }
           setDlProgress(`${i + 1}/${months.length} db`);
-          await Promise.all([cacheRotations(rots, m), hydrateDB(scs, m)]);
+          // Dexie transactions peuvent bloquer (autre onglet, IDB locked, etc.) :
+          // timeout 8s pour ne pas figer tout le sync. Si timeout : on continue,
+          // le mois sera re-tenté au prochain Sync.
+          await withTimeout(
+            Promise.all([cacheRotations(rots, m), hydrateDB(scs, m)]),
+            8000,
+            undefined,
+          );
         }
         setDlProgress(months.length > 0 ? `pages` : '');
         const urlVariants: string[] = [];
