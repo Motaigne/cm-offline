@@ -52,14 +52,18 @@ export default async function Home({
   if (!profile) redirect('/profil');
 
   const [y, mo] = month.split('-').map(Number);
-  const [scenarios, annexe, { data: a81Row }, a81Cumul, irMfMonth, { data: prorataRow }] = await Promise.all([
+  const [scenarios, annexe, { data: a81Row }, a81Cumul, irMfMonth, { data: prorataRow }, { data: ddaRulesRow }, { data: volPRulesRow }] = await Promise.all([
     getScenariosWithItems(month),
     loadAnnexe(),
     supabase.from('annexe_table').select('data').eq('slug', 'article_81').single(),
     getYearA81CumulBefore(y, mo),
     getMonthlyIrMfEuros(month),
     supabase.from('annexe_table').select('data').eq('slug', 'prorata').single(),
+    supabase.from('annexe_table').select('data').eq('slug', 'dda_rules').single(),
+    supabase.from('annexe_table').select('data').eq('slug', 'vol_p_rules').single(),
   ]);
+  const ddaRulesData   = (ddaRulesRow?.data   as { rules: unknown[] } | null) ?? null;
+  const volPRulesData  = (volPRulesRow?.data  as { rules: unknown[] } | null) ?? null;
   type ProrataThreshold = { range: string; ji_restants: number; duree_min: number; duree_min_opt6: number };
   const prorataThresholds: ProrataThreshold[] =
     (prorataRow?.data as { thresholds: ProrataThreshold[] } | null)?.thresholds ?? [];
@@ -129,6 +133,8 @@ export default async function Home({
       navigoEur={Number(profile.navigo_eur ?? 0)}
       voitureKmAller={Number(profile.voiture_km_aller ?? 0)}
       voitureIndemniteKm={Number(profile.voiture_indemnite_km ?? 0)}
+      ddaRulesData={ddaRulesData}
+      volPRulesData={volPRulesData}
     />
   );
 }

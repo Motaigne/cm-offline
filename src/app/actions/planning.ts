@@ -188,3 +188,39 @@ export async function updatePlanningItem(
   if (error) return { error: error.message };
   revalidatePath('/');
 }
+
+/**
+ * Met à jour la catégorie DDA (bid_category) d'un item — utilisé par le
+ * sélecteur de placement de vol et l'édition. Permet le `null` pour repasser
+ * à l'état non catégorisé.
+ */
+export async function updatePlanningItemBidCategory(
+  itemId: string,
+  bidCategory: BidCategory | null,
+) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from('planning_item')
+    .update({ bid_category: bidCategory })
+    .eq('id', itemId);
+  if (error) return { error: error.message };
+  revalidatePath('/');
+}
+
+/**
+ * Patch le champ meta (jsonb) d'un item — sert notamment à persister
+ * l'acquittement du report de RPC (meta.rpc_reported = true) pour les paires
+ * DDA VOL → CONGES.
+ */
+export async function updatePlanningItemMeta(
+  itemId: string,
+  meta: import('@/types/supabase').Json | null,
+) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from('planning_item')
+    .update({ meta })
+    .eq('id', itemId);
+  if (error) return { error: error.message };
+  revalidatePath('/');
+}

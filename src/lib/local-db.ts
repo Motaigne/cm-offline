@@ -14,7 +14,7 @@ interface StoredItem extends CalendarItem {
 
 export interface SyncOp {
   id?: number;
-  op: 'add' | 'delete' | 'update';
+  op: 'add' | 'delete' | 'update' | 'update_bid' | 'update_meta';
   payload: string; // JSON
   created_at: number;
 }
@@ -114,7 +114,7 @@ export async function hydrateDB(scenarios: Scenario[], month: string): Promise<v
   const pendingOps = await db.sync_queue.toArray();
   const pendingIds = new Set(
     pendingOps
-      .filter(op => op.op === 'add' || op.op === 'update')
+      .filter(op => op.op === 'add' || op.op === 'update' || op.op === 'update_bid' || op.op === 'update_meta')
       .map(op => (JSON.parse(op.payload) as { id: string }).id),
   );
 

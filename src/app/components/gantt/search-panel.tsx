@@ -7,6 +7,13 @@ import type { ScenarioName } from '@/app/actions/planning';
 import { loadRotationsFromDB } from '@/lib/local-db';
 import { enqueueAdd } from '@/lib/sync-service';
 import { rotationValue } from '@/lib/finance';
+import type { BidCategory } from '@/lib/activity-meta';
+
+const BID_OPTIONS: { value: BidCategory; label: string; short: string }[] = [
+  { value: 'dda_vol',     label: 'DDA Vol',     short: 'DDA' },
+  { value: 'vol_p',       label: 'Vol P',       short: 'P' },
+  { value: 'elabo_suivi', label: 'Élabo/Suivi', short: 'ÉS' },
+];
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -68,6 +75,7 @@ function RotationCard({
   const [selectedInst, setSelectedInst] = useState<RotationInstance | null>(null);
   const [overlapErr, setOverlapErr]     = useState<string | null>(null);
   const [isPending, startTransition]    = useTransition();
+  const [bidCat, setBidCat]             = useState<BidCategory>('dda_vol');
 
   const pvPrimeEur = Math.round(rotationValue(sig.hcr_crew, sig.prime, sig.tsv_nuit));
 
@@ -102,7 +110,7 @@ function RotationCard({
     const newItem: CalendarItem = {
       id, kind: 'flight',
       start_date: inst.depart_date, end_date: endDate,
-      bid_category: null,
+      bid_category: bidCat,
       pairing_instance_id: inst.id,
       meta,
     };
@@ -115,21 +123,24 @@ function RotationCard({
   }
 
   function selectInst(inst: RotationInstance) {
+    // On ne place plus immédiatement : on attend que l'utilisateur ait choisi
+    // sa catégorie DDA (radio ci-dessous), puis clique sur le bouton "Placer".
+    // Si un scénario est présélectionné on vérifie le chevauchement dès la
+    // sélection pour donner le feedback rouge en amont.
     if (preselectedScenario) {
       const sc = scenarios.find(s => s.name === preselectedScenario);
       if (sc) {
         const endDate = endDateFromArrivee(inst.arrivee_at);
         if (hasOverlap(sc.items, inst.depart_date, endDate)) {
           setOverlapErr(`Chevauchement dans le scénario ${sc.name}`);
-          setSelectedInst(inst);
-          return;
+        } else {
+          setOverlapErr(null);
         }
-        place(inst, sc);
-        return;
       }
+    } else {
+      setOverlapErr(null);
     }
     setSelectedInst(prev => prev?.id === inst.id ? null : inst);
-    setOverlapErr(null);
   }
 
   return (
@@ -192,23 +203,64 @@ function RotationCard({
         })}
       </div>
 
-      {/* Scenario selector — seulement si pas de présélection, ou en fallback sur chevauchement */}
-      {selectedInst && (!preselectedScenario || overlapErr) && (
+      {/* Catégorie DDA — visible dès qu'un créneau est sélectionné */}
+      {selectedInst && (
         <div className="flex items-center gap-2 pt-2 border-t border-zinc-100 dark:border-zinc-800 flex-wrap">
-          <span className="text-xs text-zinc-400 flex-shrink-0">
-            {overlapErr ? 'Autre scénario :' : 'Scénario :'}
-          </span>
-          {scenarios.map(sc => (
+          <span className="text-xs text-zinc-400 flex-shrink-0">Catégorie :</span>
+          {BID_OPTIONS.map(opt => (
             <button
-              key={sc.name}
-              onClick={() => place(selectedInst, sc)}
-              disabled={isPending}
-              className="px-4 py-2 rounded-xl bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 text-sm font-bold hover:bg-zinc-700 dark:hover:bg-zinc-300 active:scale-95 disabled:opacity-40 transition-all min-h-[44px]"
+              key={opt.value}
+              onClick={() => setBidCat(opt.value)}
+              className={[
+                'px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all min-h-[36px]',
+                bidCat === opt.value
+                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300'
+                  : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-zinc-400',
+              ].join(' ')}
             >
-              {sc.name}
+              {opt.label}
             </button>
           ))}
-          {overlapErr && <span className="text-xs text-red-500">{overlapErr}</span>}
+        </div>
+      )}
+
+      {/* Scenario picker / bouton Placer */}
+      {selectedInst && (
+        <div className="flex items-center gap-2 pt-2 flex-wrap">
+          {preselectedScenario && !overlapErr ? (
+            <>
+              <span className="text-xs text-zinc-400 flex-shrink-0">Placer dans :</span>
+              {(() => {
+                const sc = scenarios.find(s => s.name === preselectedScenario);
+                return sc ? (
+                  <button
+                    onClick={() => place(selectedInst, sc)}
+                    disabled={isPending}
+                    className="px-4 py-2 rounded-xl bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 text-sm font-bold hover:bg-zinc-700 dark:hover:bg-zinc-300 active:scale-95 disabled:opacity-40 transition-all min-h-[44px]"
+                  >
+                    Placer en {sc.name}
+                  </button>
+                ) : null;
+              })()}
+            </>
+          ) : (
+            <>
+              <span className="text-xs text-zinc-400 flex-shrink-0">
+                {overlapErr ? 'Autre scénario :' : 'Scénario :'}
+              </span>
+              {scenarios.map(sc => (
+                <button
+                  key={sc.name}
+                  onClick={() => place(selectedInst, sc)}
+                  disabled={isPending}
+                  className="px-4 py-2 rounded-xl bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 text-sm font-bold hover:bg-zinc-700 dark:hover:bg-zinc-300 active:scale-95 disabled:opacity-40 transition-all min-h-[44px]"
+                >
+                  {sc.name}
+                </button>
+              ))}
+              {overlapErr && <span className="text-xs text-red-500">{overlapErr}</span>}
+            </>
+          )}
         </div>
       )}
     </div>

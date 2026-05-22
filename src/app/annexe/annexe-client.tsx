@@ -579,8 +579,140 @@ function IrMfRatesCard({ table, canEdit }: { table: AnnexeRow; canEdit: boolean 
   );
 }
 
+// ── DDA / VOL P rules ─────────────────────────────────────────────────────────
+type DdaRulesData = {
+  version: string;
+  rules: DdaRuleRow[];
+};
+
+type DdaRuleRow = {
+  from: string;
+  to: string;
+  gap_from: string;
+  gap_to: string;
+  ok?: number[];
+  forbidden?: number[];
+  min_ok_above?: number;
+  rpc_dependent?: boolean;
+  rpc?: Record<string, { ok: number[]; forbidden: number[]; min_ok_above: number }>;
+  rpc_report_alt?: { ok?: number[]; note?: string };
+};
+
+const CAT_SHORT: Record<string, string> = {
+  DDA_REPOS: 'DDA REPOS',
+  DDA_VOL: 'DDA VOL',
+  VOL_P: 'VOL P',
+  CONGES: 'CONGES',
+};
+
+const GAP_REF_SHORT: Record<string, string> = {
+  end: 'fin',
+  start: 'début',
+  block_off: 'départ',
+  rpc_first_day: 'après 1er j. RPC',
+  rpc_last_day: 'après dernier j. RPC',
+  end_no_rpc: 'fin (RPC ignoré)',
+};
+
+const MAX_GAP_COL = 6;
+
+function gapVerdict(bucket: { ok?: number[]; forbidden?: number[]; min_ok_above?: number }, gap: number): 'OK' | 'X' {
+  if (bucket.ok?.includes(gap)) return 'OK';
+  if (bucket.min_ok_above != null && gap >= bucket.min_ok_above) return 'OK';
+  if (bucket.forbidden?.includes(gap)) return 'X';
+  return 'OK';
+}
+
+function RuleMatrixRow({ label, bucket, refSuffix }: {
+  label: string;
+  bucket: { ok?: number[]; forbidden?: number[]; min_ok_above?: number };
+  refSuffix?: string;
+}) {
+  return (
+    <tr>
+      <td className="px-2 py-1 text-[11px] font-medium text-zinc-700 dark:text-zinc-200 whitespace-nowrap">
+        {label}
+        {refSuffix && <span className="ml-1 text-[9px] text-zinc-400 font-normal">({refSuffix})</span>}
+      </td>
+      {Array.from({ length: MAX_GAP_COL + 1 }, (_, gap) => {
+        const v = gapVerdict(bucket, gap);
+        const isPlus = gap === MAX_GAP_COL && bucket.min_ok_above != null && bucket.min_ok_above <= MAX_GAP_COL;
+        return (
+          <td key={gap}
+            className={`px-1 py-1 text-center text-[10px] font-mono font-semibold ${
+              v === 'OK' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+                         : 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+            }`}>
+            {v === 'OK' ? 'OK' : 'X'}
+            {isPlus && v === 'OK' && <span className="text-[8px] opacity-60">+</span>}
+          </td>
+        );
+      })}
+    </tr>
+  );
+}
+
+function DdaRulesCard({ table, canEdit }: { table: AnnexeRow; canEdit: boolean }) {
+  const d = table.data as unknown as DdaRulesData;
+  const rules = Array.isArray(d?.rules) ? d.rules : [];
+
+  return (
+    <Card title={table.name} table={table} canEdit={canEdit}>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs border-collapse">
+          <thead>
+            <tr className="bg-zinc-50 dark:bg-zinc-800/60">
+              <th className="px-2 py-1.5 text-left text-[10px] font-medium text-zinc-400 uppercase tracking-wide whitespace-nowrap">Paire</th>
+              {Array.from({ length: MAX_GAP_COL + 1 }, (_, g) => (
+                <th key={g} className="px-1 py-1.5 text-center text-[10px] font-medium text-zinc-400 whitespace-nowrap">
+                  gap {g}{g === MAX_GAP_COL ? '+' : ''}j
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+            {rules.flatMap((r, i) => {
+              const label = `${CAT_SHORT[r.from] ?? r.from} → ${CAT_SHORT[r.to] ?? r.to}`;
+              const ref = `${GAP_REF_SHORT[r.gap_from] ?? r.gap_from} → ${GAP_REF_SHORT[r.gap_to] ?? r.gap_to}`;
+              if (r.rpc_dependent && r.rpc) {
+                return Object.entries(r.rpc).map(([rpcDays, bucket]) => (
+                  <RuleMatrixRow
+                    key={`${i}-${rpcDays}`}
+                    label={`${label} · RPC ${rpcDays}j`}
+                    bucket={bucket}
+                    refSuffix={ref}
+                  />
+                ));
+              }
+              return [
+                <RuleMatrixRow
+                  key={i}
+                  label={label}
+                  bucket={{ ok: r.ok, forbidden: r.forbidden, min_ok_above: r.min_ok_above }}
+                  refSuffix={ref}
+                />,
+                ...(r.rpc_report_alt ? [
+                  <tr key={`${i}-alt`} className="bg-amber-50/40 dark:bg-amber-900/10">
+                    <td colSpan={MAX_GAP_COL + 2} className="px-2 py-1 text-[10px] text-amber-700 dark:text-amber-300 italic">
+                      ↳ Option : si report RPC accepté à la fin des CONGES → gap {r.rpc_report_alt.ok?.join('/')}j OK
+                    </td>
+                  </tr>
+                ] : []),
+              ];
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="px-3 py-1.5 text-[10px] text-zinc-400 border-t border-zinc-100 dark:border-zinc-800">
+        Légende : <strong>OK</strong> = enchaînement autorisé · <strong>X</strong> = interdit · <strong>+</strong> = et au-delà.
+        Référentiel des dates entre parenthèses (jour pris comme origine du gap pour chaque item).
+      </p>
+    </Card>
+  );
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────────
-const KNOWN = ['cat_anciennete', 'coef_classe', 'taux_avion', 'prime_incitation', 'prime_incitation_330', 'traitement_base', 'prorata', 'prime_instruction', 'article_81', 'definitions', 'ir_mf_rates'];
+const KNOWN = ['cat_anciennete', 'coef_classe', 'taux_avion', 'prime_incitation', 'prime_incitation_330', 'traitement_base', 'prorata', 'prime_instruction', 'article_81', 'definitions', 'ir_mf_rates', 'dda_rules', 'vol_p_rules'];
 
 export function AnnexeClient({ tables, canEdit }: { tables: AnnexeRow[]; canEdit: boolean }) {
   const by = Object.fromEntries(tables.map(t => [t.slug, t]));
@@ -628,7 +760,11 @@ export function AnnexeClient({ tables, canEdit }: { tables: AnnexeRow[]; canEdit
         canEdit={canEdit}
       />
 
-      {/* 8. Définitions */}
+      {/* 8. Règles DDA / VOL P */}
+      {by.dda_rules   && <DdaRulesCard table={by.dda_rules}   canEdit={canEdit} />}
+      {by.vol_p_rules && <DdaRulesCard table={by.vol_p_rules} canEdit={canEdit} />}
+
+      {/* 9. Définitions */}
       {by.definitions && <DefinitionsCard table={by.definitions} canEdit={canEdit} />}
 
       {/* Autres */}

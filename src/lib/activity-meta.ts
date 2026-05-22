@@ -15,7 +15,7 @@ type ActivityMeta = {
 export const ACTIVITY_META: Record<ActivityKind, ActivityMeta> = {
   flight:  { label: 'Vol',         color: '#3B82F6', textColor: '#FFFFFF', order: 9 }, // bleu
   conge:   { label: 'Congés',      color: '#15803D', textColor: '#FFFFFF', order: 2 }, // vert foncé
-  off:     { label: 'OFF',         color: '#4ADE80', textColor: '#052E16', order: 3 }, // vert clair
+  off:     { label: 'DDA REPOS',   color: '#4ADE80', textColor: '#052E16', order: 3 }, // vert clair
   sol:     { label: 'Réserve',     color: '#EC4899', textColor: '#FFFFFF', order: 4 }, // rose
   medical: { label: 'Visite méd.', color: '#BE185D', textColor: '#FFFFFF', order: 5 }, // rose foncé
   sim:     { label: 'Simulateur',  color: '#A21CAF', textColor: '#FFFFFF', order: 6 }, // violet/magenta
@@ -44,7 +44,8 @@ export const FONCTION_LABEL: Record<Fonction, string> = {
 };
 
 export const BID_LABEL: Record<BidCategory, string> = {
-  dda_vol: 'DDA Vol',
-  vol_p:   'Vol P',
-  dda_off: 'DDA OFF',
+  dda_vol:     'DDA Vol',
+  vol_p:       'Vol P',
+  dda_off:     'DDA OFF',
+  elabo_suivi: 'Élabo/Suivi',
 };

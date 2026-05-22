@@ -13,7 +13,7 @@ import {
   getScenariosWithItems,
   resetPlanningScenarios,
 } from '@/app/actions/planning';
-import { ACTIVITY_META, type ActivityKind } from '@/lib/activity-meta';
+import { ACTIVITY_META, type ActivityKind, type BidCategory } from '@/lib/activity-meta';
 import type { Scenario, CalendarItem } from '@/app/page';
 import type { ScenarioName } from '@/app/actions/planning';
 import type { Database } from '@/types/supabase';
@@ -24,7 +24,12 @@ import { computeArticle81, computeTSej24, getPlafondJours } from '@/lib/article8
 import type { Article81Data } from '@/lib/article81';
 import { createClient } from '@/lib/supabase/client';
 import { db, hydrateDB, loadFromDB, hasPendingOps, loadScenariosForMonth, cacheRotations, purgeScenarios } from '@/lib/local-db';
-import { enqueueAdd, enqueueDelete, enqueueUpdate, pendingOpsCount } from '@/lib/sync-service';
+import { enqueueAdd, enqueueDelete, enqueueUpdate, enqueueBidCategoryUpdate, enqueueMetaUpdate, pendingOpsCount } from '@/lib/sync-service';
+import {
+  validateScenario, mergeRules,
+  type DdaRule, type DdaRulesData, type Violation,
+} from '@/lib/dda-validator';
+import { DdaViolationsStrip } from './dda-violations-strip';
 import { getRotationsForMonth } from '@/app/actions/search';
 import { getCurrentUserScrapeRights } from '@/app/actions/auth';
 import { getYearA81CumulBefore } from '@/app/actions/article81';
@@ -450,7 +455,7 @@ function DraggableBar({
       {/* Pre-repos bar */}
       {restBeforeBar && (
         <div
-          className="absolute pointer-events-none rounded-l-sm z-[9]"
+          className="absolute pointer-events-none rounded-l-sm z-[11]"
           style={{
             left: `${restBeforeBar.left}%`,
             width: `${restBeforeBar.width}%`,
@@ -465,7 +470,7 @@ function DraggableBar({
       {/* Post-repos bar */}
       {restAfterBar && (
         <div
-          className="absolute pointer-events-none rounded-r-sm z-[9]"
+          className="absolute pointer-events-none rounded-r-sm z-[11]"
           style={{
             left: `${restAfterBar.left}%`,
             width: `${restAfterBar.width}%`,
@@ -568,6 +573,8 @@ export function GanttView({
   irMfByScenario,
   irMfPerFlightByScenario,
   prorataThresholds = [],
+  ddaRulesData = null,
+  volPRulesData = null,
   transport = null,
   navigoEur = 0,
   voitureKmAller = 0,
@@ -606,6 +613,9 @@ export function GanttView({
   irMfPerFlightByScenario?: Record<'A' | 'B' | 'C', { instance_id: string; destination: string; ir_eur: number; mf_eur: number }[]>;
   /** Seuils prorata DDA OFF depuis annexe_table slug='prorata'. */
   prorataThresholds?: ProrataThreshold[];
+  /** Règles DDA + Vol P (slugs 'dda_rules' et 'vol_p_rules' dans annexe_table). */
+  ddaRulesData?: { rules: unknown[] } | null;
+  volPRulesData?: { rules: unknown[] } | null;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -665,6 +675,7 @@ export function GanttView({
   const [addEnd, setAddEnd]       = useState('');
   const [nbJours, setNbJours]     = useState('');
   const [overlapErr, setOverlapErr] = useState(false);
+  const [editBidCat, setEditBidCat] = useState<BidCategory | null>(null);
 
   // dnd
   const [dragging, setDragging]   = useState<CalendarItem | null>(null);
@@ -675,6 +686,36 @@ export function GanttView({
   const [searchPanelTop, setSearchPanelTop] = useState<number | undefined>(undefined);
   const [scenarioPicker, setScenarioPicker] = useState<{ rect: DOMRect } | null>(null);
   const scenarioRowsRef = useRef<Map<ScenarioName, HTMLDivElement>>(new Map());
+
+  // ─── DDA / VOL P validation ────────────────────────────────────────────────
+  const ddaRules: DdaRule[] = useMemo(
+    () => mergeRules(ddaRulesData as DdaRulesData | null, volPRulesData as DdaRulesData | null),
+    [ddaRulesData, volPRulesData],
+  );
+
+  /** Map scenarioId → list of violations. Inclut le set d'IDs de vols ayant
+   *  meta.rpc_reported = true (acquittement utilisateur pour l'option de report
+   *  du RPC à la fin des CONGES suivants). */
+  const violationsByScenario = useMemo(() => {
+    const out = new Map<string, Violation[]>();
+    if (ddaRules.length === 0) return out;
+    for (const s of localScenarios) {
+      const accepted = new Set<string>();
+      for (const it of s.items) {
+        if (it.meta && typeof it.meta === 'object' && !Array.isArray(it.meta)
+            && (it.meta as Record<string, unknown>).rpc_reported === true) {
+          accepted.add(it.id);
+        }
+      }
+      out.set(s.id, validateScenario(s.items, ddaRules, s.id, s.name, accepted));
+    }
+    return out;
+  }, [localScenarios, ddaRules]);
+
+  const allViolations = useMemo(
+    () => Array.from(violationsByScenario.values()).flat(),
+    [violationsByScenario],
+  );
 
   // Quand search ouvert : scénario sélectionné remonté en premier
   const displayScenarios = useMemo(() => {
@@ -955,6 +996,7 @@ export function GanttView({
     const dur = dayNum(item.end_date) - dayNum(item.start_date) + 1;
     setNbJours(String(dur));
     setAddEnd(item.end_date);
+    setEditBidCat(item.kind === 'flight' ? (item.bid_category ?? 'dda_vol') : null);
     setSheet({ mode: 'edit', scenarioId: scenario.id, scenarioName: scenario.name, date: item.start_date, item });
   }
 
@@ -1022,10 +1064,20 @@ export function GanttView({
 
     if (sheet.mode === 'edit' && sheet.item) {
       const itemId = sheet.item.id;
+      const prevItem = sheet.item;
       applyUpdate(itemId, start, end);
+      // Si flight et catégorie modifiée, on enqueue aussi l'update de bid_category
+      const bidChanged =
+        prevItem.kind === 'flight' && editBidCat !== null && prevItem.bid_category !== editBidCat;
+      if (bidChanged) {
+        setLocalScenarios(prev => prev.map(s => ({
+          ...s, items: s.items.map(i => i.id === itemId ? { ...i, bid_category: editBidCat } : i),
+        })));
+      }
       setSheet(null);
-      setPendingCount(c => c + 1);
+      setPendingCount(c => c + (bidChanged ? 2 : 1));
       void enqueueUpdate(itemId, start, end);
+      if (bidChanged) void enqueueBidCategoryUpdate(itemId, editBidCat);
     } else {
       const id = crypto.randomUUID();
       const newItem: CalendarItem = { id, kind: addKind, start_date: start, end_date: end, bid_category: null, meta: null };
@@ -1293,8 +1345,22 @@ export function GanttView({
                   <div className="flex-shrink-0 flex flex-col border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 pt-1 pb-1 items-center"
                     style={{ width: LABEL_W }}>
 
-                    {/* Nom scénario + ON — toujours visibles en haut */}
-                    <span className="text-base font-bold text-zinc-700 dark:text-zinc-100">{scenario.name}</span>
+                    {/* Nom scénario + flag DDA + ON — toujours visibles en haut */}
+                    <div className="flex items-center gap-1">
+                      <span className="text-base font-bold text-zinc-700 dark:text-zinc-100">{scenario.name}</span>
+                      {(() => {
+                        const vs = violationsByScenario.get(scenario.id) ?? [];
+                        if (vs.length === 0) return null;
+                        return (
+                          <span
+                            title={`${vs.length} violation${vs.length > 1 ? 's' : ''} DDA — voir le panneau du bas`}
+                            className="text-[14px] leading-none text-amber-500 dark:text-amber-400 select-none"
+                          >
+                            ⚑
+                          </span>
+                        );
+                      })()}
+                    </div>
                     <div className="mb-0.5">
                       {yMax >= 0 ? (
                         <span className={`text-[9px] font-semibold font-mono px-1.5 rounded ${stats.onDays > yMax ? 'bg-red-100 dark:bg-red-950/50 text-red-600 dark:text-red-400' : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300'}`}>
@@ -1446,6 +1512,29 @@ export function GanttView({
             })}
           </div>
         </div>
+
+        {/* Violations DDA / VOL P — strip discret au-dessus de l'action bar */}
+        {allViolations.length > 0 && (
+          <DdaViolationsStrip
+            violations={allViolations}
+            onAcceptRpcReport={(itemId) => {
+              // Lit le meta courant, calcule le nextMeta avec rpc_reported = true,
+              // applique en local et queue l'update.
+              const target = localScenarios.flatMap(s => s.items).find(it => it.id === itemId);
+              if (!target) return;
+              const prevMeta = (target.meta && typeof target.meta === 'object' && !Array.isArray(target.meta))
+                ? target.meta as Record<string, unknown>
+                : {};
+              const nextMeta = { ...prevMeta, rpc_reported: true } as unknown as import('@/types/supabase').Json;
+              setLocalScenarios(prev => prev.map(s => ({
+                ...s,
+                items: s.items.map(it => it.id === itemId ? { ...it, meta: nextMeta } : it),
+              })));
+              setPendingCount(c => c + 1);
+              void enqueueMetaUpdate(itemId, nextMeta);
+            }}
+          />
+        )}
 
         {/* Action bar */}
         <div className="flex-shrink-0 flex items-center gap-2 h-14 border-t border-zinc-200 dark:border-zinc-800 px-4 bg-zinc-50 dark:bg-zinc-900 overflow-x-auto">
@@ -1683,6 +1772,31 @@ export function GanttView({
                   <p className="text-xs text-zinc-400">
                     Modifiez le nombre de jours pour réduire ou agrandir le bloc (le premier jour reste fixe).
                   </p>
+                )}
+
+                {/* Edit flight: catégorie DDA */}
+                {sheet.mode === 'edit' && sheet.item && sheet.item.kind === 'flight' && (
+                  <div className="flex items-center gap-2 flex-wrap pt-1">
+                    <span className="text-xs text-zinc-400 flex-shrink-0">Catégorie :</span>
+                    {([
+                      { value: 'dda_vol',     label: 'DDA Vol' },
+                      { value: 'vol_p',       label: 'Vol P' },
+                      { value: 'elabo_suivi', label: 'Élabo/Suivi' },
+                    ] as { value: BidCategory; label: string }[]).map(opt => (
+                      <button
+                        key={opt.value}
+                        onClick={() => setEditBidCat(opt.value)}
+                        className={[
+                          'px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all min-h-[36px]',
+                          editBidCat === opt.value
+                            ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300'
+                            : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-zinc-400',
+                        ].join(' ')}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
                 )}
 
                 {/* Overlap error */}

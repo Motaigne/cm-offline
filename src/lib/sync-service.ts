@@ -1,5 +1,11 @@
 import { db } from './local-db';
-import { addPlanningItem, deletePlanningItem, updatePlanningItem } from '@/app/actions/planning';
+import {
+  addPlanningItem,
+  deletePlanningItem,
+  updatePlanningItem,
+  updatePlanningItemBidCategory,
+  updatePlanningItemMeta,
+} from '@/app/actions/planning';
 import type { CalendarItem } from '@/app/page';
 import type { ActivityKind, BidCategory } from '@/lib/activity-meta';
 import type { Json } from '@/types/supabase';
@@ -16,8 +22,10 @@ type AddPayload = {
   pairing_instance_id?: string | null;
   meta: Json | null;
 };
-type DeletePayload = { id: string };
-type UpdatePayload  = { id: string; start_date: string; end_date: string };
+type DeletePayload    = { id: string };
+type UpdatePayload    = { id: string; start_date: string; end_date: string };
+type UpdateBidPayload = { id: string; bid_category: BidCategory | null };
+type UpdateMetaPayload = { id: string; meta: Json | null };
 
 // ─── Enqueue helpers (écriture locale + mise en queue) ───────────────────────
 
@@ -54,6 +62,22 @@ export async function enqueueUpdate(itemId: string, startDate: string, endDate: 
   });
 }
 
+export async function enqueueBidCategoryUpdate(itemId: string, bidCategory: BidCategory | null): Promise<void> {
+  const payload: UpdateBidPayload = { id: itemId, bid_category: bidCategory };
+  await db.transaction('rw', db.items, db.sync_queue, async () => {
+    await db.items.where('id').equals(itemId).modify({ bid_category: bidCategory });
+    await db.sync_queue.add({ op: 'update_bid', payload: JSON.stringify(payload), created_at: Date.now() });
+  });
+}
+
+export async function enqueueMetaUpdate(itemId: string, meta: Json | null): Promise<void> {
+  const payload: UpdateMetaPayload = { id: itemId, meta };
+  await db.transaction('rw', db.items, db.sync_queue, async () => {
+    await db.items.where('id').equals(itemId).modify({ meta });
+    await db.sync_queue.add({ op: 'update_meta', payload: JSON.stringify(payload), created_at: Date.now() });
+  });
+}
+
 // ─── Sync ─────────────────────────────────────────────────────────────────────
 
 /** Rejoue toute la queue vers Supabase. Appelé quand online revient. */
@@ -70,6 +94,12 @@ export async function syncNow(): Promise<void> {
       } else if (op.op === 'update') {
         const p = JSON.parse(op.payload) as UpdatePayload;
         await updatePlanningItem(p.id, p.start_date, p.end_date);
+      } else if (op.op === 'update_bid') {
+        const p = JSON.parse(op.payload) as UpdateBidPayload;
+        await updatePlanningItemBidCategory(p.id, p.bid_category);
+      } else if (op.op === 'update_meta') {
+        const p = JSON.parse(op.payload) as UpdateMetaPayload;
+        await updatePlanningItemMeta(p.id, p.meta);
       }
       await db.sync_queue.delete(op.id!);
     } catch (e) {
