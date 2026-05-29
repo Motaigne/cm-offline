@@ -34,6 +34,7 @@ import { getRotationsForMonth } from '@/app/actions/search';
 import { getCurrentUserScrapeRights } from '@/app/actions/auth';
 import { getYearA81CumulBefore } from '@/app/actions/article81';
 import { computeMonthlyIrMfFromLocalCache } from '@/lib/ir-mf-local';
+import { computeEffectiveRpc } from '@/lib/rpc';
 import { NavBar } from '@/app/components/nav';
 
 type RegimeEnum = Database['public']['Enums']['regime_enum'];
@@ -366,6 +367,7 @@ const REST_H = 6;
 
 function DraggableBar({
   item, clip, dim, year, mo, onEdit, isDragSource,
+  scenarioItems, rpcChevauchement,
 }: {
   item: CalendarItem;
   clip: { start: number; end: number };
@@ -374,6 +376,11 @@ function DraggableBar({
   mo: number;
   onEdit: (item: CalendarItem) => void;
   isDragSource: boolean;
+  /** Tous les items du scénario — nécessaire pour calculer l'effective RPC
+   *  (interactions avec congés/TAF/sol/etc.). */
+  scenarioItems: CalendarItem[];
+  /** Mode RPC : true = pauses dans congés/TAF, false = report total après. */
+  rpcChevauchement: boolean;
 }) {
   const readOnly = !!item._isSpillover;
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
@@ -393,11 +400,9 @@ function DraggableBar({
   const hcrCrew      = typeof metaObj?.hcr_crew      === 'number' ? metaObj.hcr_crew      as number : null;
   const prime        = typeof metaObj?.prime         === 'number' ? metaObj.prime         as number : 0;
   const restBeforeH  = typeof metaObj?.rest_before_h === 'number' ? metaObj.rest_before_h as number : 0;
-  const restAfterH   = typeof metaObj?.rest_after_h  === 'number' ? metaObj.rest_after_h  as number : 0;
   const departAt     = typeof metaObj?.depart_at     === 'string' ? metaObj.depart_at     as string : null;
   const arriveeAt    = typeof metaObj?.arrivee_at    === 'string' ? metaObj.arrivee_at    as string : null;
   const beginActAt   = typeof metaObj?.scheduled_begin_activity_at === 'string' ? metaObj.scheduled_begin_activity_at as string : null;
-  const endActAt     = typeof metaObj?.scheduled_end_activity_at   === 'string' ? metaObj.scheduled_end_activity_at   as string : null;
   const tsvNuit      = typeof metaObj?.tsv_nuit === 'number' ? metaObj.tsv_nuit as number : 0;
 
   const hcrDisplay = hcrCrew !== null && departAt && arriveeAt
@@ -413,7 +418,10 @@ function DraggableBar({
   // Sub-day precision for flights with timestamps, integer days for others
   let leftPct: number, wPct: number;
   let restBeforeBar: { left: number; width: number } | null = null;
-  let restAfterBar:  { left: number; width: number } | null = null;
+  // Post-RPC : 1 segment par tranche (mode chevauchement = N segments séparés
+  // par des congés/TAF). Le mode "report total" donne 1 segment, décalé.
+  let restAfterSegments: { left: number; width: number }[] = [];
+  let restAfterPauses:   { left: number; width: number }[] = [];
 
   if (item.kind === 'flight' && departAt && arriveeAt) {
     const startFrac = dayFrac(departAt,  year, mo, dim);
@@ -432,15 +440,31 @@ function DraggableBar({
       const rW    = leftPct - rLeft;
       if (rW > 0.05) restBeforeBar = { left: rLeft, width: rW };
     }
-    // Barre post-activité : du block-on jusqu'à la fin d'activité (closeout).
-    // Source de vérité : scheduled_end_activity_at ; fallback sur rest_after_h.
-    const postEndIso = endActAt
-      ?? (restAfterH > 0 ? new Date(new Date(arriveeAt).getTime() + restAfterH * 3_600_000).toISOString() : null);
-    if (postEndIso) {
-      const rFrac = dayFrac(postEndIso, year, mo, dim);
-      const rLeft = leftPct + wPct;
-      const rW    = Math.max(0, (Math.min(rFrac, dim + 1) - 1) / dim * 100 - rLeft);
-      if (rW > 0.05) restAfterBar = { left: rLeft, width: rW };
+
+    // Barres post-RPC : computeEffectiveRpc tient compte des congés/TAF
+    // (selon mode chevauchement) et des hard blockers (sol/sim/etc qui
+    // tronquent). Renvoie 1+ segments ; on en dérive aussi les pauses
+    // visuelles (intervalles entre segments dans le même mois).
+    const eff = computeEffectiveRpc(item, scenarioItems, rpcChevauchement);
+    const segToBar = (startMs: number, endMs: number): { left: number; width: number } | null => {
+      const sFrac = dayFrac(new Date(startMs).toISOString(), year, mo, dim);
+      const eFrac = dayFrac(new Date(endMs).toISOString(),   year, mo, dim);
+      const sClamped = Math.max(sFrac, 1);
+      const eClamped = Math.min(eFrac, dim + 1);
+      if (eClamped <= sClamped) return null;
+      const sLeft  = (sClamped - 1) / dim * 100;
+      const sWidth = (eClamped - sClamped) / dim * 100;
+      if (sWidth < 0.05) return null;
+      return { left: sLeft, width: sWidth };
+    };
+    for (const seg of eff.segments) {
+      const bar = segToBar(seg.startMs, seg.endMs);
+      if (bar) restAfterSegments.push(bar);
+    }
+    // Pauses : intervalles entre 2 segments consécutifs (= jours bloquants).
+    for (let i = 1; i < eff.segments.length; i++) {
+      const bar = segToBar(eff.segments[i - 1].endMs, eff.segments[i].startMs);
+      if (bar) restAfterPauses.push(bar);
     }
   } else {
     const span = clip.end - clip.start + 1;
@@ -467,20 +491,37 @@ function DraggableBar({
         />
       )}
 
-      {/* Post-repos bar */}
-      {restAfterBar && (
+      {/* Post-repos : N segments solides (pleins) + N-1 pauses (pointillés
+          au-dessus des congés/TAF traversés en mode chevauchement). */}
+      {restAfterSegments.map((seg, i) => (
         <div
-          className="absolute pointer-events-none rounded-r-sm z-[11]"
+          key={`rest-seg-${i}`}
+          className={`absolute pointer-events-none z-[11] ${i === 0 ? '' : ''} ${i === restAfterSegments.length - 1 ? 'rounded-r-sm' : ''} ${i === 0 ? 'rounded-l-sm' : ''}`}
           style={{
-            left: `${restAfterBar.left}%`,
-            width: `${restAfterBar.width}%`,
+            left: `${seg.left}%`,
+            width: `${seg.width}%`,
             top: restTop,
             height: REST_H,
             backgroundColor: '#93C5FD',
             opacity: isDragSource ? 0.2 : 0.65,
           }}
         />
-      )}
+      ))}
+      {restAfterPauses.map((seg, i) => (
+        <div
+          key={`rest-pause-${i}`}
+          className="absolute pointer-events-none z-[11]"
+          style={{
+            left: `${seg.left}%`,
+            width: `${seg.width}%`,
+            top: restTop,
+            height: REST_H,
+            backgroundImage:
+              'repeating-linear-gradient(90deg,#93C5FD 0,#93C5FD 4px,transparent 4px,transparent 8px)',
+            opacity: isDragSource ? 0.15 : 0.5,
+          }}
+        />
+      ))}
 
       {/* Main bar */}
       <div
@@ -629,6 +670,23 @@ export function GanttView({
   // local state (offline-capable copy of scenarios)
   const [localScenarios, setLocalScenarios] = useState<Scenario[]>(scenarios);
   const [pendingCount, setPendingCount]     = useState(0);
+
+  // Mode chevauchement RPC ↔ congés/TAF. Global, persisté localStorage.
+  // OFF (défaut) : le RPC se reporte ENTIÈREMENT après la chaîne contiguë de
+  //   congés/TAF qui le coupent. 1 segment, déplacé.
+  // ON : le RPC se met en pause pendant les congés/TAF, puis reprend après.
+  //   N+1 segments séparés de N pauses.
+  const [rpcChevauchement, setRpcChevauchement] = useState(false);
+  useEffect(() => {
+    setRpcChevauchement(localStorage.getItem('cm-rpc-chevauchement') === '1');
+  }, []);
+  function toggleRpcChevauchement() {
+    setRpcChevauchement(prev => {
+      const next = !prev;
+      localStorage.setItem('cm-rpc-chevauchement', next ? '1' : '0');
+      return next;
+    });
+  }
 
   // IR/MF + A81 cumul : props serveur figées au render initial, on copie en
   // state pour pouvoir les rafraîchir lors d'une navigation client-side
@@ -1235,6 +1293,31 @@ export function GanttView({
             <span className="text-sm font-semibold w-40 text-center">{MONTH_FR[mo-1]} {year}</span>
             <button onClick={() => changeMonth(shiftMonth(currentMonth,1))} disabled={monthLoading}
               className="w-10 h-10 flex items-center justify-center rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-3xl disabled:opacity-40">›</button>
+            {/* Toggle Chevauchement RPC / congés */}
+            <button
+              onClick={toggleRpcChevauchement}
+              role="switch"
+              aria-checked={rpcChevauchement}
+              title={
+                rpcChevauchement
+                  ? 'Chevauchement RPC/congés autorisé — le RPC se met en pause pendant les congés/TAF puis reprend après.'
+                  : 'Chevauchement OFF — le RPC se reporte entièrement après les congés/TAF.'
+              }
+              className="ml-2 flex items-center gap-2 px-2 h-8 rounded-lg border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+            >
+              <span className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
+                Chevauch.
+              </span>
+              <span className={[
+                'relative inline-flex h-4 w-7 items-center rounded-full transition-colors',
+                rpcChevauchement ? 'bg-blue-500' : 'bg-zinc-300 dark:bg-zinc-700',
+              ].join(' ')}>
+                <span className={[
+                  'inline-block h-3 w-3 rounded-full bg-white shadow transition-transform',
+                  rpcChevauchement ? 'translate-x-3.5' : 'translate-x-0.5',
+                ].join(' ')} />
+              </span>
+            </button>
           </div>
           <div className="relative">
             <button
@@ -1513,6 +1596,8 @@ export function GanttView({
                           mo={mo}
                           onEdit={(it) => openEdit(it, scenario)}
                           isDragSource={dragging?.id === item.id}
+                          scenarioItems={scenario.items}
+                          rpcChevauchement={rpcChevauchement}
                         />
                       );
                     })}
@@ -1907,6 +1992,7 @@ export function GanttView({
           scenarios={localScenarios}
           preselectedScenario={searchScenario ?? undefined}
           preselectedCategory={searchCategory ?? undefined}
+          rpcChevauchement={rpcChevauchement}
           panelTop={searchPanelTop}
           onClose={() => {
             setSearchOpen(false);
