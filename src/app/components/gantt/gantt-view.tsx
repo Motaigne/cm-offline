@@ -683,8 +683,11 @@ export function GanttView({
   // search / import
   const [searchOpen,     setSearchOpen]     = useState(false);
   const [searchScenario, setSearchScenario] = useState<ScenarioName | null>(null);
+  const [searchCategory, setSearchCategory] = useState<BidCategory | null>(null);
   const [searchPanelTop, setSearchPanelTop] = useState<number | undefined>(undefined);
-  const [scenarioPicker, setScenarioPicker] = useState<{ rect: DOMRect } | null>(null);
+  // Pickers en cascade : Rotations → catégorie → scénario → SearchPanel.
+  const [categoryPicker, setCategoryPicker] = useState<{ rect: DOMRect } | null>(null);
+  const [scenarioPicker, setScenarioPicker] = useState<{ rect: DOMRect; category: BidCategory } | null>(null);
   const scenarioRowsRef = useRef<Map<ScenarioName, HTMLDivElement>>(new Map());
 
   // ─── DDA / VOL P validation ────────────────────────────────────────────────
@@ -1610,7 +1613,7 @@ export function GanttView({
           <button
             onClick={e => {
               const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              setScenarioPicker({ rect });
+              setCategoryPicker({ rect });
             }}
             className="ml-auto flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors"
           >
@@ -1824,7 +1827,41 @@ export function GanttView({
         )}
       </div>
 
-      {/* Picker scénario — s'affiche avant l'ouverture du search panel */}
+      {/* Picker catégorie — étape 1 (apparait au clic sur "Rotations") */}
+      {categoryPicker && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setCategoryPicker(null)} />
+          <div
+            className="fixed z-50 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-2xl shadow-2xl p-3 flex flex-col gap-2"
+            style={{
+              bottom: window.innerHeight - categoryPicker.rect.top + 8,
+              right: Math.max(8, window.innerWidth - categoryPicker.rect.right),
+            }}
+          >
+            <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide">Catégorie</span>
+            <div className="flex gap-2">
+              {([
+                { value: 'dda_vol',     label: 'DDA' },
+                { value: 'vol_p',       label: 'Vol P' },
+                { value: 'elabo_suivi', label: 'Élabo/Suivi' },
+              ] as { value: BidCategory; label: string }[]).map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => {
+                    setScenarioPicker({ rect: categoryPicker.rect, category: opt.value });
+                    setCategoryPicker(null);
+                  }}
+                  className="px-4 h-12 text-sm font-bold rounded-xl bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:bg-zinc-700 dark:hover:bg-zinc-300 active:scale-95 transition-all whitespace-nowrap"
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Picker scénario — étape 2 (après choix de la catégorie) */}
       {scenarioPicker && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setScenarioPicker(null)} />
@@ -1832,12 +1869,14 @@ export function GanttView({
             className="fixed z-50 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-2xl shadow-2xl p-3 flex flex-col gap-2"
             style={{
               bottom: window.innerHeight - scenarioPicker.rect.top + 8,
-              // Aligne le bord droit du popup sur le bord droit du bouton Rotations
-              // (qui est à droite de l'écran) — évite que C dépasse hors écran sur iPad.
               right: Math.max(8, window.innerWidth - scenarioPicker.rect.right),
             }}
           >
-            <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide">Ajouter dans</span>
+            <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide">
+              {scenarioPicker.category === 'dda_vol' ? 'DDA'
+                : scenarioPicker.category === 'vol_p' ? 'Vol P'
+                : 'Élabo/Suivi'} → Ligne
+            </span>
             <div className="flex gap-2">
               {(localScenarios.map(s => s.name) as ScenarioName[]).map(name => (
                 <button
@@ -1845,6 +1884,7 @@ export function GanttView({
                   onClick={() => {
                     const rowEl = scenarioRowsRef.current.get(name);
                     const rowBottom = rowEl?.getBoundingClientRect().bottom;
+                    setSearchCategory(scenarioPicker.category);
                     setSearchScenario(name);
                     setSearchPanelTop(rowBottom);
                     setScenarioPicker(null);
@@ -1866,8 +1906,14 @@ export function GanttView({
           month={currentMonth}
           scenarios={localScenarios}
           preselectedScenario={searchScenario ?? undefined}
+          preselectedCategory={searchCategory ?? undefined}
           panelTop={searchPanelTop}
-          onClose={() => { setSearchOpen(false); setSearchScenario(null); setSearchPanelTop(undefined); }}
+          onClose={() => {
+            setSearchOpen(false);
+            setSearchScenario(null);
+            setSearchCategory(null);
+            setSearchPanelTop(undefined);
+          }}
           onItemAdded={(item, draftId) => {
             applyAdd(item, draftId);
             setPendingCount(c => c + 1);

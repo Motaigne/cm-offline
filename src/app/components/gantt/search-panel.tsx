@@ -9,11 +9,12 @@ import { enqueueAdd } from '@/lib/sync-service';
 import { rotationValue } from '@/lib/finance';
 import type { BidCategory } from '@/lib/activity-meta';
 
-const BID_OPTIONS: { value: BidCategory; label: string; short: string }[] = [
-  { value: 'dda_vol',     label: 'DDA Vol',     short: 'DDA' },
-  { value: 'vol_p',       label: 'Vol P',       short: 'P' },
-  { value: 'elabo_suivi', label: 'Élabo/Suivi', short: 'ÉS' },
-];
+const BID_LABEL: Record<BidCategory, string> = {
+  dda_vol:     'DDA',
+  vol_p:       'Vol P',
+  dda_off:     'DDA OFF',
+  elabo_suivi: 'Élabo/Suivi',
+};
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -63,19 +64,25 @@ function RotationCard({
   sig,
   scenarios,
   preselectedScenario,
+  preselectedCategory,
   onPlaced,
   onItemAdded,
 }: {
   sig: RotationSignature;
   scenarios: Scenario[];
   preselectedScenario?: ScenarioName;
+  preselectedCategory?: BidCategory;
   onPlaced: () => void;
   onItemAdded?: (item: CalendarItem, draftId: string) => void;
 }) {
   const [selectedInst, setSelectedInst] = useState<RotationInstance | null>(null);
   const [overlapErr, setOverlapErr]     = useState<string | null>(null);
   const [isPending, startTransition]    = useTransition();
-  const [bidCat, setBidCat]             = useState<BidCategory>('dda_vol');
+  // Fallback si pas de category présélectionnée (mode legacy : panneau ouvert
+  // depuis un endroit qui ne l'a pas spécifiée — actuellement aucun, mais on
+  // garde la prop optionnelle pour ne pas casser d'éventuels futurs callers).
+  const [bidCatFallback, setBidCatFallback] = useState<BidCategory>('dda_vol');
+  const bidCat = preselectedCategory ?? bidCatFallback;
 
   const pvPrimeEur = Math.round(rotationValue(sig.hcr_crew, sig.prime, sig.tsv_nuit));
 
@@ -123,10 +130,17 @@ function RotationCard({
   }
 
   function selectInst(inst: RotationInstance) {
-    // On ne place plus immédiatement : on attend que l'utilisateur ait choisi
-    // sa catégorie DDA (radio ci-dessous), puis clique sur le bouton "Placer".
-    // Si un scénario est présélectionné on vérifie le chevauchement dès la
-    // sélection pour donner le feedback rouge en amont.
+    // Nouveau flow : si catégorie + scénario présélectionnés, on place
+    // directement au 1er clic sur la date (4 clics total : Rotations → cat →
+    // scénario → date). Sinon, on retombe sur l'ancien flow (sélection puis
+    // bouton "Placer en X").
+    if (preselectedScenario && preselectedCategory) {
+      const sc = scenarios.find(s => s.name === preselectedScenario);
+      if (sc) {
+        place(inst, sc);
+        return;
+      }
+    }
     if (preselectedScenario) {
       const sc = scenarios.find(s => s.name === preselectedScenario);
       if (sc) {
@@ -186,13 +200,25 @@ function RotationCard({
         {sig.instances.map(inst => {
           const isSelected = selectedInst?.id === inst.id;
           const endDate = endDateFromArrivee(inst.arrivee_at);
+          // En mode 1-clic (cat + scn présélectionnés) : grise les chips qui
+          // chevauchent un item existant pour éviter le clic mort.
+          const conflictsHere = preselectedScenario && preselectedCategory
+            ? (() => {
+                const sc = scenarios.find(s => s.name === preselectedScenario);
+                return sc ? hasOverlap(sc.items, inst.depart_date, endDate) : false;
+              })()
+            : false;
           return (
             <button
               key={inst.id}
               onClick={() => selectInst(inst)}
+              disabled={isPending || conflictsHere}
+              title={conflictsHere ? `Chevauchement dans le scénario ${preselectedScenario}` : undefined}
               className={[
                 'text-xs px-3 py-2 rounded-xl border transition-all min-h-[44px] flex items-center',
-                isSelected
+                conflictsHere
+                  ? 'border-red-300 dark:border-red-800/50 text-red-400 dark:text-red-500 bg-red-50/40 dark:bg-red-950/20 cursor-not-allowed opacity-60'
+                  : isSelected
                   ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 font-semibold'
                   : 'border-zinc-200 dark:border-zinc-700 hover:border-zinc-400 active:bg-zinc-100 dark:active:bg-zinc-800 text-zinc-600 dark:text-zinc-300',
               ].join(' ')}
@@ -203,65 +229,71 @@ function RotationCard({
         })}
       </div>
 
-      {/* Catégorie DDA — visible dès qu'un créneau est sélectionné */}
-      {selectedInst && (
-        <div className="flex items-center gap-2 pt-2 border-t border-zinc-100 dark:border-zinc-800 flex-wrap">
-          <span className="text-xs text-zinc-400 flex-shrink-0">Catégorie :</span>
-          {BID_OPTIONS.map(opt => (
-            <button
-              key={opt.value}
-              onClick={() => setBidCat(opt.value)}
-              className={[
-                'px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all min-h-[36px]',
-                bidCat === opt.value
-                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300'
-                  : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-zinc-400',
-              ].join(' ')}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
+      {/* Erreur overlap éventuelle (cas marginal du mode 1-clic) */}
+      {preselectedScenario && preselectedCategory && overlapErr && (
+        <div className="text-xs text-red-500">{overlapErr}</div>
       )}
 
-      {/* Scenario picker / bouton Placer */}
-      {selectedInst && (
-        <div className="flex items-center gap-2 pt-2 flex-wrap">
-          {preselectedScenario && !overlapErr ? (
-            <>
-              <span className="text-xs text-zinc-400 flex-shrink-0">Placer dans :</span>
-              {(() => {
-                const sc = scenarios.find(s => s.name === preselectedScenario);
-                return sc ? (
+      {/* Fallback (mode legacy sans présélection complète) : radio catégorie +
+          bouton "Placer en X". Reste visible si preselectedCategory absent. */}
+      {selectedInst && !(preselectedScenario && preselectedCategory) && (
+        <>
+          {!preselectedCategory && (
+            <div className="flex items-center gap-2 pt-2 border-t border-zinc-100 dark:border-zinc-800 flex-wrap">
+              <span className="text-xs text-zinc-400 flex-shrink-0">Catégorie :</span>
+              {(['dda_vol', 'vol_p', 'elabo_suivi'] as BidCategory[]).map(value => (
+                <button
+                  key={value}
+                  onClick={() => setBidCatFallback(value)}
+                  className={[
+                    'px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all min-h-[36px]',
+                    bidCatFallback === value
+                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300'
+                      : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-zinc-400',
+                  ].join(' ')}
+                >
+                  {BID_LABEL[value]}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-2 pt-2 flex-wrap">
+            {preselectedScenario && !overlapErr ? (
+              <>
+                <span className="text-xs text-zinc-400 flex-shrink-0">Placer dans :</span>
+                {(() => {
+                  const sc = scenarios.find(s => s.name === preselectedScenario);
+                  return sc ? (
+                    <button
+                      onClick={() => place(selectedInst, sc)}
+                      disabled={isPending}
+                      className="px-4 py-2 rounded-xl bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 text-sm font-bold hover:bg-zinc-700 dark:hover:bg-zinc-300 active:scale-95 disabled:opacity-40 transition-all min-h-[44px]"
+                    >
+                      Placer en {sc.name}
+                    </button>
+                  ) : null;
+                })()}
+              </>
+            ) : (
+              <>
+                <span className="text-xs text-zinc-400 flex-shrink-0">
+                  {overlapErr ? 'Autre scénario :' : 'Scénario :'}
+                </span>
+                {scenarios.map(sc => (
                   <button
+                    key={sc.name}
                     onClick={() => place(selectedInst, sc)}
                     disabled={isPending}
                     className="px-4 py-2 rounded-xl bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 text-sm font-bold hover:bg-zinc-700 dark:hover:bg-zinc-300 active:scale-95 disabled:opacity-40 transition-all min-h-[44px]"
                   >
-                    Placer en {sc.name}
+                    {sc.name}
                   </button>
-                ) : null;
-              })()}
-            </>
-          ) : (
-            <>
-              <span className="text-xs text-zinc-400 flex-shrink-0">
-                {overlapErr ? 'Autre scénario :' : 'Scénario :'}
-              </span>
-              {scenarios.map(sc => (
-                <button
-                  key={sc.name}
-                  onClick={() => place(selectedInst, sc)}
-                  disabled={isPending}
-                  className="px-4 py-2 rounded-xl bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 text-sm font-bold hover:bg-zinc-700 dark:hover:bg-zinc-300 active:scale-95 disabled:opacity-40 transition-all min-h-[44px]"
-                >
-                  {sc.name}
-                </button>
-              ))}
-              {overlapErr && <span className="text-xs text-red-500">{overlapErr}</span>}
-            </>
-          )}
-        </div>
+                ))}
+                {overlapErr && <span className="text-xs text-red-500">{overlapErr}</span>}
+              </>
+            )}
+          </div>
+        </>
       )}
     </div>
   );
@@ -273,6 +305,7 @@ export function SearchPanel({
   month,
   scenarios,
   preselectedScenario,
+  preselectedCategory,
   panelTop,
   onClose,
   onItemAdded,
@@ -280,6 +313,7 @@ export function SearchPanel({
   month: string;
   scenarios: Scenario[];
   preselectedScenario?: ScenarioName;
+  preselectedCategory?: BidCategory;
   panelTop?: number;
   onClose: () => void;
   onItemAdded?: (item: CalendarItem, draftId: string) => void;
@@ -345,6 +379,11 @@ export function SearchPanel({
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold text-zinc-500 flex-shrink-0">Rotations</span>
             <span className="text-xs text-zinc-400 flex-shrink-0">{month}</span>
+            {preselectedCategory && (
+              <span className="px-1.5 py-0.5 rounded-full bg-blue-600 text-white text-[10px] font-bold flex-shrink-0">
+                {BID_LABEL[preselectedCategory]}
+              </span>
+            )}
             {preselectedScenario && (
               <span className="px-1.5 py-0.5 rounded-full bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 text-xs font-bold flex-shrink-0">
                 → {preselectedScenario}
@@ -440,6 +479,7 @@ export function SearchPanel({
                 sig={sig}
                 scenarios={scenarios}
                 preselectedScenario={preselectedScenario}
+                preselectedCategory={preselectedCategory}
                 onPlaced={() => setPlacedCount(c => c + 1)}
                 onItemAdded={onItemAdded}
               />
