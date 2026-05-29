@@ -28,7 +28,7 @@ type Sig = {
   temps_sej: number | null;
 };
 
-type SortKey = 'rotation_code' | 'zone' | 'aircraft_code' | 'nb_on_days' | 'hc' | 'hcr_crew' | 'pv_h' | 'prime' | 'total_eur' | 'heure_debut' | 'heure_fin' | 'a81_brut' | 'a81_jour';
+type SortKey = 'rotation_code' | 'zone' | 'aircraft_code' | 'nb_on_days' | 'hc' | 'hcr_crew' | 'hc_on' | 'pv_h' | 'prime' | 'total_eur' | 'heure_debut' | 'heure_fin' | 'a81_brut' | 'a81_jour';
 type SortDir = 'asc' | 'desc';
 
 const MONTH_FR = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
@@ -128,9 +128,11 @@ export function CatalogueTable({
         const a81 = (s.temps_sej != null && s.zone)
           ? computeArticle81({ tSej: Number(s.temps_sej), zone: s.zone, valeurJour, data: article81Data })
           : null;
+        const hcOn = s.nb_on_days > 0 ? s.hc / s.nb_on_days : 0;
         return {
           ...s,
           pv_h: pvH, total_eur: totalEur, montant_pv: montantPv, prime_bt: primeBT,
+          hc_on: hcOn,
           a81_brut: a81?.montantPrimeSej ?? 0,
           a81_jour: a81?.montantPrimeSejJour ?? 0,
         };
@@ -225,6 +227,7 @@ export function CatalogueTable({
               <Col k="nb_on_days">ON</Col>
               <Col k="hc">Hc</Col>
               <Col k="hcr_crew">Hcr</Col>
+              <Col k="hc_on">HC/ON</Col>
               <th className="px-2 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap">TSVnuit</th>
               <Col k="pv_h">PV (h)</Col>
               <Col k="prime">Prime</Col>
@@ -237,7 +240,7 @@ export function CatalogueTable({
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={15} className="px-4 py-8 text-center text-zinc-400 text-sm">
+                <td colSpan={16} className="px-4 py-8 text-center text-zinc-400 text-sm">
                   {months.length === 0 ? 'Aucun scraping disponible — importez d\'abord des rotations.' : 'Aucun résultat.'}
                 </td>
               </tr>
@@ -261,6 +264,7 @@ export function CatalogueTable({
                 <td className="px-2 py-1.5 font-mono text-zinc-600 dark:text-zinc-300">{s.nb_on_days}</td>
                 <td className="px-2 py-1.5 font-mono text-zinc-600 dark:text-zinc-300">{fmt(s.hc, 2)}</td>
                 <td className="px-2 py-1.5 font-mono text-zinc-700 dark:text-zinc-200">{fmt(s.hcr_crew, 2)}</td>
+                <td className="px-2 py-1.5 font-mono text-zinc-500">{s.hc_on > 0 ? fmt(s.hc_on, 2) : '—'}</td>
                 <td className="px-2 py-1.5 font-mono text-violet-600 dark:text-violet-400">{fmt((s.tsv_nuit ?? 0), 2)}</td>
                 <td className="px-2 py-1.5 font-mono text-blue-600 dark:text-blue-400 font-semibold">{fmt(s.pv_h, 2)}</td>
                 <td className="px-2 py-1.5 font-mono text-amber-600 dark:text-amber-400">
