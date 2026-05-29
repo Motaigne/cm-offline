@@ -231,7 +231,10 @@ export function NavBar() {
   }
 
   async function handleReset() {
-    if (!confirm('Vider le cache hors ligne et recharger ?')) return;
+    const offlineWarn = !navigator.onLine
+      ? '\n\n⚠ Vous êtes hors ligne : l\'app risque d\'être inutilisable jusqu\'à la prochaine connexion. Continuer quand même ?'
+      : '\n\nSi la connexion est instable, l\'app peut devenir partiellement inutilisable jusqu\'à la prochaine bonne connexion.';
+    if (!confirm(`Vider tout le cache et recharger l'app ?${offlineWarn}`)) return;
     await clearAllCaches();
     localStorage.removeItem(DL_KEY);
     if ('serviceWorker' in navigator) {
@@ -241,7 +244,6 @@ export function NavBar() {
     window.location.reload();
   }
 
-  const syncLabel = syncStatus === 'ok' ? '✓' : syncStatus === 'err' || syncStatus === 'offline' ? '!' : 'Sync';
   const syncColor = syncStatus === 'ok'
     ? 'text-emerald-500'
     : syncStatus === 'err' || syncStatus === 'offline'
@@ -286,17 +288,34 @@ export function NavBar() {
             disabled={syncing}
             title={
               syncStatus === 'offline' ? 'Pas de réseau'
-              : syncStatus === 'push'  ? 'Envoi…'
+              : syncStatus === 'push'  ? 'Envoi des modifications…'
               : syncStatus === 'pull'  ? 'Téléchargement…'
               : syncStatus === 'ok'    ? 'Synchronisé'
               : syncStatus === 'err'   ? 'Erreur de synchronisation'
-              : pendingCount > 0       ? `${pendingCount} modification(s) en attente`
-              : 'Synchroniser'
+              : pendingCount > 0       ? `${pendingCount} modification(s) en attente — Sync pour envoyer`
+              : 'Synchroniser (envoi + téléchargement)'
             }
-            className={`relative px-3 h-8 flex items-center gap-1 text-sm font-medium disabled:opacity-50 rounded hover:bg-zinc-800 transition-colors ${syncColor}`}
+            className={`relative px-2 h-8 flex items-center gap-1 text-sm font-medium disabled:opacity-50 rounded hover:bg-zinc-800 transition-colors ${syncColor}`}
           >
-            <span className={syncing ? 'animate-pulse' : ''}>{syncLabel}</span>
-            {dlProgress && <span className="font-mono text-xs">{dlProgress}</span>}
+            {/* Icône : nuage avec doubles flèches ↑↓ — symbolise sync bidirectionnel. */}
+            <svg
+              className={`w-5 h-5 ${syncing ? 'animate-pulse' : ''}`}
+              viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              {/* Cloud outline */}
+              <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
+              {/* Flèches ↑↓ à l'intérieur */}
+              <path d="M10 17V13" />
+              <path d="M10 13l-1.5 1.5M10 13l1.5 1.5" />
+              <path d="M14 13v4" />
+              <path d="M14 17l-1.5-1.5M14 17l1.5-1.5" />
+            </svg>
+            {/* Marqueur résultat (✓ / !) ou progression */}
+            {syncStatus === 'ok' && <span className="text-xs">✓</span>}
+            {(syncStatus === 'err' || syncStatus === 'offline') && <span className="text-xs">!</span>}
+            {dlProgress && <span className="font-mono text-[10px]">{dlProgress}</span>}
             {(syncStatus === 'push' || syncStatus === 'pull') && !dlProgress && (
               <span className="text-[10px] animate-pulse">{syncStatus === 'push' ? '↑' : '↓'}</span>
             )}
@@ -309,26 +328,32 @@ export function NavBar() {
           <div className="relative">
             <button
               onClick={() => setBackupMenuOpen(o => !o)}
-              title="Backup local du calendrier"
+              title="Sauvegarder / Restaurer le planning depuis l'iPad"
               className="px-2 h-8 flex items-center text-sm text-zinc-500 hover:text-zinc-300 rounded hover:bg-zinc-800 transition-colors"
             >
-              ⤓
+              {/* Disquette */}
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                <polyline points="17 21 17 13 7 13 7 21" />
+                <polyline points="7 3 7 8 15 8" />
+              </svg>
             </button>
             {backupMenuOpen && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setBackupMenuOpen(false)} />
-                <div className="absolute right-0 top-full mt-1 z-50 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-lg py-1 min-w-44">
+                <div className="absolute right-0 top-full mt-1 z-50 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-lg py-1 min-w-56">
                   <button
                     onClick={handleExportBackup}
                     className="block w-full text-left px-4 py-2 text-sm text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-700"
                   >
-                    Exporter (.json)
+                    Sauvegarder sur l&apos;iPad (.json)
                   </button>
                   <button
                     onClick={() => { setBackupMenuOpen(false); fileInputRef.current?.click(); }}
                     className="block w-full text-left px-4 py-2 text-sm text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-700"
                   >
-                    Importer…
+                    Restaurer depuis un fichier…
                   </button>
                   <p className="px-4 py-1.5 text-[10px] text-zinc-400 border-t border-zinc-100 dark:border-zinc-700">
                     Remplace uniquement les mois présents dans le fichier.
@@ -355,10 +380,16 @@ export function NavBar() {
           )}
           <button
             onClick={handleReset}
-            title="Vider le cache et recharger"
+            title="Vider le cache et recharger l'app"
             className="px-2 h-8 flex items-center text-sm text-zinc-500 hover:text-zinc-300 rounded hover:bg-zinc-800 transition-colors"
           >
-            ↻
+            {/* Refresh (rotation arrow) */}
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="23 4 23 10 17 10" />
+              <polyline points="1 20 1 14 7 14" />
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+            </svg>
           </button>
         </div>
       </nav>
