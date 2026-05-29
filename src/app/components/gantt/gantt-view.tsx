@@ -706,19 +706,19 @@ export function GanttView({
   const [noteText, setNoteText] = useState('');
   const [noteEnd, setNoteEnd]   = useState('');
 
-  // Mode chevauchement RPC ↔ congés/TAF. Global, persisté localStorage.
+  // Mode chevauchement RPC ↔ congés/TAF. Per-mois, persisté localStorage.
   // OFF (défaut) : le RPC se reporte ENTIÈREMENT après la chaîne contiguë de
   //   congés/TAF qui le coupent. 1 segment, déplacé.
   // ON : le RPC se met en pause pendant les congés/TAF, puis reprend après.
   //   N+1 segments séparés de N pauses.
   const [rpcChevauchement, setRpcChevauchement] = useState(false);
   useEffect(() => {
-    setRpcChevauchement(localStorage.getItem('cm-rpc-chevauchement') === '1');
-  }, []);
+    setRpcChevauchement(localStorage.getItem(`cm-rpc-chevauchement:${currentMonth}`) === '1');
+  }, [currentMonth]);
   function toggleRpcChevauchement() {
     setRpcChevauchement(prev => {
       const next = !prev;
-      localStorage.setItem('cm-rpc-chevauchement', next ? '1' : '0');
+      localStorage.setItem(`cm-rpc-chevauchement:${currentMonth}`, next ? '1' : '0');
       return next;
     });
   }
