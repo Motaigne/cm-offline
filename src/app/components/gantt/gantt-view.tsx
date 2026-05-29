@@ -955,8 +955,15 @@ export function GanttView({
         getRotationsForMonth(newMonth),
       ]);
       if (myToken !== navTokenRef.current) return;
-      setLocalScenarios(scs);
+      // hydrateDB préserve les items pendants dans db.items ; on relit ensuite
+      // depuis db pour merger items serveur + pending. Sinon un vol fraîchement
+      // ajouté (encore en queue) disparaîtrait visuellement à chaque retour
+      // sur le mois en wifi stable.
       await Promise.all([hydrateDB(scs, newMonth), cacheRotations(rots, newMonth)]);
+      const hasPending = await hasPendingOps();
+      const display = hasPending ? await loadFromDB(scs, newMonth) : scs;
+      if (myToken !== navTokenRef.current) return;
+      setLocalScenarios(display);
       setMonthLoading(false);
       // Pré-cache silencieux des mois adjacents
       void preCacheMonthBg(shiftMonth(newMonth, 1));
@@ -969,7 +976,7 @@ export function GanttView({
       // IR/MF : recalculé client à partir du cache rotations fraîchement mis à jour.
       // (Le useEffect [localScenarios,currentMonth] est déjà déclenché par le setState
       //  plus haut, mais à ce moment-là cacheRotations n'avait pas encore tourné.)
-      void computeMonthlyIrMfFromLocalCache(scs, newMonth).then(res => {
+      void computeMonthlyIrMfFromLocalCache(display, newMonth).then(res => {
         if (myToken !== navTokenRef.current) return;
         setIrMfState({ byScenario: res.byScenario, perFlightByScenario: res.perFlightByScenario });
       });

@@ -80,32 +80,42 @@ export async function enqueueMetaUpdate(itemId: string, meta: Json | null): Prom
 
 // ─── Sync ─────────────────────────────────────────────────────────────────────
 
-/** Rejoue toute la queue vers Supabase. Appelé quand online revient. */
+/** Rejoue toute la queue vers Supabase. Appelé quand online revient.
+ *
+ *  Les server actions retournent `{ error: string }` sur échec (pas un throw),
+ *  donc on inspecte le résultat et on throw nous-mêmes — sinon l'op serait
+ *  supprimée de la queue alors que l'item n'a jamais été inséré côté serveur,
+ *  ce qui le fait disparaître au prochain hydrateDB. */
 export async function syncNow(): Promise<void> {
   const ops = await db.sync_queue.orderBy('created_at').toArray();
   for (const op of ops) {
     try {
+      let res: { error?: string } | undefined;
       if (op.op === 'add') {
         const p = JSON.parse(op.payload) as AddPayload;
-        await addPlanningItem(p);
+        res = await addPlanningItem(p);
       } else if (op.op === 'delete') {
         const p = JSON.parse(op.payload) as DeletePayload;
-        await deletePlanningItem(p.id);
+        res = await deletePlanningItem(p.id);
       } else if (op.op === 'update') {
         const p = JSON.parse(op.payload) as UpdatePayload;
-        await updatePlanningItem(p.id, p.start_date, p.end_date);
+        res = await updatePlanningItem(p.id, p.start_date, p.end_date);
       } else if (op.op === 'update_bid') {
         const p = JSON.parse(op.payload) as UpdateBidPayload;
-        await updatePlanningItemBidCategory(p.id, p.bid_category);
+        res = await updatePlanningItemBidCategory(p.id, p.bid_category);
       } else if (op.op === 'update_meta') {
         const p = JSON.parse(op.payload) as UpdateMetaPayload;
-        await updatePlanningItemMeta(p.id, p.meta);
+        res = await updatePlanningItemMeta(p.id, p.meta);
+      }
+      if (res?.error) {
+        throw new Error(res.error);
       }
       await db.sync_queue.delete(op.id!);
     } catch (e) {
       console.error('[sync] op failed:', op.op, e);
-      // On s'arrête sur la première erreur pour respecter l'ordre
-      break;
+      // On s'arrête sur la première erreur pour respecter l'ordre.
+      // L'op reste dans la queue et sera ré-essayée au prochain Sync.
+      throw e;
     }
   }
 }

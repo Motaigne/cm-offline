@@ -196,6 +196,9 @@ export function NavBar() {
     } finally {
       setSyncing(false);
       setDlProgress('');
+      // Refresh du compteur — si le push a échoué (server action en erreur),
+      // les ops restent en queue et le badge doit le refléter.
+      void pendingOpsCount().then(setPendingCount);
     }
   }
 
