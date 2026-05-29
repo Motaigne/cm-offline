@@ -334,6 +334,28 @@ export type Database = {
         Update: Partial<Database['public']['Tables']['release_download']['Row']>;
         Relationships: [];
       };
+      user_note: {
+        Row: {
+          id: string;
+          user_id: string;
+          start_date: string;
+          end_date: string;
+          text: string;
+          color: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          start_date: string;
+          end_date: string;
+          text: string;
+          color?: string | null;
+        };
+        Update: Partial<Database['public']['Tables']['user_note']['Row']>;
+        Relationships: [];
+      };
     };
     Enums: {
       activity_kind: 'flight' | 'conge' | 'off' | 'sol' | 'taf' | 'medical' | 'instr' | 'sim' | 'autre';
