@@ -46,46 +46,50 @@ function endDateFromArrivee(arrivee_at: string): string {
   return arrivee_at.slice(0, 10);
 }
 
-function addDays(dateStr: string, n: number): string {
-  const d = new Date(dateStr + 'T00:00:00Z');
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
+/** Plage "effective" d'un item en millisecondes [debut, fin) — demi-ouverte
+ *  pour autoriser le contact (fin RPC d'un vol = début exact du suivant).
+ *  Pour un vol on utilise les timestamps réels (precision heure) + rest_after_h
+ *  exprimé en heures (non capé à 3j : la cap à 3 dans dda-validator concerne
+ *  uniquement le bucket de règles, pas l'occupation calendaire). Pour les
+ *  items sans timestamps (congés, off, etc.) on utilise les dates calendaires
+ *  interprétées en heure locale (du jour 00:00 au jour+1 00:00). */
+function effectiveRangeMs(item: CalendarItem): [number, number] {
+  if (item.kind === 'flight') {
+    const meta = (item.meta && typeof item.meta === 'object' && !Array.isArray(item.meta))
+      ? item.meta as Record<string, unknown>
+      : null;
+    const depart  = typeof meta?.depart_at  === 'string' ? new Date(meta.depart_at).getTime()  : NaN;
+    const arrivee = typeof meta?.arrivee_at === 'string' ? new Date(meta.arrivee_at).getTime() : NaN;
+    const restH   = typeof meta?.rest_after_h === 'number' ? meta.rest_after_h : 0;
+    if (Number.isFinite(depart) && Number.isFinite(arrivee)) {
+      return [depart, arrivee + Math.max(0, restH) * 3_600_000];
+    }
+  }
+  const startMs = new Date(item.start_date + 'T00:00:00').getTime();
+  const endMs   = new Date(item.end_date   + 'T00:00:00').getTime() + 86_400_000;
+  return [startMs, endMs];
 }
 
-/** Convertit rest_after_h en jours de RPC (1, 2 ou 3). */
-function rpcDaysFromRestH(restAfterH: number | null | undefined): number {
-  if (typeof restAfterH !== 'number' || restAfterH <= 0) return 1;
-  return Math.max(1, Math.min(3, Math.ceil(restAfterH / 24)));
-}
-
-/** Plage "effective" d'un item = [start, end + RPC(jours)] (RPC=0 hors vol). */
-function effectiveRange(item: CalendarItem): [string, string] {
-  if (item.kind !== 'flight') return [item.start_date, item.end_date];
-  const meta = (item.meta && typeof item.meta === 'object' && !Array.isArray(item.meta))
-    ? item.meta as Record<string, unknown>
-    : null;
-  const h = typeof meta?.rest_after_h === 'number' ? meta.rest_after_h : 0;
-  return [item.start_date, addDays(item.end_date, rpcDaysFromRestH(h))];
-}
-
-/** Overlap simple (sans RPC), conservé pour le mode legacy. */
+/** Overlap simple par dates (sans RPC), conservé pour le mode legacy. */
 function hasOverlap(items: CalendarItem[], start: string, end: string) {
   return items.some(i => i.start_date <= end && i.end_date >= start);
 }
 
-/** Overlap incluant le RPC : la plage candidate s'étend jusqu'à end + candRpcDays,
- *  et chaque vol existant s'étend de même via son rest_after_h. Bloque les
- *  placements qui rentreraient dans le repos post-courrier d'un vol voisin. */
+/** Overlap incluant le RPC : compare en millisecondes les plages effectives
+ *  (vol = depart_at → arrivee_at + rest_after_h h ; non-vol = dates pleines).
+ *  Bloque les placements qui rentreraient dans le repos post-courrier d'un
+ *  vol voisin, ou dont le RPC empièterait sur un item suivant. */
 function hasOverlapWithRpc(
   items: CalendarItem[],
-  candStart: string,
-  candEnd: string,
-  candRpcDays: number,
+  candDepartAt: string,
+  candArriveeAt: string,
+  candRestAfterH: number | null | undefined,
 ): boolean {
-  const candEffEnd = addDays(candEnd, candRpcDays);
+  const candStartMs = new Date(candDepartAt).getTime();
+  const candEndMs   = new Date(candArriveeAt).getTime() + Math.max(0, candRestAfterH ?? 0) * 3_600_000;
   return items.some(i => {
-    const [iStart, iEnd] = effectiveRange(i);
-    return iStart <= candEffEnd && candStart <= iEnd;
+    const [iStart, iEnd] = effectiveRangeMs(i);
+    return iStart < candEndMs && candStartMs < iEnd;
   });
 }
 
@@ -127,8 +131,8 @@ function RotationCard({
 
   function place(inst: RotationInstance, scenario: Scenario) {
     const endDate = endDateFromArrivee(inst.arrivee_at);
-    const candRpc = rpcDaysFromRestH(inst.rest_after_h ?? sig.rest_after_h);
-    if (hasOverlapWithRpc(scenario.items, inst.depart_date, endDate, candRpc)) {
+    const restH   = inst.rest_after_h ?? sig.rest_after_h;
+    if (hasOverlapWithRpc(scenario.items, inst.depart_at, inst.arrivee_at, restH)) {
       setOverlapErr(`Chevauchement (vol ou RPC) dans le scénario ${scenario.name}`);
       return;
     }
@@ -184,9 +188,8 @@ function RotationCard({
     if (preselectedScenario) {
       const sc = scenarios.find(s => s.name === preselectedScenario);
       if (sc) {
-        const endDate = endDateFromArrivee(inst.arrivee_at);
-        const candRpc = rpcDaysFromRestH(inst.rest_after_h ?? sig.rest_after_h);
-        if (hasOverlapWithRpc(sc.items, inst.depart_date, endDate, candRpc)) {
+        const restH = inst.rest_after_h ?? sig.rest_after_h;
+        if (hasOverlapWithRpc(sc.items, inst.depart_at, inst.arrivee_at, restH)) {
           setOverlapErr(`Chevauchement (vol ou RPC) dans le scénario ${sc.name}`);
         } else {
           setOverlapErr(null);
@@ -244,13 +247,13 @@ function RotationCard({
           // En mode 1-clic (cat + scn présélectionnés) : grise les chips qui
           // chevauchent un item existant OU le RPC d'un vol voisin (post-courrier
           // côté existant, ou pré-courrier côté nouveau vol) pour éviter le clic
-          // mort. Inclut le RPC du candidat via inst.rest_after_h (fallback sig).
+          // mort. Comparaison en ms via timestamps (precision heure).
           const conflictsHere = preselectedScenario && preselectedCategory
             ? (() => {
                 const sc = scenarios.find(s => s.name === preselectedScenario);
                 if (!sc) return false;
-                const candRpc = rpcDaysFromRestH(inst.rest_after_h ?? sig.rest_after_h);
-                return hasOverlapWithRpc(sc.items, inst.depart_date, endDate, candRpc);
+                const restH = inst.rest_after_h ?? sig.rest_after_h;
+                return hasOverlapWithRpc(sc.items, inst.depart_at, inst.arrivee_at, restH);
               })()
             : false;
           return (
