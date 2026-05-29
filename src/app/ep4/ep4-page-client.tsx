@@ -87,7 +87,7 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
     <div className="flex flex-col min-h-screen bg-zinc-50 dark:bg-zinc-950">
       <NavBar />
 
-      <header className="flex flex-wrap items-center gap-3 px-4 h-14 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex-shrink-0">
+      <header className="print:hidden flex flex-wrap items-center gap-3 px-4 h-14 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex-shrink-0">
         {/* Mois */}
         <div className="flex items-center gap-1">
           <button onClick={() => setMonth(shiftMonth(month, -1))}
@@ -139,12 +139,50 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
           ))}
         </div>
 
-        <span className="ml-auto text-xs text-zinc-400">
+        {/* Bouton export PDF — affiché uniquement si on a des données */}
+        {data && scenarioFlights.length > 0 && (
+          <button
+            onClick={() => window.print()}
+            className="ml-auto flex items-center gap-1.5 px-3 h-7 rounded bg-zinc-800 dark:bg-zinc-100 text-white dark:text-zinc-900 text-xs font-medium hover:bg-zinc-700 dark:hover:bg-zinc-300 transition-colors"
+            title="Imprimer / sauvegarder les 3 feuilles en PDF (iPad : 'Imprimer' → 'Enregistrer dans Fichiers')"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="6 9 6 2 18 2 18 9" />
+              <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+              <rect x="6" y="14" width="12" height="8" />
+            </svg>
+            PDF
+          </button>
+        )}
+        <span className={`text-xs text-zinc-400 ${data && scenarioFlights.length > 0 ? '' : 'ml-auto'}`}>
           {loading ? 'Chargement…' : error ? 'Erreur' : ''}
         </span>
       </header>
 
-      <main className="flex-1 p-4 max-w-[1400px] w-full mx-auto">
+      {/* Vue impression : les 3 tableaux à la suite (Horaire → Décompte → Frais),
+          uniquement visible via window.print(). Saut de page entre tableaux. */}
+      {data && scenarioFlights.length > 0 && (
+        <div className="hidden print:block p-2">
+          <h1 className="text-base font-bold mb-2">
+            EP4 — Scénario {scenario} · {MONTH_FR[mo - 1]} {y}
+          </h1>
+          <section className="break-after-page">
+            <h2 className="text-sm font-semibold mb-2 mt-2">Feuille Horaire</h2>
+            <Ep4HoraireEP4Consolidee flights={scenarioFlights} year={y} month={mo} />
+          </section>
+          <section className="break-after-page">
+            <h2 className="text-sm font-semibold mb-2 mt-2">Feuille Décompte</h2>
+            <Ep4DecompteEP4Consolidee flights={scenarioFlights} year={y} month={mo} />
+          </section>
+          <section>
+            <h2 className="text-sm font-semibold mb-2 mt-2">Frais de Déplacement</h2>
+            <Ep4FraisEP4Consolidee flights={scenarioFlights} />
+          </section>
+        </div>
+      )}
+
+      <main className="print:hidden flex-1 p-4 max-w-[1400px] w-full mx-auto">
         {loading && (
           <div className="flex items-center justify-center gap-3 py-16 text-zinc-400">
             <span className="animate-spin text-xl">⟳</span>

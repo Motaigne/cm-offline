@@ -10,10 +10,11 @@ import { syncNow, pendingOpsCount } from '@/lib/sync-service';
 import { downloadBackup, parseBackup, importBackup } from '@/lib/backup';
 import { ReleaseBanner } from '@/app/components/release-banner';
 
-const TABS = [
+const TABS: { label: string; href: string; offlineDisabled?: boolean }[] = [
   { label: 'Profil',      href: '/profil'     },
   { label: 'Calendrier',  href: '/'           },
-  { label: 'EP4',         href: '/ep4'        },
+  // EP4 nécessite des calculs server-side (raw_detail) — pas dispo offline.
+  { label: 'EP4',         href: '/ep4',         offlineDisabled: true },
   { label: 'Catalogue',   href: '/catalogue'  },
   { label: 'Comparatif',  href: '/comparatif' },
   { label: 'Annexe',      href: '/annexe'     },
@@ -113,6 +114,9 @@ export function NavBar() {
   const [pendingCount, setPendingCount] = useState(0);
   const [backupMenuOpen, setBackupMenuOpen] = useState(false);
   const [backupStatus, setBackupStatus] = useState('');
+  const [online, setOnline] = useState<boolean>(
+    typeof navigator !== 'undefined' ? navigator.onLine : true,
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -129,6 +133,18 @@ export function NavBar() {
     })();
     void getCurrentUserIsAdmin().then(setIsAdmin).catch(() => setIsAdmin(false));
     void pendingOpsCount().then(setPendingCount);
+  }, []);
+
+  // Suit l'état réseau pour griser les onglets offlineDisabled (EP4).
+  useEffect(() => {
+    const up = () => setOnline(true);
+    const down = () => setOnline(false);
+    window.addEventListener('online', up);
+    window.addEventListener('offline', down);
+    return () => {
+      window.removeEventListener('online', up);
+      window.removeEventListener('offline', down);
+    };
   }, []);
 
   async function handleSync() {
@@ -257,6 +273,18 @@ export function NavBar() {
           const active = tab.href === '/'
             ? path === '/'
             : path.startsWith(tab.href);
+          const disabled = tab.offlineDisabled && !online;
+          if (disabled) {
+            return (
+              <span
+                key={tab.href}
+                title="Indisponible hors ligne"
+                className="px-4 h-8 flex items-center text-sm font-medium rounded whitespace-nowrap text-zinc-600 line-through cursor-not-allowed select-none"
+              >
+                {tab.label}
+              </span>
+            );
+          }
           return (
             <a
               key={tab.href}
