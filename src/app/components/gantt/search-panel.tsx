@@ -46,8 +46,47 @@ function endDateFromArrivee(arrivee_at: string): string {
   return arrivee_at.slice(0, 10);
 }
 
+function addDays(dateStr: string, n: number): string {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Convertit rest_after_h en jours de RPC (1, 2 ou 3). */
+function rpcDaysFromRestH(restAfterH: number | null | undefined): number {
+  if (typeof restAfterH !== 'number' || restAfterH <= 0) return 1;
+  return Math.max(1, Math.min(3, Math.ceil(restAfterH / 24)));
+}
+
+/** Plage "effective" d'un item = [start, end + RPC(jours)] (RPC=0 hors vol). */
+function effectiveRange(item: CalendarItem): [string, string] {
+  if (item.kind !== 'flight') return [item.start_date, item.end_date];
+  const meta = (item.meta && typeof item.meta === 'object' && !Array.isArray(item.meta))
+    ? item.meta as Record<string, unknown>
+    : null;
+  const h = typeof meta?.rest_after_h === 'number' ? meta.rest_after_h : 0;
+  return [item.start_date, addDays(item.end_date, rpcDaysFromRestH(h))];
+}
+
+/** Overlap simple (sans RPC), conservé pour le mode legacy. */
 function hasOverlap(items: CalendarItem[], start: string, end: string) {
   return items.some(i => i.start_date <= end && i.end_date >= start);
+}
+
+/** Overlap incluant le RPC : la plage candidate s'étend jusqu'à end + candRpcDays,
+ *  et chaque vol existant s'étend de même via son rest_after_h. Bloque les
+ *  placements qui rentreraient dans le repos post-courrier d'un vol voisin. */
+function hasOverlapWithRpc(
+  items: CalendarItem[],
+  candStart: string,
+  candEnd: string,
+  candRpcDays: number,
+): boolean {
+  const candEffEnd = addDays(candEnd, candRpcDays);
+  return items.some(i => {
+    const [iStart, iEnd] = effectiveRange(i);
+    return iStart <= candEffEnd && candStart <= iEnd;
+  });
 }
 
 function matchesFamily(aircraftCode: string, families: string[]): boolean {
@@ -88,8 +127,9 @@ function RotationCard({
 
   function place(inst: RotationInstance, scenario: Scenario) {
     const endDate = endDateFromArrivee(inst.arrivee_at);
-    if (hasOverlap(scenario.items, inst.depart_date, endDate)) {
-      setOverlapErr(`Chevauchement dans le scénario ${scenario.name}`);
+    const candRpc = rpcDaysFromRestH(inst.rest_after_h ?? sig.rest_after_h);
+    if (hasOverlapWithRpc(scenario.items, inst.depart_date, endDate, candRpc)) {
+      setOverlapErr(`Chevauchement (vol ou RPC) dans le scénario ${scenario.name}`);
       return;
     }
     const id = crypto.randomUUID();
@@ -145,8 +185,9 @@ function RotationCard({
       const sc = scenarios.find(s => s.name === preselectedScenario);
       if (sc) {
         const endDate = endDateFromArrivee(inst.arrivee_at);
-        if (hasOverlap(sc.items, inst.depart_date, endDate)) {
-          setOverlapErr(`Chevauchement dans le scénario ${sc.name}`);
+        const candRpc = rpcDaysFromRestH(inst.rest_after_h ?? sig.rest_after_h);
+        if (hasOverlapWithRpc(sc.items, inst.depart_date, endDate, candRpc)) {
+          setOverlapErr(`Chevauchement (vol ou RPC) dans le scénario ${sc.name}`);
         } else {
           setOverlapErr(null);
         }
@@ -201,11 +242,15 @@ function RotationCard({
           const isSelected = selectedInst?.id === inst.id;
           const endDate = endDateFromArrivee(inst.arrivee_at);
           // En mode 1-clic (cat + scn présélectionnés) : grise les chips qui
-          // chevauchent un item existant pour éviter le clic mort.
+          // chevauchent un item existant OU le RPC d'un vol voisin (post-courrier
+          // côté existant, ou pré-courrier côté nouveau vol) pour éviter le clic
+          // mort. Inclut le RPC du candidat via inst.rest_after_h (fallback sig).
           const conflictsHere = preselectedScenario && preselectedCategory
             ? (() => {
                 const sc = scenarios.find(s => s.name === preselectedScenario);
-                return sc ? hasOverlap(sc.items, inst.depart_date, endDate) : false;
+                if (!sc) return false;
+                const candRpc = rpcDaysFromRestH(inst.rest_after_h ?? sig.rest_after_h);
+                return hasOverlapWithRpc(sc.items, inst.depart_date, endDate, candRpc);
               })()
             : false;
           return (
