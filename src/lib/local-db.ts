@@ -1,6 +1,7 @@
 import Dexie, { type Table } from 'dexie';
 import type { CalendarItem, Scenario } from '@/app/page';
 import type { RotationSignature } from '@/app/actions/search';
+import type { UserNote } from '@/app/actions/notes';
 
 interface StoredDraft {
   id: string;
@@ -14,7 +15,8 @@ interface StoredItem extends CalendarItem {
 
 export interface SyncOp {
   id?: number;
-  op: 'add' | 'delete' | 'update' | 'update_bid' | 'update_meta';
+  op: 'add' | 'delete' | 'update' | 'update_bid' | 'update_meta'
+    | 'add_note' | 'update_note' | 'delete_note';
   payload: string; // JSON
   created_at: number;
 }
@@ -49,6 +51,7 @@ class CmDatabase extends Dexie {
   sync_queue!:Table<SyncOp,         number>;
   rotations!: Table<StoredRotation, string>;
   releases!:  Table<StoredRelease,  string>;
+  notes!:     Table<UserNote,       string>;
 
   constructor() {
     super('optip');
@@ -64,6 +67,10 @@ class CmDatabase extends Dexie {
     // v3 : releases mensuelles chiffrées (A2)
     this.version(3).stores({
       releases: 'target_month, release_id, expires_at',
+    });
+    // v4 : notes utilisateur (cross-scénario, indépendantes des drafts)
+    this.version(4).stores({
+      notes: 'id, start_date, end_date',
     });
   }
 }
@@ -236,4 +243,46 @@ export async function cacheRotations(sigs: RotationSignature[], month: string): 
 export async function loadRotationsFromDB(month: string): Promise<RotationSignature[]> {
   const stored = await db.rotations.where('target_month').equals(month).toArray();
   return stored.map(({ target_month: _t, ...sig }) => sig as RotationSignature);
+}
+
+// ─── Notes utilisateur (cross-scénario) ───────────────────────────────────────
+
+/** Met à jour le cache local des notes pour un mois donné (= notes overlappant
+ *  le mois). Préserve les notes pendantes dans sync_queue. */
+export async function hydrateNotes(notes: UserNote[], month: string): Promise<void> {
+  const pendingOps = await db.sync_queue.toArray();
+  const pendingIds = new Set(
+    pendingOps
+      .filter(op => op.op === 'add_note' || op.op === 'update_note' || op.op === 'delete_note')
+      .map(op => (JSON.parse(op.payload) as { id: string }).id),
+  );
+
+  const [y, m] = month.split('-').map(Number);
+  const monthStartStr = `${y}-${String(m).padStart(2, '0')}-01`;
+  const next = new Date(Date.UTC(y, m, 1));
+  const monthEndStr = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-01`;
+
+  await db.transaction('rw', db.notes, async () => {
+    // Supprime les notes du mois (= overlappant) sauf les pendantes.
+    const overlap = await db.notes
+      .where('start_date').below(monthEndStr)
+      .filter(n => n.end_date >= monthStartStr)
+      .toArray();
+    const toDelete = overlap.filter(n => !pendingIds.has(n.id)).map(n => n.id);
+    if (toDelete.length) await db.notes.bulkDelete(toDelete);
+    const toAdd = notes.filter(n => !pendingIds.has(n.id));
+    if (toAdd.length) await db.notes.bulkPut(toAdd);
+  });
+}
+
+/** Notes locales overlappant le mois donné. */
+export async function loadNotesForMonth(month: string): Promise<UserNote[]> {
+  const [y, m] = month.split('-').map(Number);
+  const monthStartStr = `${y}-${String(m).padStart(2, '0')}-01`;
+  const next = new Date(Date.UTC(y, m, 1));
+  const monthEndStr = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-01`;
+  return db.notes
+    .where('start_date').below(monthEndStr)
+    .filter(n => n.end_date >= monthStartStr)
+    .sortBy('start_date');
 }

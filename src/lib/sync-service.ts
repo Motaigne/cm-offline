@@ -6,6 +6,12 @@ import {
   updatePlanningItemBidCategory,
   updatePlanningItemMeta,
 } from '@/app/actions/planning';
+import {
+  addNote,
+  updateNote,
+  deleteNote,
+  type UserNote,
+} from '@/app/actions/notes';
 import type { CalendarItem } from '@/app/page';
 import type { ActivityKind, BidCategory } from '@/lib/activity-meta';
 import type { Json } from '@/types/supabase';
@@ -26,6 +32,10 @@ type DeletePayload    = { id: string };
 type UpdatePayload    = { id: string; start_date: string; end_date: string };
 type UpdateBidPayload = { id: string; bid_category: BidCategory | null };
 type UpdateMetaPayload = { id: string; meta: Json | null };
+
+type AddNotePayload    = UserNote;
+type UpdateNotePayload = { id: string; start_date?: string; end_date?: string; text?: string; color?: string | null };
+type DeleteNotePayload = { id: string };
 
 // ─── Enqueue helpers (écriture locale + mise en queue) ───────────────────────
 
@@ -78,6 +88,34 @@ export async function enqueueMetaUpdate(itemId: string, meta: Json | null): Prom
   });
 }
 
+// ─── Notes ────────────────────────────────────────────────────────────────────
+
+export async function enqueueAddNote(note: UserNote): Promise<void> {
+  await db.transaction('rw', db.notes, db.sync_queue, async () => {
+    await db.notes.put(note);
+    await db.sync_queue.add({ op: 'add_note', payload: JSON.stringify(note), created_at: Date.now() });
+  });
+}
+
+export async function enqueueUpdateNote(
+  id: string,
+  patch: { start_date?: string; end_date?: string; text?: string; color?: string | null },
+): Promise<void> {
+  const payload: UpdateNotePayload = { id, ...patch };
+  await db.transaction('rw', db.notes, db.sync_queue, async () => {
+    await db.notes.where('id').equals(id).modify(patch);
+    await db.sync_queue.add({ op: 'update_note', payload: JSON.stringify(payload), created_at: Date.now() });
+  });
+}
+
+export async function enqueueDeleteNote(id: string): Promise<void> {
+  const payload: DeleteNotePayload = { id };
+  await db.transaction('rw', db.notes, db.sync_queue, async () => {
+    await db.notes.delete(id);
+    await db.sync_queue.add({ op: 'delete_note', payload: JSON.stringify(payload), created_at: Date.now() });
+  });
+}
+
 // ─── Sync ─────────────────────────────────────────────────────────────────────
 
 /** Rejoue toute la queue vers Supabase. Appelé quand online revient.
@@ -106,6 +144,16 @@ export async function syncNow(): Promise<void> {
       } else if (op.op === 'update_meta') {
         const p = JSON.parse(op.payload) as UpdateMetaPayload;
         res = await updatePlanningItemMeta(p.id, p.meta);
+      } else if (op.op === 'add_note') {
+        const p = JSON.parse(op.payload) as AddNotePayload;
+        res = await addNote(p);
+      } else if (op.op === 'update_note') {
+        const p = JSON.parse(op.payload) as UpdateNotePayload;
+        const { id, ...patch } = p;
+        res = await updateNote(id, patch);
+      } else if (op.op === 'delete_note') {
+        const p = JSON.parse(op.payload) as DeleteNotePayload;
+        res = await deleteNote(p.id);
       }
       if (res?.error) {
         throw new Error(res.error);

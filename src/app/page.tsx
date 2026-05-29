@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { getScenariosWithItems } from '@/app/actions/planning';
+import { listNotesForMonth } from '@/app/actions/notes';
 import { loadAnnexe } from '@/app/actions/annexe';
 import { getYearA81CumulBefore } from '@/app/actions/article81';
 import { getMonthlyIrMfEuros } from '@/app/actions/ir-mf';
@@ -52,8 +53,9 @@ export default async function Home({
   if (!profile) redirect('/profil');
 
   const [y, mo] = month.split('-').map(Number);
-  const [scenarios, annexe, { data: a81Row }, a81Cumul, irMfMonth, { data: prorataRow }, { data: ddaRulesRow }, { data: volPRulesRow }] = await Promise.all([
+  const [scenarios, notes, annexe, { data: a81Row }, a81Cumul, irMfMonth, { data: prorataRow }, { data: ddaRulesRow }, { data: volPRulesRow }] = await Promise.all([
     getScenariosWithItems(month),
+    listNotesForMonth(month),
     loadAnnexe(),
     supabase.from('annexe_table').select('data').eq('slug', 'article_81').single(),
     getYearA81CumulBefore(y, mo),
@@ -135,6 +137,7 @@ export default async function Home({
       voitureIndemniteKm={Number(profile.voiture_indemnite_km ?? 0)}
       ddaRulesData={ddaRulesData}
       volPRulesData={volPRulesData}
+      notes={notes}
     />
   );
 }

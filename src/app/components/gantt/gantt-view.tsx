@@ -23,7 +23,7 @@ import { rotationValue, monthlyFinancialsP, PRIME_BITRONCON, PVEI, KSP, FIXE_MEN
 import { computeArticle81, computeTSej24, getPlafondJours } from '@/lib/article81';
 import type { Article81Data } from '@/lib/article81';
 import { createClient } from '@/lib/supabase/client';
-import { db, hydrateDB, loadFromDB, hasPendingOps, loadScenariosForMonth, cacheRotations, purgeScenarios } from '@/lib/local-db';
+import { db, hydrateDB, loadFromDB, hasPendingOps, loadScenariosForMonth, cacheRotations, purgeScenarios, hydrateNotes, loadNotesForMonth } from '@/lib/local-db';
 import { enqueueAdd, enqueueDelete, enqueueUpdate, enqueueBidCategoryUpdate, enqueueMetaUpdate, pendingOpsCount } from '@/lib/sync-service';
 import {
   validateScenario, mergeRules,
@@ -35,6 +35,8 @@ import { getCurrentUserScrapeRights } from '@/app/actions/auth';
 import { getYearA81CumulBefore } from '@/app/actions/article81';
 import { computeMonthlyIrMfFromLocalCache } from '@/lib/ir-mf-local';
 import { computeEffectiveRpc } from '@/lib/rpc';
+import { enqueueAddNote, enqueueUpdateNote, enqueueDeleteNote } from '@/lib/sync-service';
+import { listNotesForMonth, type UserNote } from '@/app/actions/notes';
 import { NavBar } from '@/app/components/nav';
 
 type RegimeEnum = Database['public']['Enums']['regime_enum'];
@@ -636,6 +638,7 @@ export function GanttView({
   navigoEur = 0,
   voitureKmAller = 0,
   voitureIndemniteKm = 0,
+  notes = [],
 }: {
   month: string;
   scenarios: Scenario[];
@@ -673,6 +676,8 @@ export function GanttView({
   /** Règles DDA + Vol P (slugs 'dda_rules' et 'vol_p_rules' dans annexe_table). */
   ddaRulesData?: { rules: unknown[] } | null;
   volPRulesData?: { rules: unknown[] } | null;
+  /** Notes utilisateur (cross-scénario) overlappant le mois courant. */
+  notes?: UserNote[];
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -686,6 +691,18 @@ export function GanttView({
   // local state (offline-capable copy of scenarios)
   const [localScenarios, setLocalScenarios] = useState<Scenario[]>(scenarios);
   const [pendingCount, setPendingCount]     = useState(0);
+  const [localNotes, setLocalNotes]         = useState<UserNote[]>(notes);
+
+  // Sheet pour ajouter/éditer une note (sépare des items planning pour
+  // éviter de mixer 2 logiques différentes — note vit dans table user_note,
+  // pas planning_item, et est cross-scénario).
+  const [noteSheet, setNoteSheet] = useState<
+    | { mode: 'add'; date: string }
+    | { mode: 'edit'; note: UserNote }
+    | null
+  >(null);
+  const [noteText, setNoteText] = useState('');
+  const [noteEnd, setNoteEnd]   = useState('');
 
   // Mode chevauchement RPC ↔ congés/TAF. Global, persisté localStorage.
   // OFF (défaut) : le RPC se reporte ENTIÈREMENT après la chaîne contiguë de
@@ -945,6 +962,10 @@ export function GanttView({
         await hydrateDB(scenarios, month);
         setLocalScenarios(scenarios);
       }
+      // Hydrate notes pour le mois courant + recharge depuis db (préserve
+      // les pendantes).
+      await hydrateNotes(notes, month);
+      setLocalNotes(await loadNotesForMonth(month));
     }
     init();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1024,23 +1045,27 @@ export function GanttView({
     }
 
     try {
-      // Scenarios + rotations en parallèle : rotations indispensables pour
-      // l'agrégation IR/MF locale (lookup par instance_id). Sans elles,
-      // arrivée sur un mois non syncé = IR/MF à 0 jusqu'au prochain Sync.
-      const [scs, rots] = await Promise.all([
+      // Scenarios + rotations + notes en parallèle.
+      const [scs, rots, srvNotes] = await Promise.all([
         getScenariosWithItems(newMonth),
         getRotationsForMonth(newMonth),
+        listNotesForMonth(newMonth),
       ]);
       if (myToken !== navTokenRef.current) return;
       // hydrateDB préserve les items pendants dans db.items ; on relit ensuite
       // depuis db pour merger items serveur + pending. Sinon un vol fraîchement
       // ajouté (encore en queue) disparaîtrait visuellement à chaque retour
       // sur le mois en wifi stable.
-      await Promise.all([hydrateDB(scs, newMonth), cacheRotations(rots, newMonth)]);
+      await Promise.all([
+        hydrateDB(scs, newMonth),
+        cacheRotations(rots, newMonth),
+        hydrateNotes(srvNotes, newMonth),
+      ]);
       const hasPending = await hasPendingOps();
       const display = hasPending ? await loadFromDB(scs, newMonth) : scs;
       if (myToken !== navTokenRef.current) return;
       setLocalScenarios(display);
+      setLocalNotes(await loadNotesForMonth(newMonth));
       setMonthLoading(false);
       // Pré-cache silencieux des mois adjacents
       void preCacheMonthBg(shiftMonth(newMonth, 1));
@@ -1617,6 +1642,54 @@ export function GanttView({
                         />
                       );
                     })}
+
+                    {/* Notes utilisateur (cross-scénario) — bar fine en bas
+                        de chaque ligne A/B/C. Click = édit. Empilées si
+                        plusieurs notes le même jour. */}
+                    {(() => {
+                      const noteRows: typeof localNotes[] = [];
+                      for (const n of localNotes) {
+                        // start_date / end_date sont calendaires. On clip au mois courant.
+                        const ns = n.start_date.slice(0, 7) > `${year}-${String(mo).padStart(2,'0')}`
+                          ? null : n.start_date;
+                        const ne = n.end_date.slice(0, 7) < `${year}-${String(mo).padStart(2,'0')}`
+                          ? null : n.end_date;
+                        if (!ns || !ne) continue;
+                        // Stack : place dans la 1ère row sans chevauchement.
+                        let placed = false;
+                        for (const row of noteRows) {
+                          if (!row.some(r => r.start_date <= n.end_date && r.end_date >= n.start_date)) {
+                            row.push(n); placed = true; break;
+                          }
+                        }
+                        if (!placed) noteRows.push([n]);
+                      }
+                      const NOTE_H = 10;
+                      return noteRows.map((row, rowIdx) => row.map(n => {
+                        const start = n.start_date.slice(0,7) < `${year}-${String(mo).padStart(2,'0')}`
+                          ? 1 : dayNum(n.start_date);
+                        const end = n.end_date.slice(0,7) > `${year}-${String(mo).padStart(2,'0')}`
+                          ? dim : dayNum(n.end_date);
+                        const left = ((start - 1) / dim) * 100;
+                        const width = ((end - start + 1) / dim) * 100;
+                        const top = ROW_H - 14 - rowIdx * (NOTE_H + 2);
+                        return (
+                          <button
+                            key={n.id + '-r' + rowIdx}
+                            onClick={() => {
+                              setNoteText(n.text);
+                              setNoteEnd(n.end_date);
+                              setNoteSheet({ mode: 'edit', note: n });
+                            }}
+                            title={n.text}
+                            className="absolute z-[9] rounded-sm bg-amber-200 hover:bg-amber-300 dark:bg-amber-900/60 dark:hover:bg-amber-800/80 text-amber-900 dark:text-amber-200 text-[9px] font-medium px-1 truncate text-left overflow-hidden whitespace-nowrap"
+                            style={{ left: `${left}%`, width: `${width}%`, top, height: NOTE_H, lineHeight: `${NOTE_H}px` }}
+                          >
+                            {n.text}
+                          </button>
+                        );
+                      }));
+                    })()}
                   </div>
                 </div>
               );
@@ -1834,6 +1907,20 @@ export function GanttView({
                         </button>
                       );
                     })}
+                    {/* Bouton "Note" — bascule vers le note sheet (cross-scénario). */}
+                    <button
+                      onClick={() => {
+                        const d = sheet.date;
+                        setSheet(null);
+                        setNoteText('');
+                        setNoteEnd(d);
+                        setNoteSheet({ mode: 'add', date: d });
+                      }}
+                      className="px-4 py-2 rounded-lg text-sm font-medium border-2 border-dashed border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:border-amber-400 hover:text-amber-600 transition-all"
+                      title="Note libre (cross-scénario, indépendante d'un vol)"
+                    >
+                      📝 Note
+                    </button>
                   </div>
                 )}
 
@@ -1996,6 +2083,102 @@ export function GanttView({
                   {name}
                 </button>
               ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Note sheet (add/edit) */}
+      {noteSheet && (
+        <>
+          <div className="fixed inset-0 z-30 bg-black/20" onClick={() => setNoteSheet(null)} />
+          <div className="fixed left-0 right-0 bottom-0 z-40 bg-white dark:bg-zinc-950 rounded-t-2xl shadow-2xl"
+            style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+            <div className="p-4 space-y-3">
+              <div className="flex items-start justify-between">
+                <div>
+                  <span className="text-xs font-medium text-amber-500 uppercase tracking-wide">📝 Note</span>
+                  <h2 className="font-semibold capitalize">
+                    {noteSheet.mode === 'edit'
+                      ? new Date(noteSheet.note.start_date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })
+                      : new Date(noteSheet.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}
+                  </h2>
+                </div>
+                <div className="flex items-center gap-2">
+                  {noteSheet.mode === 'edit' && (
+                    <button
+                      onClick={() => {
+                        const id = noteSheet.note.id;
+                        setLocalNotes(prev => prev.filter(n => n.id !== id));
+                        setPendingCount(c => c + 1);
+                        void enqueueDeleteNote(id);
+                        setNoteSheet(null);
+                      }}
+                      className="px-3 py-1.5 rounded-lg border border-red-200 text-red-500 text-sm hover:bg-red-50"
+                    >
+                      Supprimer
+                    </button>
+                  )}
+                  <button onClick={() => setNoteSheet(null)} className="text-zinc-400 hover:text-zinc-600 text-2xl leading-none">×</button>
+                </div>
+              </div>
+
+              <textarea
+                value={noteText || (noteSheet.mode === 'edit' ? noteSheet.note.text : '')}
+                onChange={e => setNoteText(e.target.value)}
+                placeholder="Texte de la note (ex : RDV médecin 9h, Anniversaire Sophie…)"
+                rows={3}
+                autoFocus
+                className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm"
+              />
+
+              <div className="flex items-center gap-3">
+                <label className="text-xs text-zinc-500">Jusqu&apos;au</label>
+                <input
+                  type="date"
+                  value={noteEnd || (noteSheet.mode === 'edit' ? noteSheet.note.end_date : noteSheet.date)}
+                  min={noteSheet.mode === 'edit' ? noteSheet.note.start_date : noteSheet.date}
+                  onChange={e => setNoteEnd(e.target.value)}
+                  className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  onClick={() => setNoteSheet(null)}
+                  className="px-4 py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                >
+                  Annuler
+                </button>
+                <button
+                  onClick={() => {
+                    const text = (noteText || (noteSheet.mode === 'edit' ? noteSheet.note.text : '')).trim();
+                    if (!text) { setNoteSheet(null); return; }
+                    const start = noteSheet.mode === 'edit' ? noteSheet.note.start_date : noteSheet.date;
+                    const end   = (noteEnd || (noteSheet.mode === 'edit' ? noteSheet.note.end_date : noteSheet.date));
+                    const safeEnd = end >= start ? end : start;
+                    if (noteSheet.mode === 'edit') {
+                      const id = noteSheet.note.id;
+                      const patch = { start_date: start, end_date: safeEnd, text };
+                      setLocalNotes(prev => prev.map(n => n.id === id ? { ...n, ...patch } : n));
+                      setPendingCount(c => c + 1);
+                      void enqueueUpdateNote(id, patch);
+                    } else {
+                      const id = crypto.randomUUID();
+                      const note: UserNote = { id, start_date: start, end_date: safeEnd, text, color: null };
+                      setLocalNotes(prev => [...prev, note].sort((a, b) => a.start_date.localeCompare(b.start_date)));
+                      setPendingCount(c => c + 1);
+                      void enqueueAddNote(note);
+                    }
+                    setNoteSheet(null);
+                    setNoteText('');
+                    setNoteEnd('');
+                  }}
+                  className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold"
+                >
+                  {noteSheet.mode === 'edit' ? 'Enregistrer' : 'Ajouter'}
+                </button>
+              </div>
             </div>
           </div>
         </>
