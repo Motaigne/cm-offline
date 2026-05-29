@@ -418,10 +418,12 @@ function DraggableBar({
   // Sub-day precision for flights with timestamps, integer days for others
   let leftPct: number, wPct: number;
   let restBeforeBar: { left: number; width: number } | null = null;
-  // Post-RPC : 1 segment par tranche (mode chevauchement = N segments séparés
-  // par des congés/TAF). Le mode "report total" donne 1 segment, décalé.
+  // Post-RPC : N segments solides + M pauses (mode chevauchement).
+  // En mode OFF, 1 segment d'origine + hasRpcConflict = true si un jour
+  // entier de congé/TAF est dans le RPC (déclenche le flag visuel).
   let restAfterSegments: { left: number; width: number }[] = [];
   let restAfterPauses:   { left: number; width: number }[] = [];
+  let hasRpcConflict = false;
 
   if (item.kind === 'flight' && departAt && arriveeAt) {
     const startFrac = dayFrac(departAt,  year, mo, dim);
@@ -461,11 +463,11 @@ function DraggableBar({
       const bar = segToBar(seg.startMs, seg.endMs);
       if (bar) restAfterSegments.push(bar);
     }
-    // Pauses : intervalles entre 2 segments consécutifs (= jours bloquants).
-    for (let i = 1; i < eff.segments.length; i++) {
-      const bar = segToBar(eff.segments[i - 1].endMs, eff.segments[i].startMs);
+    for (const p of eff.pauseIntervals) {
+      const bar = segToBar(p.startMs, p.endMs);
       if (bar) restAfterPauses.push(bar);
     }
+    hasRpcConflict = eff.hasConflict && !rpcChevauchement;
   } else {
     const span = clip.end - clip.start + 1;
     leftPct = ((clip.start - 1) / dim) * 100;
@@ -491,18 +493,20 @@ function DraggableBar({
         />
       )}
 
-      {/* Post-repos : N segments solides (pleins) + N-1 pauses (pointillés
-          au-dessus des congés/TAF traversés en mode chevauchement). */}
+      {/* Post-repos : N segments solides (pleins) + M pauses (pointillés
+          au-dessus des congés/TAF traversés en mode chevauchement).
+          En mode OFF avec conflit (un jour entier de congé/TAF dans le RPC),
+          on tint en ambre + ajoute une badge ⚠ pour signaler le conflit. */}
       {restAfterSegments.map((seg, i) => (
         <div
           key={`rest-seg-${i}`}
-          className={`absolute pointer-events-none z-[11] ${i === 0 ? '' : ''} ${i === restAfterSegments.length - 1 ? 'rounded-r-sm' : ''} ${i === 0 ? 'rounded-l-sm' : ''}`}
+          className="absolute pointer-events-none z-[11] rounded-sm"
           style={{
             left: `${seg.left}%`,
             width: `${seg.width}%`,
             top: restTop,
             height: REST_H,
-            backgroundColor: '#93C5FD',
+            backgroundColor: hasRpcConflict ? '#F59E0B' : '#93C5FD',
             opacity: isDragSource ? 0.2 : 0.65,
           }}
         />
@@ -522,6 +526,18 @@ function DraggableBar({
           }}
         />
       ))}
+      {hasRpcConflict && restAfterSegments.length > 0 && (
+        <span
+          className="absolute pointer-events-none z-[12] text-amber-500 text-[10px] font-bold leading-none"
+          title="RPC en conflit avec un congé/TAF (jour entier). Active Chevauchement pour reporter le RPC, ou retire le congé."
+          style={{
+            left: `calc(${restAfterSegments[0].left}% - 2px)`,
+            top: `calc(50% - ${REST_H / 2 + 8}px)`,
+          }}
+        >
+          ⚠
+        </span>
+      )}
 
       {/* Main bar */}
       <div
@@ -1992,7 +2008,6 @@ export function GanttView({
           scenarios={localScenarios}
           preselectedScenario={searchScenario ?? undefined}
           preselectedCategory={searchCategory ?? undefined}
-          rpcChevauchement={rpcChevauchement}
           panelTop={searchPanelTop}
           onClose={() => {
             setSearchOpen(false);

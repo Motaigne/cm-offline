@@ -8,7 +8,6 @@ import { loadRotationsFromDB } from '@/lib/local-db';
 import { enqueueAdd } from '@/lib/sync-service';
 import { rotationValue } from '@/lib/finance';
 import type { BidCategory } from '@/lib/activity-meta';
-import { computeEffectiveRpc } from '@/lib/rpc';
 
 const BID_LABEL: Record<BidCategory, string> = {
   dda_vol:     'DDA',
@@ -47,25 +46,26 @@ function endDateFromArrivee(arrivee_at: string): string {
   return arrivee_at.slice(0, 10);
 }
 
-/** Plage "effective" d'un item en millisecondes [debut, fin) — demi-ouverte
- *  pour autoriser le contact (fin RPC d'un vol = début exact du suivant).
- *  Pour un vol on utilise computeEffectiveRpc (qui tient compte du mode
- *  chevauchement et des congés/TAF voisins). Pour les items sans timestamps
- *  (congés, off, etc.) on utilise les dates calendaires en UTC. */
-function effectiveRangeMs(
-  item: CalendarItem,
-  allItems: CalendarItem[],
-  chevauchement: boolean,
-): [number, number] {
+const SOFT_BLOCKERS = new Set(['conge', 'taf']);
+const HARD_BLOCKERS = new Set(['sol', 'sim', 'medical', 'instr', 'autre']);
+
+/** Plage effective [start, end) en ms d'un item.
+ *  - Vol : [depart_at, arrivee_at + rest_after_h × 3600s] (sans pause par
+ *    congé/TAF, peu importe le mode — la pause par congé est traitée en
+ *    couche au-dessus dans hasOverlap : le RPC d'un vol PEUT chevaucher
+ *    un congé/TAF sans bloquer la pose, ce sont les autres vols et les
+ *    hard blockers qui sont strictement incompatibles).
+ *  - Autre : [start_date 00:00 UTC, end_date+1 00:00 UTC).  */
+function rawRangeMs(item: CalendarItem): [number, number] {
   if (item.kind === 'flight') {
     const meta = (item.meta && typeof item.meta === 'object' && !Array.isArray(item.meta))
       ? item.meta as Record<string, unknown>
       : null;
     const depart  = typeof meta?.depart_at  === 'string' ? new Date(meta.depart_at).getTime()  : NaN;
-    if (Number.isFinite(depart)) {
-      const eff = computeEffectiveRpc(item, allItems, chevauchement);
-      const arrivee = typeof meta?.arrivee_at === 'string' ? new Date(meta.arrivee_at).getTime() : depart;
-      return [depart, Math.max(eff.endMs, arrivee)];
+    const arrivee = typeof meta?.arrivee_at === 'string' ? new Date(meta.arrivee_at).getTime() : NaN;
+    const restH   = typeof meta?.rest_after_h === 'number' ? meta.rest_after_h : 0;
+    if (Number.isFinite(depart) && Number.isFinite(arrivee)) {
+      return [depart, arrivee + Math.max(0, restH) * 3_600_000];
     }
   }
   const startMs = new Date(item.start_date + 'T00:00:00Z').getTime();
@@ -78,31 +78,33 @@ function hasOverlap(items: CalendarItem[], start: string, end: string) {
   return items.some(i => i.start_date <= end && i.end_date >= start);
 }
 
-/** Overlap incluant le RPC : compare en millisecondes les plages effectives
- *  via computeEffectiveRpc (vol = depart_at → effective RPC end ; non-vol =
- *  dates pleines). Le RPC du candidat est calculé contre les items existants
- *  (mode chevauchement) — il peut être tronqué par un hard blocker. */
+/** Vrai si le candidat (vol) ne peut pas être posé en raison d'un
+ *  chevauchement avec un item existant :
+ *    1. Dates calendaires qui se chevauchent (toujours bloquant).
+ *    2. RPC qui chevauche un autre VOL → bloquant (RPC mutuels).
+ *    3. RPC qui chevauche un HARD blocker (sol/sim/medical/instr/autre) →
+ *       bloquant (ces activités ne peuvent jamais être chevauchées par le RPC).
+ *  Le RPC qui chevauche un congé/TAF est AUTORISÉ (juste signalé par le
+ *  flag visuel sur la barre de vol).  */
 function hasOverlapWithRpc(
   items: CalendarItem[],
   candDepartAt: string,
   candArriveeAt: string,
   candRestAfterH: number | null | undefined,
-  chevauchement: boolean,
 ): boolean {
+  const candStart = candDepartAt.slice(0, 10);
+  const candEnd   = candArriveeAt.slice(0, 10);
   const candStartMs = new Date(candDepartAt).getTime();
-  // Calcule l'effective RPC du candidat contre les items du scénario.
-  const candItem: CalendarItem = {
-    id: '__candidate__', kind: 'flight',
-    start_date: candDepartAt.slice(0, 10), end_date: candArriveeAt.slice(0, 10),
-    bid_category: null,
-    meta: { arrivee_at: candArriveeAt, rest_after_h: candRestAfterH ?? 0 },
-  };
-  const candEff = computeEffectiveRpc(candItem, items, chevauchement);
-  const arriveeMs = new Date(candArriveeAt).getTime();
-  const candEndMs = Math.max(candEff.endMs, arriveeMs);
+  const candArriveeMs = new Date(candArriveeAt).getTime();
+  const candRpcEndMs = candArriveeMs + Math.max(0, candRestAfterH ?? 0) * 3_600_000;
   return items.some(i => {
-    const [iStart, iEnd] = effectiveRangeMs(i, items, chevauchement);
-    return iStart < candEndMs && candStartMs < iEnd;
+    // 1. Date overlap → toujours bloquant.
+    if (i.start_date <= candEnd && i.end_date >= candStart) return true;
+    // 2. RPC overlap → bloquant uniquement vs vol ou hard blocker.
+    if (i.kind !== 'flight' && !HARD_BLOCKERS.has(i.kind)) return false;
+    if (SOFT_BLOCKERS.has(i.kind)) return false;
+    const [iStart, iEnd] = rawRangeMs(i);
+    return iStart < candRpcEndMs && candStartMs < iEnd;
   });
 }
 
@@ -121,7 +123,6 @@ function RotationCard({
   scenarios,
   preselectedScenario,
   preselectedCategory,
-  rpcChevauchement,
   onPlaced,
   onItemAdded,
 }: {
@@ -129,7 +130,6 @@ function RotationCard({
   scenarios: Scenario[];
   preselectedScenario?: ScenarioName;
   preselectedCategory?: BidCategory;
-  rpcChevauchement: boolean;
   onPlaced: () => void;
   onItemAdded?: (item: CalendarItem, draftId: string) => void;
 }) {
@@ -147,7 +147,7 @@ function RotationCard({
   function place(inst: RotationInstance, scenario: Scenario) {
     const endDate = endDateFromArrivee(inst.arrivee_at);
     const restH   = inst.rest_after_h ?? sig.rest_after_h;
-    if (hasOverlapWithRpc(scenario.items, inst.depart_at, inst.arrivee_at, restH, rpcChevauchement)) {
+    if (hasOverlapWithRpc(scenario.items, inst.depart_at, inst.arrivee_at, restH)) {
       setOverlapErr(`Chevauchement (vol ou RPC) dans le scénario ${scenario.name}`);
       return;
     }
@@ -204,7 +204,7 @@ function RotationCard({
       const sc = scenarios.find(s => s.name === preselectedScenario);
       if (sc) {
         const restH = inst.rest_after_h ?? sig.rest_after_h;
-        if (hasOverlapWithRpc(sc.items, inst.depart_at, inst.arrivee_at, restH, rpcChevauchement)) {
+        if (hasOverlapWithRpc(sc.items, inst.depart_at, inst.arrivee_at, restH)) {
           setOverlapErr(`Chevauchement (vol ou RPC) dans le scénario ${sc.name}`);
         } else {
           setOverlapErr(null);
@@ -268,7 +268,7 @@ function RotationCard({
                 const sc = scenarios.find(s => s.name === preselectedScenario);
                 if (!sc) return false;
                 const restH = inst.rest_after_h ?? sig.rest_after_h;
-                return hasOverlapWithRpc(sc.items, inst.depart_at, inst.arrivee_at, restH, rpcChevauchement);
+                return hasOverlapWithRpc(sc.items, inst.depart_at, inst.arrivee_at, restH);
               })()
             : false;
           return (
@@ -369,7 +369,6 @@ export function SearchPanel({
   scenarios,
   preselectedScenario,
   preselectedCategory,
-  rpcChevauchement,
   panelTop,
   onClose,
   onItemAdded,
@@ -378,8 +377,6 @@ export function SearchPanel({
   scenarios: Scenario[];
   preselectedScenario?: ScenarioName;
   preselectedCategory?: BidCategory;
-  /** Mode RPC global hérité du gantt (toggle dans la barre du mois). */
-  rpcChevauchement: boolean;
   panelTop?: number;
   onClose: () => void;
   onItemAdded?: (item: CalendarItem, draftId: string) => void;
@@ -546,7 +543,6 @@ export function SearchPanel({
                 scenarios={scenarios}
                 preselectedScenario={preselectedScenario}
                 preselectedCategory={preselectedCategory}
-                rpcChevauchement={rpcChevauchement}
                 onPlaced={() => setPlacedCount(c => c + 1)}
                 onItemAdded={onItemAdded}
               />

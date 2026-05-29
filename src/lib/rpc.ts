@@ -1,123 +1,97 @@
 // ─── RPC (Repos Post Courrier) report helper ─────────────────────────────────
 //
-// Calcule la plage effective du RPC d'un vol en tenant compte des congés / TAF
-// qui peuvent soit le reporter (mode défaut), soit être chevauchés (mode
-// "Autoriser chevauchement"). Renvoie les segments à dessiner dans le gantt
-// ainsi que la fin effective du RPC (utilisée pour la détection de chevauchement
-// au moment de poser un nouveau vol).
+// Calcule la plage effective du RPC d'un vol et identifie les conflits avec
+// congés / TAF. Un conflit n'existe que si la JOURNÉE ENTIÈRE [00:00 → 24:00]
+// du congé/TAF est entièrement couverte par le RPC. Un chevauchement partiel
+// (ex: RPC fini le 11 à 6h, congé le 11) est toujours toléré sans flag.
 //
-// 2 modes :
+// 2 modes (toggle global "Chevauchement" dans la barre du mois) :
 //
-// - DEFAULT (report total) : si un congé/TAF démarre dans la fenêtre RPC
-//   d'origine, le RPC est repoussé après la chaîne contiguë de congés/TAF.
-//   La durée du RPC reste inchangée. Visuel : 1 seul segment, déplacé.
+// - OFF (défaut) : aucun report automatique. Le RPC reste à sa position
+//   d'origine. Si un jour entier de congé/TAF est dans le RPC, un flag
+//   hasConflict=true est levé (l'UI peut afficher un avertissement).
 //
-// - CHEVAUCHEMENT (overlap autorisé) : le compteur RPC "se met en pause"
-//   pendant les congés/TAF qu'il traverse, puis reprend après. Visuel : N+1
-//   segments séparés par N pauses (où N = nombre d'intervalles cong/TAF
-//   traversés).
+// - ON : modèle "pause/resume" itératif. Chaque journée entière de congé/TAF
+//   au sein du RPC le décale de 24h. Cascade : si l'extension englobe un
+//   nouveau jour de congé/TAF, on continue.
 //
-// Les items de type sol / sim / medical / instr / autre sont des hard blockers :
-// ils ne peuvent jamais être chevauchés par un RPC. Le calcul s'arrête au début
-// de tels items (la sortie est tronquée et un flag truncated=true est mis).
+// Hard blockers (sol / sim / medical / instr / autre) : ne peuvent JAMAIS
+// être chevauchés. Le RPC est tronqué au début du 1er hard blocker rencontré.
 
 import type { CalendarItem } from '@/app/page';
 
 export type RpcSegment = { startMs: number; endMs: number };
 
 export type EffectiveRpc = {
-  /** Segments à dessiner (trait plein). Vide si pas de RPC. */
+  /** Segments solides à dessiner (le bar bleu post-RPC). Vide si pas de RPC. */
   segments: RpcSegment[];
   /** Fin effective du RPC (= dernier endMs des segments). 0 si pas de RPC. */
   endMs: number;
   /** True si le calcul a été tronqué par un hard blocker (sol/sim/...). */
   truncated: boolean;
+  /** True si au moins une journée entière de congé/TAF est dans le RPC.
+   *  En mode OFF c'est le déclencheur du flag visuel ; en mode ON c'est
+   *  juste informatif (les pauses sont déjà dans segments). */
+  hasConflict: boolean;
+  /** Jours en conflit (chacun = [00:00 UTC, jour+1 00:00 UTC[) — utilisé pour
+   *  positionner les pauses pointillées en mode ON. Vide en OFF même si
+   *  hasConflict. */
+  pauseIntervals: RpcSegment[];
 };
 
 const BLOCKING_KINDS = new Set(['conge', 'taf']);
 const HARD_BLOCKERS = new Set(['sol', 'sim', 'medical', 'instr', 'autre']);
 
-/** [startMs, endMs) en ms epoch pour un item. Vols : depart_at → arrivee_at.
- *  Non-vols : start_date 00:00 UTC → end_date+1 00:00 UTC. Le gantt utilise
- *  UTC partout pour positionner les barres (dayFrac via accesseurs UTC). */
-function itemRangeMs(item: CalendarItem): [number, number] {
-  if (item.kind === 'flight') {
-    const meta = (item.meta && typeof item.meta === 'object' && !Array.isArray(item.meta))
-      ? item.meta as Record<string, unknown>
-      : null;
-    const depart  = typeof meta?.depart_at  === 'string' ? new Date(meta.depart_at).getTime()  : NaN;
-    const arrivee = typeof meta?.arrivee_at === 'string' ? new Date(meta.arrivee_at).getTime() : NaN;
-    if (Number.isFinite(depart) && Number.isFinite(arrivee)) return [depart, arrivee];
-  }
-  const startMs = new Date(item.start_date + 'T00:00:00Z').getTime();
-  const endMs   = new Date(item.end_date   + 'T00:00:00Z').getTime() + 86_400_000;
-  return [startMs, endMs];
-}
-
-/** Calcule la fin de chaîne contiguë de congés/TAF démarrant à partir d'un
- *  item de référence. Une chaîne est dite contiguë si chaque item suivant
- *  démarre au plus tard 1ms après la fin du précédent (= jours consécutifs ou
- *  qui se chevauchent). */
-function findChainEnd(startMs: number, items: CalendarItem[]): number {
-  let chainEnd = startMs;
-  let extended = true;
-  while (extended) {
-    extended = false;
-    for (const it of items) {
-      if (!BLOCKING_KINDS.has(it.kind)) continue;
-      const [s, e] = itemRangeMs(it);
-      if (s <= chainEnd && e > chainEnd) {
-        chainEnd = e;
-        extended = true;
-      }
-    }
-  }
-  return chainEnd;
-}
-
-/** Trouve les intervalles BLOCKING (conge/taf) qui touchent [from, to). Triés. */
-function blockingIntervalsIn(
-  from: number,
-  to: number,
-  items: CalendarItem[],
-): RpcSegment[] {
-  const out: RpcSegment[] = [];
-  for (const it of items) {
-    if (!BLOCKING_KINDS.has(it.kind)) continue;
-    const [s, e] = itemRangeMs(it);
-    if (e <= from || s >= to) continue;
-    out.push({ startMs: Math.max(s, from), endMs: Math.min(e, to) });
-  }
-  return out.sort((a, b) => a.startMs - b.startMs);
-}
-
-/** Trouve le 1er hard blocker (sol/sim/...) à partir de `from`. Renvoie son startMs ou +∞. */
+/** Trouve le 1er hard blocker (sol/sim/...) à partir de `from`. Renvoie son
+ *  startMs ou +∞ si aucun. */
 function nextHardBlockerStart(from: number, items: CalendarItem[]): number {
   let min = Number.POSITIVE_INFINITY;
-  for (const it of items) {
-    if (!HARD_BLOCKERS.has(it.kind)) continue;
-    const [s] = itemRangeMs(it);
-    if (s >= from && s < min) min = s;
+  for (const item of items) {
+    if (!HARD_BLOCKERS.has(item.kind)) continue;
+    const startMs = new Date(item.start_date + 'T00:00:00Z').getTime();
+    if (startMs >= from && startMs < min) min = startMs;
   }
   return min;
+}
+
+/** Décompose les items congé/TAF en jours individuels (un objet par 24h).
+ *  Trié par startMs. Utilise les dates UTC pour rester cohérent avec dayFrac
+ *  du gantt (qui utilise les accesseurs UTC). */
+function collectBlockingDays(items: CalendarItem[]): RpcSegment[] {
+  const out: RpcSegment[] = [];
+  for (const item of items) {
+    if (!BLOCKING_KINDS.has(item.kind)) continue;
+    const start = new Date(item.start_date + 'T00:00:00Z');
+    const end   = new Date(item.end_date   + 'T00:00:00Z');
+    const cursor = new Date(start);
+    while (cursor <= end) {
+      const startMs = cursor.getTime();
+      out.push({ startMs, endMs: startMs + 86_400_000 });
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+  }
+  return out.sort((a, b) => a.startMs - b.startMs);
 }
 
 /**
  * Calcule la plage effective du RPC d'un vol.
  *
- * @param flight - le vol dont on calcule le RPC. Doit avoir kind='flight' +
- *                 meta.arrivee_at + meta.rest_after_h.
- * @param items - tous les autres items du scénario (le vol lui-même peut être
- *                inclus, il sera ignoré via item.id !== flight.id).
- * @param chevauchement - si true, mode chevauchement (pauses) ; sinon mode
- *                         report total.
+ * @param flight - le vol dont on calcule le RPC (kind='flight' + meta.arrivee_at).
+ * @param items - tous les autres items du scénario (le vol lui-même est filtré
+ *                via item.id !== flight.id).
+ * @param chevauchement - true = mode pause/resume (RPC étendu), false = pas
+ *                         de shift, juste flag (hasConflict).
  */
 export function computeEffectiveRpc(
   flight: CalendarItem,
   items: CalendarItem[],
   chevauchement: boolean,
 ): EffectiveRpc {
-  if (flight.kind !== 'flight') return { segments: [], endMs: 0, truncated: false };
+  const empty: EffectiveRpc = {
+    segments: [], endMs: 0, truncated: false,
+    hasConflict: false, pauseIntervals: [],
+  };
+  if (flight.kind !== 'flight') return empty;
   const meta = (flight.meta && typeof flight.meta === 'object' && !Array.isArray(flight.meta))
     ? flight.meta as Record<string, unknown>
     : null;
@@ -125,71 +99,105 @@ export function computeEffectiveRpc(
   const endAct  = typeof meta?.scheduled_end_activity_at === 'string'
     ? new Date(meta.scheduled_end_activity_at).getTime() : NaN;
   const restH   = typeof meta?.rest_after_h === 'number' ? meta.rest_after_h : 0;
-  if (!Number.isFinite(arrivee)) return { segments: [], endMs: 0, truncated: false };
+  if (!Number.isFinite(arrivee)) return empty;
 
   // Préférer scheduled_end_activity_at (source de vérité) à rest_after_h
-  // (qui est dérivé). Fallback à arrivee + restH * 3600000 si timestamp absent.
+  // (dérivé). Fallback à arrivee + restH * 3600000 si timestamp absent.
   const restMs = Number.isFinite(endAct) && endAct > arrivee
     ? endAct - arrivee
     : restH * 3_600_000;
-  if (restMs <= 0) return { segments: [], endMs: 0, truncated: false };
+  if (restMs <= 0) return empty;
+
   const others    = items.filter(it => it.id !== flight.id);
   const hardLimit = nextHardBlockerStart(arrivee, others);
+  const origEnd   = arrivee + restMs;
 
-  if (!chevauchement) {
-    // Mode REPORT TOTAL : si un conge/TAF démarre dans [arrivee, arrivee+restMs[,
-    // on déplace le RPC entier après la chaîne contiguë.
-    const origEnd = arrivee + restMs;
-    const overlapping = blockingIntervalsIn(arrivee, origEnd, others);
-    if (overlapping.length === 0) {
-      // Pas de report — éventuellement tronqué par un hard blocker.
-      const endMs = Math.min(origEnd, hardLimit);
-      return {
-        segments: endMs > arrivee ? [{ startMs: arrivee, endMs }] : [],
-        endMs,
-        truncated: endMs < origEnd,
-      };
+  // Itère : pour chaque jour entier de congé/TAF couvert par le RPC (de plus
+  // en plus étendu), on l'ajoute à pauses et on décale endMs de 24h. Cascade
+  // jusqu'à stabilité (ou guard 100 itérations).
+  const blockingDays = collectBlockingDays(others);
+  const pausedSet    = new Set<number>();
+  const pausedDays: RpcSegment[] = [];
+  let extendedEnd = origEnd;
+  for (let guard = 0; guard < 100; guard++) {
+    let changed = false;
+    for (const d of blockingDays) {
+      if (pausedSet.has(d.startMs)) continue;
+      // Jour entier doit être COMPLÈTEMENT dans la fenêtre RPC actuelle.
+      if (arrivee <= d.startMs && d.endMs <= extendedEnd) {
+        pausedSet.add(d.startMs);
+        pausedDays.push(d);
+        extendedEnd += 86_400_000;
+        changed = true;
+      }
     }
-    const chainEnd = findChainEnd(overlapping[0].startMs, others);
-    const newEnd   = chainEnd + restMs;
-    const cappedEnd = Math.min(newEnd, hardLimit);
+    if (!changed) break;
+  }
+  pausedDays.sort((a, b) => a.startMs - b.startMs);
+
+  // Mode OFF : pas de shift. Retourne le RPC d'origine + flag conflit.
+  if (!chevauchement) {
+    const cappedEnd = Math.min(origEnd, hardLimit);
     return {
-      segments: cappedEnd > chainEnd ? [{ startMs: chainEnd, endMs: cappedEnd }] : [],
+      segments: cappedEnd > arrivee ? [{ startMs: arrivee, endMs: cappedEnd }] : [],
       endMs: cappedEnd,
-      truncated: cappedEnd < newEnd,
+      truncated: cappedEnd < origEnd,
+      hasConflict: pausedDays.length > 0,
+      pauseIntervals: [],
     };
   }
 
-  // Mode CHEVAUCHEMENT : on consomme restMs ms réelles en sautant les
-  // intervalles conge/TAF. Plusieurs segments possibles.
-  const segments: RpcSegment[] = [];
-  let cursor = arrivee;
-  let remaining = restMs;
-  let truncated = false;
-  // Garde-fou : pas plus de N segments — évite une boucle infinie si données
-  // étranges (overlapping intervals, etc.).
-  for (let guard = 0; guard < 100 && remaining > 0; guard++) {
-    if (cursor >= hardLimit) { truncated = true; break; }
-    const blockers = blockingIntervalsIn(cursor, cursor + remaining + 365 * 86_400_000, others);
-    const nextBlocker = blockers.find(b => b.endMs > cursor);
-    if (!nextBlocker || nextBlocker.startMs >= cursor + remaining) {
-      // Aucun blocker dans la fenêtre restante → segment final.
-      let segEnd = cursor + remaining;
-      if (segEnd > hardLimit) { segEnd = hardLimit; truncated = true; }
-      if (segEnd > cursor) segments.push({ startMs: cursor, endMs: segEnd });
-      remaining = 0;
-      break;
-    }
-    // Segment partiel jusqu'au blocker
-    if (nextBlocker.startMs > cursor) {
-      let segEnd = nextBlocker.startMs;
-      if (segEnd > hardLimit) { segEnd = hardLimit; truncated = true; }
-      segments.push({ startMs: cursor, endMs: segEnd });
-      remaining -= (segEnd - cursor);
-      if (truncated) break;
-    }
-    cursor = nextBlocker.endMs;
+  // Mode ON : pas de conflit (rien à signaler) → RPC normal.
+  if (pausedDays.length === 0) {
+    const cappedEnd = Math.min(origEnd, hardLimit);
+    return {
+      segments: cappedEnd > arrivee ? [{ startMs: arrivee, endMs: cappedEnd }] : [],
+      endMs: cappedEnd,
+      truncated: cappedEnd < origEnd,
+      hasConflict: false,
+      pauseIntervals: [],
+    };
   }
+
+  // Mode ON avec conflit : merge les jours contigus en intervalles de pause
+  // puis génère les segments solides entre.
+  const pauseIntervals: RpcSegment[] = [];
+  for (const d of pausedDays) {
+    const last = pauseIntervals[pauseIntervals.length - 1];
+    if (last && last.endMs === d.startMs) last.endMs = d.endMs;
+    else pauseIntervals.push({ startMs: d.startMs, endMs: d.endMs });
+  }
+
+  const rawSegments: RpcSegment[] = [];
+  let cursor = arrivee;
+  for (const p of pauseIntervals) {
+    if (p.startMs > cursor) rawSegments.push({ startMs: cursor, endMs: p.startMs });
+    cursor = p.endMs;
+  }
+  if (extendedEnd > cursor) rawSegments.push({ startMs: cursor, endMs: extendedEnd });
+
+  // Truncation par hard blocker
+  const segments: RpcSegment[] = [];
+  let truncated = false;
+  for (const s of rawSegments) {
+    if (s.startMs >= hardLimit) { truncated = true; continue; }
+    const cappedEnd = Math.min(s.endMs, hardLimit);
+    if (cappedEnd > s.startMs) segments.push({ startMs: s.startMs, endMs: cappedEnd });
+    if (cappedEnd < s.endMs) truncated = true;
+  }
+  // Pause intervals tronqués aussi
+  const trimmedPauses: RpcSegment[] = [];
+  for (const p of pauseIntervals) {
+    if (p.startMs >= hardLimit) continue;
+    trimmedPauses.push({ startMs: p.startMs, endMs: Math.min(p.endMs, hardLimit) });
+  }
+
   const endMs = segments.length > 0 ? segments[segments.length - 1].endMs : arrivee;
-  return { segments, endMs, truncated };
+  return {
+    segments,
+    endMs,
+    truncated,
+    hasConflict: true,
+    pauseIntervals: trimmedPauses,
+  };
 }
