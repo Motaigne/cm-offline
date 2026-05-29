@@ -38,6 +38,8 @@ import { computeEffectiveRpc } from '@/lib/rpc';
 import { enqueueAddNote, enqueueUpdateNote, enqueueDeleteNote } from '@/lib/sync-service';
 import { listNotesForMonth, type UserNote } from '@/app/actions/notes';
 import { NavBar } from '@/app/components/nav';
+import { MonthReleaseIcon } from '@/app/components/month-release-icon';
+import { usePushSubscription } from '@/hooks/use-push-subscription';
 
 type RegimeEnum = Database['public']['Enums']['regime_enum'];
 
@@ -939,6 +941,7 @@ export function GanttView({
 
   // user menu
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const { status: pushStatus, subscribe: pushSubscribe } = usePushSubscription();
 
   // propagation feedback
   const [propagateMsg, setPropagateMsg] = useState<string | null>(null);
@@ -1331,7 +1334,10 @@ export function GanttView({
           <div className="flex items-center gap-2">
             <button onClick={() => changeMonth(shiftMonth(currentMonth,-1))} disabled={monthLoading}
               className="w-10 h-10 flex items-center justify-center rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-3xl disabled:opacity-40">‹</button>
-            <span className="text-sm font-semibold w-40 text-center">{MONTH_FR[mo-1]} {year}</span>
+            <span className="text-sm font-semibold w-40 text-center inline-flex items-center justify-center gap-1.5">
+              {MONTH_FR[mo-1]} {year}
+              <MonthReleaseIcon month={currentMonth} />
+            </span>
             <button onClick={() => changeMonth(shiftMonth(currentMonth,1))} disabled={monthLoading}
               className="w-10 h-10 flex items-center justify-center rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-3xl disabled:opacity-40">›</button>
             {/* Toggle Chevauchement RPC / congés */}
@@ -1378,6 +1384,24 @@ export function GanttView({
                   >
                     Mon profil
                   </Link>
+                  {pushStatus === 'default' && (
+                    <button
+                      onClick={() => { void pushSubscribe(); setUserMenuOpen(false); }}
+                      className="block w-full text-left px-4 py-2 text-sm text-blue-600 hover:bg-zinc-50 dark:hover:bg-zinc-700"
+                    >
+                      Activer notifications
+                    </button>
+                  )}
+                  {pushStatus === 'subscribed' && (
+                    <div className="px-4 py-2 text-[11px] text-emerald-600 dark:text-emerald-400">
+                      ✓ Notifications actives
+                    </div>
+                  )}
+                  {pushStatus === 'ios-not-installed' && (
+                    <div className="px-4 py-2 text-[11px] text-zinc-500 max-w-56">
+                      Notifs : installe l&apos;app via Safari → Partager → Sur l&apos;écran d&apos;accueil
+                    </div>
+                  )}
                   <button
                     onClick={async () => {
                       const supabase = createClient();

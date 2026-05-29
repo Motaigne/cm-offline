@@ -8,7 +8,6 @@ import { getCurrentUserIsAdmin } from '@/app/actions/auth';
 import { cacheRotations, hydrateDB } from '@/lib/local-db';
 import { syncNow, pendingOpsCount } from '@/lib/sync-service';
 import { downloadBackup, parseBackup, importBackup } from '@/lib/backup';
-import { ReleaseBanner } from '@/app/components/release-banner';
 
 const TABS: { label: string; href: string; offlineDisabled?: boolean }[] = [
   { label: 'Profil',      href: '/profil'     },
@@ -421,7 +420,6 @@ export function NavBar() {
           </button>
         </div>
       </nav>
-      <ReleaseBanner />
     </div>
   );
 }

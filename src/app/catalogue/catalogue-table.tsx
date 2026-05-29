@@ -197,7 +197,7 @@ export function CatalogueTable({
               href={`/api/export/legacy?month=${currentMonth}&format=slim`}
               download
               className="text-xs px-2.5 py-1 rounded border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
-              title="Export CSV format $MMAAAA$ (12 colonnes, M-1→M fusionné)"
+              title="CSV pour Google Sheet (onglet $MMAAAA$) — 12 colonnes, rotations M-1 chevauchant M incluses, tri par PV+Prime"
             >
               Export slim
             </a>
@@ -205,7 +205,7 @@ export function CatalogueTable({
               href={`/api/export/legacy?month=${currentMonth}&format=full`}
               download
               className="text-xs px-2.5 py-1 rounded border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
-              title="Export CSV format MMAAAA (47 colonnes — colonnes dérivées TODO)"
+              title="CSV détaillé (onglet MMAAAA) — 47 colonnes avec ligne par étape (colonnes calculées TME/CMT/HCV en cours de portage)"
             >
               Export full
             </a>
