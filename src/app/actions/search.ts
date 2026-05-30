@@ -190,6 +190,27 @@ export async function getRotationsForMonth(month: string): Promise<RotationSigna
     });
   }
 
+  // Recompute nb_on_days + rotation_code depuis les dates de la 1ère instance
+  // (= source de vérité, vs CrewBidd qui peut renvoyer des valeurs incohérentes
+  // entre instances — corrige aussi les sigs scrapées avant le commit 40cf3e1).
+  for (const sig of sigMap.values()) {
+    const repr = sig.instances[0];
+    if (!repr) continue;
+    const beginMs = new Date(repr.depart_at).getTime();
+    const endMs   = new Date(repr.arrivee_at).getTime();
+    if (!Number.isFinite(beginMs) || !Number.isFinite(endMs) || endMs < beginMs) continue;
+    const begin = new Date(beginMs);
+    const end   = new Date(endMs);
+    const beginDay = Date.UTC(begin.getUTCFullYear(), begin.getUTCMonth(), begin.getUTCDate());
+    const endDay   = Date.UTC(end.getUTCFullYear(),   end.getUTCMonth(),   end.getUTCDate());
+    const corrected = Math.round((endDay - beginDay) / 86_400_000) + 1;
+    if (corrected !== sig.nb_on_days) {
+      sig.nb_on_days = corrected;
+      const m = sig.rotation_code.match(/^\d+ON\s+(.*)$/);
+      if (m) sig.rotation_code = `${corrected}ON ${m[1]}`;
+    }
+  }
+
   // Deduplicate signatures that are identical except for activityId
   function dedupKey(s: RotationSignature): string {
     return [
