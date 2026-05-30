@@ -49,6 +49,42 @@ export type Database = {
         Update: Partial<Database['public']['Tables']['user_profile']['Row']>;
         Relationships: [];
       };
+      user_profile_version: {
+        Row: {
+          user_id: string;
+          valid_from: string;
+          fonction: Database['public']['Enums']['fonction_enum'];
+          regime: Database['public']['Enums']['regime_enum'];
+          qualifs_avion: string[];
+          instructeur: boolean;
+          tri_niveau: number | null;
+          prime_330_count: number | null;
+          valeur_jour: number;
+          tmi: number | null;
+          classe: number | null;
+          categorie: string | null;
+          echelon: number | null;
+          bonus_atpl: boolean;
+          transport: string | null;
+          navigo_eur: number | null;
+          voiture_km_aller: number | null;
+          voiture_indemnite_km: number | null;
+          aircraft_principal: string | null;
+          cng_pv: number | null;
+          cng_hs: number | null;
+          base: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['user_profile_version']['Row']> & {
+          user_id: string;
+          valid_from: string;
+          fonction: Database['public']['Enums']['fonction_enum'];
+          regime: Database['public']['Enums']['regime_enum'];
+        };
+        Update: Partial<Database['public']['Tables']['user_profile_version']['Row']>;
+        Relationships: [];
+      };
       annexe_table: {
         Row: {
           slug: string;

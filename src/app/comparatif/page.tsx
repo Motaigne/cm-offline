@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { NavBar } from '@/app/components/nav';
 import { ComparatifClient } from './comparatif-client';
 import { loadAnnexeRowForMonth } from '@/app/actions/annexe';
+import { loadProfileForMonth } from '@/app/actions/profile-version';
 import type { Article81Data } from '@/lib/article81';
 
 export default async function ComparatifPage({
@@ -20,13 +21,18 @@ export default async function ComparatifPage({
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  // Article 81 : matrice annexe + valeur_jour profil (en parallèle)
-  const [a81RowData, { data: profileRow }] = await Promise.all([
+  // Article 81 : matrice annexe + valeur_jour profil applicable au mois M.
+  const [a81RowData, profileForMonth] = await Promise.all([
     loadAnnexeRowForMonth('article_81', month),
-    supabase.from('user_profile').select('valeur_jour').eq('user_id', user.id).single(),
+    loadProfileForMonth(month, user.id),
   ]);
   const article81Data: Article81Data | null = (a81RowData as Article81Data | null) ?? null;
-  const valeurJour = Number(profileRow?.valeur_jour ?? 600);
+  let valeurJour = Number(profileForMonth?.valeur_jour ?? NaN);
+  if (Number.isNaN(valeurJour)) {
+    const { data: profileRow } = await supabase
+      .from('user_profile').select('valeur_jour').eq('user_id', user.id).single();
+    valeurJour = Number(profileRow?.valeur_jour ?? 600);
+  }
 
   // Snapshots disponibles
   const { data: snapshots } = await supabase

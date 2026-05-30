@@ -34,6 +34,7 @@ import { getRotationsForMonth } from '@/app/actions/search';
 import { getCurrentUserScrapeRights } from '@/app/actions/auth';
 import { getYearA81CumulBefore } from '@/app/actions/article81';
 import { computeFullProfile, getAnnexeDataFromRows, type AnnexeData, type AnnexeRow } from '@/lib/annexe';
+import type { ProfileVersion } from '@/app/actions/profile-version';
 import { computeMonthlyIrMfFromLocalCache } from '@/lib/ir-mf-local';
 import { computeEffectiveRpc } from '@/lib/rpc';
 import { enqueueAddNote, enqueueUpdateNote, enqueueDeleteNote } from '@/lib/sync-service';
@@ -643,6 +644,7 @@ export function GanttView({
   pvei: pveiProp, ksp: kspProp, fixeRegime: fixeRegimeProp, fixeTP: fixeTPProp,
   annexeRows = [],
   financeProfile = null,
+  profileVersions = [],
   article81Data = null, valeurJour = 600,
   a81CumulBefore = { A: 0, B: 0, C: 0 },
   irMfByScenario,
@@ -692,6 +694,10 @@ export function GanttView({
     primeInstAnnee: number | null;
     prime330Count: number | null;
   } | null;
+  /** Toutes les versions du profil individuel — sert à recomputer finBase et
+   *  les autres dépendances profil (régime, IT, congés, valeurJour) en
+   *  client-side lors d'un changeMonth. */
+  profileVersions?: ProfileVersion[];
   /** Mode transport profil pour calcul IT ('Navigo' | 'Voiture' | null). */
   transport?: string | null;
   /** IT mensuelle forfaitaire si transport = Navigo. */
@@ -777,12 +783,55 @@ export function GanttView({
   }, [irMfByScenario, irMfPerFlightByScenario]);
   useEffect(() => { setA81CumulBeforeState(a81CumulBefore); }, [a81CumulBefore]);
 
+  // Profil individuel applicable au mois courant (versionné). Pioche la row
+  // dont valid_from <= 1er du mois, la plus récente. Si aucune version
+  // applicable (mois trop ancien) → fallback aux props initiales.
+  const effProfile = useMemo<ProfileVersion | null>(() => {
+    if (profileVersions.length === 0) return null;
+    const cutoff = `${currentMonth}-01`;
+    const sorted = [...profileVersions].sort((a, b) => b.valid_from.localeCompare(a.valid_from));
+    return sorted.find(v => v.valid_from <= cutoff) ?? null;
+  }, [currentMonth, profileVersions]);
+
+  // Valeurs effectives : profil applicable du mois si dispo, sinon prop initiale.
+  const effRegime           = effProfile?.regime              ?? userRegime;
+  const effCngPv            = effProfile?.cng_pv              ?? cngPv;
+  const effCngHs            = effProfile?.cng_hs              ?? cngHs;
+  const effTransport        = effProfile?.transport           ?? transport;
+  const effNavigoEur        = effProfile?.navigo_eur          ?? navigoEur;
+  const effVoitureKmAller   = effProfile?.voiture_km_aller    ?? voitureKmAller;
+  const effVoitureIndKm     = effProfile?.voiture_indemnite_km?? voitureIndemniteKm;
+  const effValeurJour       = effProfile?.valeur_jour         ?? valeurJour;
+
+  // FinanceProfile reconstruit depuis effProfile si dispo, sinon prop initiale.
+  const effFinanceProfile = useMemo(() => {
+    if (effProfile && effProfile.fonction && effProfile.classe != null
+        && effProfile.echelon != null && effProfile.categorie) {
+      return {
+        aircraft: effProfile.aircraft_principal ?? 'A335',
+        fonction: effProfile.fonction,
+        classe: effProfile.classe,
+        categorie: effProfile.categorie,
+        echelon: effProfile.echelon,
+        atpl: effProfile.bonus_atpl,
+        primeIncitationType: 'LC' as const,
+        primeInstFonction: effProfile.fonction === 'TRI_OPL' ? 'TRI_OPL'
+          : effProfile.fonction === 'TRI_CDB' ? 'ICPL'
+          : null,
+        primeInstAnnee: (effProfile.fonction === 'TRI_OPL' || effProfile.fonction === 'TRI_CDB')
+          ? effProfile.tri_niveau : null,
+        prime330Count: effProfile.prime_330_count,
+      };
+    }
+    return financeProfile;
+  }, [effProfile, financeProfile]);
+
   // Éléments de paie versionnés (pvei, fixe, primes) — calculés client-side à
-  // partir de toutes les rows annexe + le profil, pour le mois courant.
-  // Instantané (zéro fetch) et offline-compatible. Fallback aux props initiales
-  // si annexeRows/financeProfile absents (ex: legacy / profil incomplet).
+  // partir de toutes les rows annexe + le profil applicable, pour le mois
+  // courant. Instantané (zéro fetch) et offline-compatible. Fallback aux props
+  // initiales si annexeRows/financeProfile absents (ex: legacy / profil incomplet).
   const finBaseState = useMemo(() => {
-    if (financeProfile && annexeRows.length > 0) {
+    if (effFinanceProfile && annexeRows.length > 0) {
       const annexe = getAnnexeDataFromRows(annexeRows, currentMonth);
       const hasAnnexe = !!(
         annexe.cat_anciennete?.length &&
@@ -791,19 +840,19 @@ export function GanttView({
         annexe.traitement_base
       );
       if (hasAnnexe) {
-        const nb30e = REGIME_NB30E[userRegime] ?? 30;
+        const nb30e = REGIME_NB30E[effRegime] ?? 30;
         const c = computeFullProfile(
-          financeProfile.aircraft,
-          financeProfile.fonction,
-          financeProfile.classe,
-          financeProfile.categorie,
-          financeProfile.echelon,
-          financeProfile.atpl,
+          effFinanceProfile.aircraft,
+          effFinanceProfile.fonction,
+          effFinanceProfile.classe,
+          effFinanceProfile.categorie,
+          effFinanceProfile.echelon,
+          effFinanceProfile.atpl,
           nb30e,
-          financeProfile.primeIncitationType,
-          financeProfile.primeInstFonction,
-          financeProfile.primeInstAnnee,
-          financeProfile.prime330Count,
+          effFinanceProfile.primeIncitationType,
+          effFinanceProfile.primeInstFonction,
+          effFinanceProfile.primeInstAnnee,
+          effFinanceProfile.prime330Count,
           annexe as AnnexeData,
         );
         return {
@@ -823,7 +872,7 @@ export function GanttView({
     }
     return null;
   }, [
-    currentMonth, annexeRows, financeProfile, userRegime,
+    currentMonth, annexeRows, effFinanceProfile, effRegime,
     pveiProp, kspProp, fixeRegimeProp, fixeTPProp,
     primeIncitationUnit, primeA330, primeInstruction,
   ]);
@@ -1088,8 +1137,8 @@ export function GanttView({
   const dim   = daysInMonth(year, mo);
   const [today, setToday] = useState('');
   useEffect(() => { setToday(localStr(new Date())); }, []);
-  const tafDur = getTafDuration(userRegime);
-  const tafOk  = isTafAvailable(userRegime, currentMonth);
+  const tafDur = getTafDuration(effRegime);
+  const tafOk  = isTafAvailable(effRegime, currentMonth);
   const days   = Array.from({ length: dim }, (_, i) => i + 1);
 
   // ── Navigation mois (client-side, pas de router.push) ───────────────────────
@@ -1566,8 +1615,8 @@ export function GanttView({
               const primeNoel = 0;
               // En juillet/août pour TAF*_10_12, A330 + Instruction passent à 100%
               // (× 30/nb30e pour annuler la proration appliquée en amont).
-              const nb30eRegime = REGIME_NB30E[userRegime] ?? NB_30E;
-              const a330InstrBoost = isFullPrimeMonth(userRegime, mo) && nb30eRegime > 0 ? 30 / nb30eRegime : 1;
+              const nb30eRegime = REGIME_NB30E[effRegime] ?? NB_30E;
+              const a330InstrBoost = isFullPrimeMonth(effRegime, mo) && nb30eRegime > 0 ? 30 / nb30eRegime : 1;
               // Éléments de paie versionnés selon le mois courant (rechargés à
               // chaque changeMonth). Fallback aux constantes legacy si null.
               const pIncit  = finBaseState?.primeIncitationUnit ?? primeIncitationUnit;
@@ -1581,10 +1630,10 @@ export function GanttView({
               const irMfScn = irMfState.byScenario?.[scenario.name];
               const irMfEur = (irMfScn?.ir_eur ?? 0) + (irMfScn?.mf_eur ?? 0);
               const nbActivites = countItActivities(scenario.items, year, mo);
-              const itEur = computeItEur(transport, nbActivites, navigoEur, voitureKmAller, voitureIndemniteKm);
+              const itEur = computeItEur(effTransport, nbActivites, effNavigoEur, effVoitureKmAller, effVoitureIndKm);
               const stats = computeStats(
-                scenario.items, year, mo, cngPv, cngHs, userRegime, monthlyFixedPrimes,
-                article81Data, valeurJour, cumulBeforeForScenario, irMfEur, itEur,
+                scenario.items, year, mo, effCngPv, effCngHs, effRegime, monthlyFixedPrimes,
+                article81Data, effValeurJour, cumulBeforeForScenario, irMfEur, itEur,
                 finBaseState?.pvei ?? PVEI,
                 finBaseState?.ksp  ?? KSP,
                 finBaseState?.fixe ?? FIXE_MENSUEL,
@@ -1674,11 +1723,11 @@ export function GanttView({
                         const fixeReg   = finBaseState?.fixe ?? FIXE_MENSUEL;
                         const pvHcrEur  = stats.totalHcr * pveiEff * kspEff;
                         const pvNuitEur = (stats.totalTsvNuit / 2) * pveiEff * kspEff;
-                        const nb30eReg2 = REGIME_NB30E[userRegime] ?? NB_30E;
+                        const nb30eReg2 = REGIME_NB30E[effRegime] ?? NB_30E;
                         const fixeTPEff = finBaseState?.fixeTP ?? (nb30eReg2 > 0 ? FIXE_MENSUEL * 30 / nb30eReg2 : FIXE_MENSUEL);
-                        const fixeFF    = isFullPrimeMonth(userRegime, mo) ? fixeTPEff : fixeReg;
+                        const fixeFF    = isFullPrimeMonth(effRegime, mo) ? fixeTPEff : fixeReg;
                         const bitroncon = stats.totalPrime * 2.5 * pveiEff;
-                        const boost     = isFullPrimeMonth(userRegime, mo) && nb30eReg2 > 0 ? 30 / nb30eReg2 : 1;
+                        const boost     = isFullPrimeMonth(effRegime, mo) && nb30eReg2 > 0 ? 30 / nb30eReg2 : 1;
                         setDetailPanel({
                           name: scenario.name, rect,
                           viewportH: window.visualViewport?.height ?? window.innerHeight,
@@ -1697,14 +1746,14 @@ export function GanttView({
                           instruction: (finBaseState?.primeInstruction ?? primeInstruction) * boost,
                           primeMai: 0, primeNoel: 0,
                           primesTotal: stats.fin.primes,
-                          congeDays: stats.congeDays, cngPv, cngHs, congeAmount: stats.congeAmount,
+                          congeDays: stats.congeDays, cngPv: effCngPv, cngHs: effCngHs, congeAmount: stats.congeAmount,
                           irEur: irMfScn?.ir_eur ?? 0,
                           mfEur: irMfScn?.mf_eur ?? 0,
                           irMfPerFlight: irMfState.perFlightByScenario?.[scenario.name] ?? [],
                           itEur,
-                          itMode: transport,
+                          itMode: effTransport,
                           itNbActivites: nbActivites,
-                          itPerActivite: 2 * voitureKmAller * voitureIndemniteKm,
+                          itPerActivite: 2 * effVoitureKmAller * effVoitureIndKm,
                           brut: stats.brut,
                         });
                       }}

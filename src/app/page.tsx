@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { getScenariosWithItems } from '@/app/actions/planning';
 import { listNotesForMonth } from '@/app/actions/notes';
 import { loadAnnexeForMonth, loadAnnexeRowForMonth, loadAllAnnexeRows } from '@/app/actions/annexe';
+import { loadProfileForMonth, loadAllProfileVersions } from '@/app/actions/profile-version';
 import { getYearA81CumulBefore } from '@/app/actions/article81';
 import { getMonthlyIrMfEuros } from '@/app/actions/ir-mf';
 import { GanttView } from '@/app/components/gantt/gantt-view';
@@ -45,19 +46,22 @@ export default async function Home({
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  const { data: profile } = await supabase
+  const { data: userProfile } = await supabase
     .from('user_profile')
     .select('*')
     .eq('user_id', user.id)
     .single();
-  if (!profile) redirect('/profil');
+  if (!userProfile) redirect('/profil');
 
   const [y, mo] = month.split('-').map(Number);
-  const [scenarios, notes, annexe, allAnnexeRows, a81RowData, a81Cumul, irMfMonth, prorataRowData, ddaRulesRowData, volPRulesRowData] = await Promise.all([
+  const [scenarios, notes, annexe, allAnnexeRows, profileForMonth, profileVersions,
+         a81RowData, a81Cumul, irMfMonth, prorataRowData, ddaRulesRowData, volPRulesRowData] = await Promise.all([
     getScenariosWithItems(month),
     listNotesForMonth(month),
     loadAnnexeForMonth(month),
     loadAllAnnexeRows(),
+    loadProfileForMonth(month, user.id),
+    loadAllProfileVersions(user.id),
     loadAnnexeRowForMonth('article_81', month),
     getYearA81CumulBefore(y, mo),
     getMonthlyIrMfEuros(month),
@@ -65,6 +69,9 @@ export default async function Home({
     loadAnnexeRowForMonth('dda_rules', month),
     loadAnnexeRowForMonth('vol_p_rules', month),
   ]);
+  // Profil applicable au mois M (fallback user_profile pour les mois antérieurs
+  // à la première version seedée, ou pendant la transition).
+  const profile = profileForMonth ?? userProfile;
   const ddaRulesData   = (ddaRulesRowData  as { rules: unknown[] } | null) ?? null;
   const volPRulesData  = (volPRulesRowData as { rules: unknown[] } | null) ?? null;
   type ProrataThreshold = { range: string; ji_restants: number; duree_min: number; duree_min_opt6: number };
@@ -121,7 +128,7 @@ export default async function Home({
     <GanttView
       month={month}
       scenarios={scenarios}
-      userName={profile.display_name ?? user.email ?? ''}
+      userName={userProfile.display_name ?? user.email ?? ''}
       userRegime={profile.regime}
       cngPv={profile.cng_pv ?? 0}
       cngHs={profile.cng_hs ?? 0}
@@ -133,6 +140,7 @@ export default async function Home({
       fixeRegime={finBase.fixe ?? undefined}
       fixeTP={finBase.fixeTP ?? undefined}
       annexeRows={allAnnexeRows}
+      profileVersions={profileVersions}
       financeProfile={
         profile.fonction && profile.classe != null && profile.categorie && profile.echelon != null
           ? {
