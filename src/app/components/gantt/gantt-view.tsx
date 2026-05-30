@@ -33,6 +33,7 @@ import { DdaViolationsStrip } from './dda-violations-strip';
 import { getRotationsForMonth } from '@/app/actions/search';
 import { getCurrentUserScrapeRights } from '@/app/actions/auth';
 import { getYearA81CumulBefore } from '@/app/actions/article81';
+import { loadFinBaseForMonth, type FinBaseForMonth } from '@/app/actions/annexe';
 import { computeMonthlyIrMfFromLocalCache } from '@/lib/ir-mf-local';
 import { computeEffectiveRpc } from '@/lib/rpc';
 import { enqueueAddNote, enqueueUpdateNote, enqueueDeleteNote } from '@/lib/sync-service';
@@ -742,14 +743,24 @@ export function GanttView({
     });
   }
 
-  // IR/MF + A81 cumul : props serveur figées au render initial, on copie en
-  // state pour pouvoir les rafraîchir lors d'une navigation client-side
-  // (changeMonth) — sinon le mois courant utilise les valeurs du mois initial.
+  // IR/MF + A81 cumul + finBase : props serveur figées au render initial, on
+  // copie en state pour pouvoir les rafraîchir lors d'une navigation
+  // client-side (changeMonth) — sinon le mois courant utilise les valeurs du
+  // mois initial. finBase porte les éléments de paie versionnés (pvei/fixe/
+  // primes) — change quand on traverse une date d'application annexe.
   const [irMfState, setIrMfState] = useState(() => ({
     byScenario: irMfByScenario,
     perFlightByScenario: irMfPerFlightByScenario,
   }));
   const [a81CumulBeforeState, setA81CumulBeforeState] = useState(a81CumulBefore);
+  const [finBaseState, setFinBaseState] = useState<FinBaseForMonth | null>(() =>
+    (pveiProp != null && kspProp != null && fixeRegimeProp != null && fixeTPProp != null)
+      ? {
+          pvei: pveiProp, ksp: kspProp, fixe: fixeRegimeProp, fixeTP: fixeTPProp,
+          primeIncitationUnit, primeA330, primeInstruction,
+        }
+      : null
+  );
 
   // Resync depuis les props quand le serveur renvoie de nouvelles valeurs
   // (router.refresh après Sync / mount initial sur un autre mois via URL).
@@ -1097,6 +1108,11 @@ export function GanttView({
       getYearA81CumulBefore(yy, mm)
         .then(a81 => { if (myToken === navTokenRef.current) setA81CumulBeforeState(a81.byScenarioBefore); })
         .catch(() => { /* offline ou erreur : on garde les valeurs courantes */ });
+      // FinBase : pvei + fixe + primes versionnés selon la date d'application de
+      // l'annexe applicable au mois. Important pour les mois pré/post 1er avril.
+      loadFinBaseForMonth(newMonth)
+        .then(fb => { if (fb && myToken === navTokenRef.current) setFinBaseState(fb); })
+        .catch(() => { /* offline : on garde les valeurs courantes */ });
       // IR/MF : recalculé client à partir du cache rotations fraîchement mis à jour.
       // (Le useEffect [localScenarios,currentMonth] est déjà déclenché par le setState
       //  plus haut, mais à ce moment-là cacheRotations n'avait pas encore tourné.)
@@ -1496,9 +1512,14 @@ export function GanttView({
               // (× 30/nb30e pour annuler la proration appliquée en amont).
               const nb30eRegime = REGIME_NB30E[userRegime] ?? NB_30E;
               const a330InstrBoost = isFullPrimeMonth(userRegime, mo) && nb30eRegime > 0 ? 30 / nb30eRegime : 1;
+              // Éléments de paie versionnés selon le mois courant (rechargés à
+              // chaque changeMonth). Fallback aux constantes legacy si null.
+              const pIncit  = finBaseState?.primeIncitationUnit ?? primeIncitationUnit;
+              const pA330   = finBaseState?.primeA330           ?? primeA330;
+              const pInstr  = finBaseState?.primeInstruction    ?? primeInstruction;
               const monthlyFixedPrimes =
-                primeIncitationUnit * incitCount
-                + (primeA330 + primeInstruction) * a330InstrBoost
+                pIncit * incitCount
+                + (pA330 + pInstr) * a330InstrBoost
                 + primeMai + primeNoel;
               const cumulBeforeForScenario = a81CumulBeforeState[scenario.name] ?? 0;
               const irMfScn = irMfState.byScenario?.[scenario.name];
@@ -1508,7 +1529,10 @@ export function GanttView({
               const stats = computeStats(
                 scenario.items, year, mo, cngPv, cngHs, userRegime, monthlyFixedPrimes,
                 article81Data, valeurJour, cumulBeforeForScenario, irMfEur, itEur,
-                pveiProp ?? PVEI, kspProp ?? KSP, fixeRegimeProp ?? FIXE_MENSUEL, fixeTPProp ?? null,
+                finBaseState?.pvei ?? PVEI,
+                finBaseState?.ksp  ?? KSP,
+                finBaseState?.fixe ?? FIXE_MENSUEL,
+                finBaseState?.fixeTP ?? null,
               );
               const isLast = idx === localScenarios.length - 1;
               const tafDays      = tafOk ? tafDur : 0;
@@ -1589,13 +1613,13 @@ export function GanttView({
                         if (isDetailOpen) { setDetailPanel(null); return; }
                         const rowEl = (e.currentTarget as HTMLElement).closest<HTMLElement>('[data-sr]');
                         const rect  = rowEl?.getBoundingClientRect() ?? e.currentTarget.getBoundingClientRect();
-                        const pveiEff   = pveiProp ?? PVEI;
-                        const kspEff    = kspProp ?? KSP;
-                        const fixeReg   = fixeRegimeProp ?? FIXE_MENSUEL;
+                        const pveiEff   = finBaseState?.pvei ?? PVEI;
+                        const kspEff    = finBaseState?.ksp  ?? KSP;
+                        const fixeReg   = finBaseState?.fixe ?? FIXE_MENSUEL;
                         const pvHcrEur  = stats.totalHcr * pveiEff * kspEff;
                         const pvNuitEur = (stats.totalTsvNuit / 2) * pveiEff * kspEff;
                         const nb30eReg2 = REGIME_NB30E[userRegime] ?? NB_30E;
-                        const fixeTPEff = fixeTPProp ?? (nb30eReg2 > 0 ? FIXE_MENSUEL * 30 / nb30eReg2 : FIXE_MENSUEL);
+                        const fixeTPEff = finBaseState?.fixeTP ?? (nb30eReg2 > 0 ? FIXE_MENSUEL * 30 / nb30eReg2 : FIXE_MENSUEL);
                         const fixeFF    = isFullPrimeMonth(userRegime, mo) ? fixeTPEff : fixeReg;
                         const bitroncon = stats.totalPrime * 2.5 * pveiEff;
                         const boost     = isFullPrimeMonth(userRegime, mo) && nb30eReg2 > 0 ? 30 / nb30eReg2 : 1;
@@ -1612,8 +1636,9 @@ export function GanttView({
                           fixeForFin: fixeFF,
                           totalNew: stats.fin.total, mga: stats.fin.mga, diff: stats.fin.diff,
                           totalPrime: stats.totalPrime, bitronconEur: bitroncon,
-                          incitation: incitCount * primeIncitationUnit,
-                          a330: primeA330 * boost, instruction: primeInstruction * boost,
+                          incitation: incitCount * (finBaseState?.primeIncitationUnit ?? primeIncitationUnit),
+                          a330: (finBaseState?.primeA330 ?? primeA330) * boost,
+                          instruction: (finBaseState?.primeInstruction ?? primeInstruction) * boost,
                           primeMai: 0, primeNoel: 0,
                           primesTotal: stats.fin.primes,
                           congeDays: stats.congeDays, cngPv, cngHs, congeAmount: stats.congeAmount,
