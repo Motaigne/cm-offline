@@ -77,19 +77,30 @@ function EditableDateTimeCell({
 
   if (editing) {
     return (
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-2">
         <input
           type="datetime-local"
           value={val}
           onChange={e => setVal(e.target.value)}
-          className="text-[10px] font-mono px-1 py-0.5 rounded border border-blue-300 dark:border-blue-700 bg-white dark:bg-zinc-900"
+          className="text-xs font-mono px-2 py-1.5 rounded border border-blue-300 dark:border-blue-700 bg-white dark:bg-zinc-900"
           autoFocus
         />
-        <div className="flex gap-1 text-[9px]">
-          <button onClick={save} className="px-1.5 py-0.5 rounded bg-blue-600 text-white font-semibold">OK</button>
-          <button onClick={cancel} className="px-1.5 py-0.5 rounded text-zinc-500 hover:text-zinc-700">×</button>
+        <div className="flex gap-1.5 text-xs">
+          <button
+            onClick={save}
+            className="px-3 py-1.5 rounded bg-blue-600 text-white font-semibold hover:bg-blue-700 active:bg-blue-800 min-w-[44px]"
+          >OK</button>
+          <button
+            onClick={cancel}
+            className="px-3 py-1.5 rounded bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-300 dark:hover:bg-zinc-600 min-w-[44px]"
+            title="Annuler"
+          >×</button>
           {overridden && (
-            <button onClick={reset} className="px-1.5 py-0.5 rounded text-amber-600 hover:text-amber-800" title="Restaurer la valeur d'origine">↺</button>
+            <button
+              onClick={reset}
+              className="px-3 py-1.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900/60 min-w-[44px]"
+              title="Restaurer la valeur d'origine"
+            >↺ init</button>
           )}
         </div>
       </div>
@@ -132,14 +143,16 @@ export function A81Client({
 
   async function recomputeLocal() {
     try {
-      // Récupère les overrides : depuis serveur si online (frais), sinon Dexie.
-      let overrides: Awaited<ReturnType<typeof loadAllA81Overrides>>;
+      // Resync silencieux depuis le serveur si online — cacheA81Overrides
+      // préserve les ops pending et n'écrasera pas les modifs offline non sync.
       if (typeof navigator !== 'undefined' && navigator.onLine) {
-        overrides = await loadAllA81Overrides();
-        void cacheA81Overrides(overrides);
-      } else {
-        overrides = await loadA81OverridesLocal();
+        try {
+          const serverOverrides = await loadAllA81Overrides();
+          await cacheA81Overrides(serverOverrides);
+        } catch { /* erreur réseau → on continue avec Dexie */ }
       }
+      // Toujours lire Dexie : = état mergé (serveur + pending optimistic).
+      const overrides = await loadA81OverridesLocal();
       const local = await computeA81ForYearLocal(currentYear, overrides);
       // Si on n'a pas de rotations cachées localement, local.rows est vide ;
       // dans ce cas on garde le data serveur (sinon page blanche).

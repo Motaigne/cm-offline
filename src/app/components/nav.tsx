@@ -9,7 +9,7 @@ import { loadAllProfileVersions } from '@/app/actions/profile-version';
 import { loadAllAnnexeRows } from '@/app/actions/annexe';
 import { loadAllA81Overrides } from '@/app/actions/a81';
 import { cacheRotations, hydrateDB, cacheProfileVersions, cacheAnnexeRows, cacheA81Overrides } from '@/lib/local-db';
-import { syncNow, pendingOpsCount } from '@/lib/sync-service';
+import { syncNow, pendingOpsCount, PENDING_CHANGED_EVENT } from '@/lib/sync-service';
 import { downloadBackup, parseBackup, importBackup } from '@/lib/backup';
 
 const TABS: { label: string; href: string; offlineDisabled?: boolean }[] = [
@@ -154,6 +154,13 @@ export function NavBar() {
       window.removeEventListener('online', up);
       window.removeEventListener('offline', down);
     };
+  }, []);
+
+  // Refresh badge quand une op est enqueued ou syncée.
+  useEffect(() => {
+    const onChange = () => { void pendingOpsCount().then(setPendingCount); };
+    window.addEventListener(PENDING_CHANGED_EVENT, onChange);
+    return () => window.removeEventListener(PENDING_CHANGED_EVENT, onChange);
   }, []);
 
   async function handleSync() {

@@ -48,6 +48,16 @@ type A81UpsertPayload  = { pairing_instance_id: string; debut_sejour_at?: string
 type A81DeletePayload  = { pairing_instance_id: string };
 type A81RestorePayload = { pairing_instance_id: string };
 
+// ─── Event : compteur de queue changé ─────────────────────────────────────────
+// Dispatché à chaque enqueue ET à chaque sync (pour MAJ instantanée du badge NavBar).
+const PENDING_EVENT = 'cm-pending-count-changed';
+function notifyPendingChanged() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(PENDING_EVENT));
+  }
+}
+export const PENDING_CHANGED_EVENT = PENDING_EVENT;
+
 // ─── Enqueue helpers (écriture locale + mise en queue) ───────────────────────
 
 export async function enqueueAdd(item: CalendarItem, draftId: string): Promise<void> {
@@ -65,6 +75,7 @@ export async function enqueueAdd(item: CalendarItem, draftId: string): Promise<v
     await db.items.put({ ...item, draft_id: draftId });
     await db.sync_queue.add({ op: 'add', payload: JSON.stringify(payload), created_at: Date.now() });
   });
+  notifyPendingChanged();
 }
 
 export async function enqueueDelete(itemId: string): Promise<void> {
@@ -73,6 +84,7 @@ export async function enqueueDelete(itemId: string): Promise<void> {
     await db.items.delete(itemId);
     await db.sync_queue.add({ op: 'delete', payload: JSON.stringify(payload), created_at: Date.now() });
   });
+  notifyPendingChanged();
 }
 
 export async function enqueueUpdate(itemId: string, startDate: string, endDate: string): Promise<void> {
@@ -81,6 +93,7 @@ export async function enqueueUpdate(itemId: string, startDate: string, endDate: 
     await db.items.where('id').equals(itemId).modify({ start_date: startDate, end_date: endDate });
     await db.sync_queue.add({ op: 'update', payload: JSON.stringify(payload), created_at: Date.now() });
   });
+  notifyPendingChanged();
 }
 
 export async function enqueueBidCategoryUpdate(itemId: string, bidCategory: BidCategory | null): Promise<void> {
@@ -89,6 +102,7 @@ export async function enqueueBidCategoryUpdate(itemId: string, bidCategory: BidC
     await db.items.where('id').equals(itemId).modify({ bid_category: bidCategory });
     await db.sync_queue.add({ op: 'update_bid', payload: JSON.stringify(payload), created_at: Date.now() });
   });
+  notifyPendingChanged();
 }
 
 export async function enqueueMetaUpdate(itemId: string, meta: Json | null): Promise<void> {
@@ -97,6 +111,7 @@ export async function enqueueMetaUpdate(itemId: string, meta: Json | null): Prom
     await db.items.where('id').equals(itemId).modify({ meta });
     await db.sync_queue.add({ op: 'update_meta', payload: JSON.stringify(payload), created_at: Date.now() });
   });
+  notifyPendingChanged();
 }
 
 // ─── Notes ────────────────────────────────────────────────────────────────────
@@ -106,6 +121,7 @@ export async function enqueueAddNote(note: UserNote): Promise<void> {
     await db.notes.put(note);
     await db.sync_queue.add({ op: 'add_note', payload: JSON.stringify(note), created_at: Date.now() });
   });
+  notifyPendingChanged();
 }
 
 export async function enqueueUpdateNote(
@@ -117,6 +133,7 @@ export async function enqueueUpdateNote(
     await db.notes.where('id').equals(id).modify(patch);
     await db.sync_queue.add({ op: 'update_note', payload: JSON.stringify(payload), created_at: Date.now() });
   });
+  notifyPendingChanged();
 }
 
 export async function enqueueDeleteNote(id: string): Promise<void> {
@@ -125,6 +142,7 @@ export async function enqueueDeleteNote(id: string): Promise<void> {
     await db.notes.delete(id);
     await db.sync_queue.add({ op: 'delete_note', payload: JSON.stringify(payload), created_at: Date.now() });
   });
+  notifyPendingChanged();
 }
 
 // ─── A81 overrides ────────────────────────────────────────────────────────────
@@ -153,6 +171,7 @@ export async function enqueueA81UpsertOverride(
     await applyA81OverrideLocal(instanceId, fields);
     await db.sync_queue.add({ op: 'a81_upsert_override', payload: JSON.stringify(payload), created_at: Date.now() });
   });
+  notifyPendingChanged();
 }
 
 export async function enqueueA81Delete(instanceId: string): Promise<void> {
@@ -161,6 +180,7 @@ export async function enqueueA81Delete(instanceId: string): Promise<void> {
     await applyA81OverrideLocal(instanceId, { deleted: true });
     await db.sync_queue.add({ op: 'a81_delete', payload: JSON.stringify(payload), created_at: Date.now() });
   });
+  notifyPendingChanged();
 }
 
 export async function enqueueA81Restore(instanceId: string): Promise<void> {
@@ -169,6 +189,7 @@ export async function enqueueA81Restore(instanceId: string): Promise<void> {
     await applyA81OverrideLocal(instanceId, { deleted: false });
     await db.sync_queue.add({ op: 'a81_restore', payload: JSON.stringify(payload), created_at: Date.now() });
   });
+  notifyPendingChanged();
 }
 
 // ─── Sync ─────────────────────────────────────────────────────────────────────
@@ -227,6 +248,7 @@ export async function syncNow(): Promise<void> {
         throw new Error(res.error);
       }
       await db.sync_queue.delete(op.id!);
+      notifyPendingChanged();
     } catch (e) {
       console.error('[sync] op failed:', op.op, e);
       // On s'arrête sur la première erreur pour respecter l'ordre.

@@ -330,10 +330,31 @@ export async function loadAnnexeRowsLocal(): Promise<AnnexeRow[]> {
 
 // ─── Cache overrides A81 ──────────────────────────────────────────────────────
 
+/**
+ * Remplace le cache local par les overrides serveur, mais préserve les rows
+ * pour lesquelles une op est encore en attente de sync (sinon le passage
+ * online écraserait les modifs offline avant qu'elles ne soient pushées).
+ * Même esprit que hydrateDB pour les planning items.
+ */
 export async function cacheA81Overrides(overrides: A81OverrideLocal[]): Promise<void> {
-  await db.transaction('rw', db.a81_overrides, async () => {
+  await db.transaction('rw', db.a81_overrides, db.sync_queue, async () => {
+    const pending = await db.sync_queue.toArray();
+    const pendingInstIds = new Set<string>();
+    for (const op of pending) {
+      if (op.op === 'a81_upsert_override' || op.op === 'a81_delete' || op.op === 'a81_restore') {
+        try {
+          const p = JSON.parse(op.payload) as { pairing_instance_id?: string };
+          if (p.pairing_instance_id) pendingInstIds.add(p.pairing_instance_id);
+        } catch { /* skip op malformée */ }
+      }
+    }
+    const existing = await db.a81_overrides.toArray();
+    const keptLocal = existing.filter(o => pendingInstIds.has(o.pairing_instance_id));
+    const fromServer = overrides.filter(o => !pendingInstIds.has(o.pairing_instance_id));
     await db.a81_overrides.clear();
-    if (overrides.length) await db.a81_overrides.bulkPut(overrides);
+    if (keptLocal.length || fromServer.length) {
+      await db.a81_overrides.bulkPut([...keptLocal, ...fromServer]);
+    }
   });
 }
 
