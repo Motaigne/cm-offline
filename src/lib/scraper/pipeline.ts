@@ -20,9 +20,24 @@ function msToTimeStr(ms: number): string {
   return `${hh}:${mm}:00`;
 }
 
-function buildRotationCode(s: PairingSummary): string {
+/**
+ * nb_on_days = nombre de jours calendaires couverts par la rotation, du
+ * premier block-off au dernier block-on (UTC). Plus fiable que
+ * pairingDetail.nbOnDays renvoyé par CrewBidd, qui peut être incohérent entre
+ * instances d'une même rotation (probablement un cache stale côté AF).
+ */
+function computeNbOnDays(beginBlockDateMs: number, endBlockDateMs: number): number {
+  if (!beginBlockDateMs || !endBlockDateMs || endBlockDateMs < beginBlockDateMs) return 0;
+  const begin = new Date(beginBlockDateMs);
+  const end   = new Date(endBlockDateMs);
+  const beginDay = Date.UTC(begin.getUTCFullYear(), begin.getUTCMonth(), begin.getUTCDate());
+  const endDay   = Date.UTC(end.getUTCFullYear(),   end.getUTCMonth(),   end.getUTCDate());
+  return Math.round((endDay - beginDay) / 86_400_000) + 1;
+}
+
+function buildRotationCode(s: PairingSummary, nbOnDays: number): string {
   const dest = s.layovers.replace(/-/g, ' ');
-  return `${s.pairingDetail.nbOnDays}ON ${dest}`;
+  return `${nbOnDays}ON ${dest}`;
 }
 
 function computeTempsSej(detail: PairingDetail): number {
@@ -288,10 +303,14 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
 
     let processedSigs = 0;
 
-    // Phase 3a — partial sigs (rapide, juste insert d'instances)
+    // Phase 3a — partial sigs (rapide, juste insert d'instances). On en
+    // profite pour ré-aligner nb_on_days + rotation_code sur le calcul depuis
+    // les dates (CrewBidd peut renvoyer des valeurs incohérentes entre
+    // instances de la même rotation — cf. cas 7ON DFW ZKA4F0158 août 2026).
     for (const { sigDbId, missingInsts, activityNumber } of partialSigs) {
-      const repr    = missingInsts[0];
-      const rotCode = buildRotationCode(repr);
+      const repr      = missingInsts[0];
+      const nbOnDays  = computeNbOnDays(repr.beginBlockDate, repr.endBlockDate);
+      const rotCode   = buildRotationCode(repr, nbOnDays);
       yield {
         type: 'progress',
         current:  ++processedSigs,
@@ -300,15 +319,19 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
       };
       const rows = missingInsts.map(inst => buildInstanceRow(sigDbId, inst));
       await supabase.from('pairing_instance').insert(rows);
-      // Pas de sleep : pas d'appel CrewBidd côté detail, juste un INSERT DB.
-      void activityNumber; // silence unused
+      await supabase.from('pairing_signature')
+        .update({ nb_on_days: nbOnDays, rotation_code: rotCode })
+        .eq('id', sigDbId);
+      // Pas de sleep : pas d'appel CrewBidd côté detail, juste 2 calls DB.
+      void activityNumber;
     }
 
     // Phase 3b — full fetch pour les sigs vraiment manquantes
     for (const activityNumber of cappedMissing) {
       const instances = sigMap.get(activityNumber)!;
       const repr      = instances[0];
-      const rotCode   = buildRotationCode(repr);
+      const nbOnDays  = computeNbOnDays(repr.beginBlockDate, repr.endBlockDate);
+      const rotCode   = buildRotationCode(repr, nbOnDays);
 
       yield {
         type: 'progress',
@@ -351,7 +374,7 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
           snapshot_id:         snapshotId,
           activity_number:     activityNumber,
           rotation_code:       rotCode,
-          nb_on_days:          repr.pairingDetail.nbOnDays,
+          nb_on_days:          nbOnDays,
           aircraft_code:       repr.aircraftSubtypeCode,
           zone,
           hc,
