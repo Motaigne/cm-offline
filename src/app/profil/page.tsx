@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { loadAnnexeForMonth } from '@/app/actions/annexe';
+import { loadAllProfileVersions } from '@/app/actions/profile-version';
 import { NavBar } from '@/app/components/nav';
 import { ProfilForm } from './profil-form';
 
@@ -9,15 +10,12 @@ export default async function ProfilPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  const { data: profile } = await supabase
-    .from('user_profile')
-    .select('*')
-    .eq('user_id', user.id)
-    .single();
-
-  // Profil = vue d'édition courante → on prend les valeurs annexes du mois en cours.
-  const currentMonth = new Date().toISOString().slice(0, 7);
-  const annexe = await loadAnnexeForMonth(currentMonth);
+  const [{ data: profile }, allVersions, annexe] = await Promise.all([
+    supabase.from('user_profile').select('*').eq('user_id', user.id).single(),
+    loadAllProfileVersions(user.id),
+    // Profil = vue d'édition → annexe du mois en cours pour les calculs live.
+    loadAnnexeForMonth(new Date().toISOString().slice(0, 7)),
+  ]);
 
   return (
     <div className="flex flex-col h-screen bg-zinc-50 dark:bg-zinc-950 overflow-hidden">
@@ -29,10 +27,16 @@ export default async function ProfilPage() {
               {!profile ? 'Créer mon profil' : 'Mon profil'}
             </h1>
             <p className="text-sm text-zinc-400 mt-0.5">
-              Les éléments de paie se recalculent automatiquement à chaque modification.
+              Les éléments de paie sont versionnés par date d&apos;application. Le calendrier
+              utilise la version applicable au mois affiché.
             </p>
           </div>
-          <ProfilForm initialData={profile ?? undefined} isNew={!profile} annexe={annexe} />
+          <ProfilForm
+            initialData={profile ?? undefined}
+            isNew={!profile}
+            annexe={annexe}
+            allVersions={allVersions}
+          />
         </div>
       </div>
     </div>

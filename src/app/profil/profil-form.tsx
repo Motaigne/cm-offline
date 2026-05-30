@@ -1,7 +1,9 @@
 'use client';
 
-import { useState, useMemo, useTransition } from 'react';
+import { useState, useMemo, useTransition, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { saveProfile, type ProfileData } from '@/app/actions/profile';
+import { saveProfileVersion, type ProfileVersion } from '@/app/actions/profile-version';
 import { signOut } from '@/app/actions/auth';
 import { computeFullProfile, KSP, type AnnexeData } from '@/lib/annexe';
 import { useOnlineStatus } from '@/hooks/use-online';
@@ -29,7 +31,6 @@ const REGIME_LABELS: Record<RegimeEnum, string> = {
   TTA75:       'TTA 75 %',
 };
 
-// Nb de 30ème typique par régime (base de calcul mensuel)
 const REGIME_NB30E: Record<RegimeEnum, number> = {
   TP:          30,
   TAF7_10_12:  23,
@@ -41,7 +42,6 @@ const REGIME_NB30E: Record<RegimeEnum, number> = {
   TTA75:       23,
 };
 
-// Fraction de mois travaillés dans l'année pour les régimes TAF
 const REGIME_MOIS12: Partial<Record<RegimeEnum, number>> = {
   TAF7_10_12:  10,
   TAF7_12_12:  12,
@@ -54,33 +54,105 @@ const AVIONS     = ['A335', 'A350', 'B787', 'B777'];
 const CATEGORIES = ['A', 'B', 'C'];
 const TRANSPORTS = ['Navigo', 'Voiture'];
 
+const MONTHS_FR = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+function fmtDateApp(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d) return iso;
+  const day = d === 1 ? '1er' : String(d);
+  return `${day} ${MONTHS_FR[m - 1]} ${y}`;
+}
+
+/** Date du 1er du mois courant en YYYY-MM-01. */
+function currentMonthStart(): string {
+  return new Date().toISOString().slice(0, 7) + '-01';
+}
+
+/** Champs du formulaire dérivés soit d'une ProfileVersion soit de user_profile (legacy). */
+type SourceProfile = ProfileVersion | ProfileRow | null | undefined;
+
+function readSource(src: SourceProfile) {
+  return {
+    fonction:   (src?.fonction ?? '') as FonctionEnum | '',
+    regime:     (src?.regime   ?? '') as RegimeEnum   | '',
+    classe:     src?.classe?.toString() ?? '2',
+    categorie:  src?.categorie ?? 'C',
+    echelon:    src?.echelon?.toString() ?? '4',
+    bonusAtpl:  src?.bonus_atpl ?? false,
+    transport:  src?.transport ?? '',
+    navigoEur:  String(src?.navigo_eur ?? 81.40),
+    voitureKmAller: src?.voiture_km_aller != null ? String(src.voiture_km_aller) : '',
+    voitureIndemniteKm: String(src?.voiture_indemnite_km ?? 0.3837),
+    aircraft:   src?.aircraft_principal ?? 'A335',
+    cngPv:      String(src?.cng_pv ?? 0),
+    cngHs:      String(src?.cng_hs ?? 0),
+    triNiveau:  src?.tri_niveau != null ? String(src.tri_niveau) : '',
+    prime330Count: src?.prime_330_count ?? null,
+    valeurJour: String(src?.valeur_jour ?? 600),
+    tmi:        Number(src?.tmi ?? 41),
+  };
+}
+
 export function ProfilForm({
   initialData,
   isNew,
   annexe,
+  allVersions,
 }: {
   initialData?: ProfileRow;
   isNew: boolean;
   annexe: Partial<AnnexeData>;
+  allVersions: ProfileVersion[];
 }) {
-  const [fonction,  setFonction]  = useState<FonctionEnum | ''>(initialData?.fonction ?? '');
-  const [regime,    setRegime]    = useState<RegimeEnum   | ''>(initialData?.regime   ?? '');
-  const [classe,    setClasse]    = useState(initialData?.classe?.toString()  ?? '2');
-  const [categorie, setCategorie] = useState(initialData?.categorie           ?? 'C');
-  const [echelon,   setEchelon]   = useState(initialData?.echelon?.toString() ?? '4');
-  const [bonusAtpl, setBonusAtpl] = useState(initialData?.bonus_atpl          ?? false);
-  const [transport, setTransport] = useState(initialData?.transport           ?? '');
-  // IT — valeurs par-mode (défauts : Navigo 81.40 €/mois, Voiture 0.3837 €/km)
-  const [navigoEur,          setNavigoEur]          = useState(String(initialData?.navigo_eur           ?? 81.40));
-  const [voitureKmAller,     setVoitureKmAller]     = useState(initialData?.voiture_km_aller != null ? String(initialData.voiture_km_aller) : '');
-  const [voitureIndemniteKm, setVoitureIndemniteKm] = useState(String(initialData?.voiture_indemnite_km ?? 0.3837));
-  const [aircraft,  setAircraft]  = useState(initialData?.aircraft_principal  ?? 'A335');
-  const [cngPv,     setCngPv]     = useState(String(initialData?.cng_pv       ?? 0));
-  const [cngHs,     setCngHs]     = useState(String(initialData?.cng_hs       ?? 0));
-  const [triNiveau,   setTriNiveau]   = useState<string>(initialData?.tri_niveau != null ? String(initialData.tri_niveau) : '');
-  const [prime330Count, setPrime330Count] = useState<number | null>(initialData?.prime_330_count ?? null);
-  const [valeurJour,  setValeurJour]  = useState(String(initialData?.valeur_jour ?? 600));
-  const [tmi,         setTmi]         = useState<number>(initialData?.tmi ?? 41);
+  const router = useRouter();
+  const isOnline = useOnlineStatus();
+
+  // Versions triées (plus récente d'abord). Si aucune version → fallback initialData.
+  const sortedVersions = useMemo(
+    () => [...allVersions].sort((a, b) => b.valid_from.localeCompare(a.valid_from)),
+    [allVersions],
+  );
+  const latestValidFrom = sortedVersions[0]?.valid_from;
+
+  // Version actuellement sélectionnée dans le dropdown (= source du form).
+  const [selectedValidFrom, setSelectedValidFrom] = useState<string>(
+    latestValidFrom ?? currentMonthStart(),
+  );
+  const selectedVersion = sortedVersions.find(v => v.valid_from === selectedValidFrom) ?? null;
+  const source: SourceProfile = selectedVersion ?? initialData ?? null;
+
+  // Champs form — initialisés depuis la source, ré-initialisés à chaque switch.
+  const init = readSource(source);
+  const [fonction,  setFonction]  = useState<FonctionEnum | ''>(init.fonction);
+  const [regime,    setRegime]    = useState<RegimeEnum   | ''>(init.regime);
+  const [classe,    setClasse]    = useState(init.classe);
+  const [categorie, setCategorie] = useState(init.categorie);
+  const [echelon,   setEchelon]   = useState(init.echelon);
+  const [bonusAtpl, setBonusAtpl] = useState(init.bonusAtpl);
+  const [transport, setTransport] = useState(init.transport);
+  const [navigoEur,          setNavigoEur]          = useState(init.navigoEur);
+  const [voitureKmAller,     setVoitureKmAller]     = useState(init.voitureKmAller);
+  const [voitureIndemniteKm, setVoitureIndemniteKm] = useState(init.voitureIndemniteKm);
+  const [aircraft,  setAircraft]  = useState(init.aircraft);
+  const [cngPv,     setCngPv]     = useState(init.cngPv);
+  const [cngHs,     setCngHs]     = useState(init.cngHs);
+  const [triNiveau, setTriNiveau] = useState<string>(init.triNiveau);
+  const [prime330Count, setPrime330Count] = useState<number | null>(init.prime330Count);
+  const [valeurJour, setValeurJour] = useState(init.valeurJour);
+  const [tmi,         setTmi]         = useState<number>(init.tmi);
+
+  // Quand on change de version sélectionnée → reset le form depuis la nouvelle source.
+  useEffect(() => {
+    const v = sortedVersions.find(v => v.valid_from === selectedValidFrom) ?? null;
+    const src: SourceProfile = v ?? initialData ?? null;
+    const r = readSource(src);
+    setFonction(r.fonction); setRegime(r.regime); setClasse(r.classe);
+    setCategorie(r.categorie); setEchelon(r.echelon); setBonusAtpl(r.bonusAtpl);
+    setTransport(r.transport); setNavigoEur(r.navigoEur); setVoitureKmAller(r.voitureKmAller);
+    setVoitureIndemniteKm(r.voitureIndemniteKm); setAircraft(r.aircraft);
+    setCngPv(r.cngPv); setCngHs(r.cngHs); setTriNiveau(r.triNiveau);
+    setPrime330Count(r.prime330Count); setValeurJour(r.valeurJour); setTmi(r.tmi);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedValidFrom]);
 
   const isTri    = fonction === 'TRI_OPL' || fonction === 'TRI_CDB';
   const prime330 = prime330Count != null;
@@ -88,7 +160,17 @@ export function ProfilForm({
   const [saved,     setSaved]     = useState(false);
   const [err,       setErr]       = useState('');
   const [isPending, start]        = useTransition();
-  const isOnline = useOnlineStatus();
+
+  // ── Nouvelle version (UI inline) ───────────────────────────────────────────
+  const [showNewForm, setShowNewForm] = useState(false);
+  const [newDate, setNewDate]         = useState(() => {
+    // Default = 1er du mois suivant.
+    const d = new Date();
+    d.setUTCDate(1);
+    d.setUTCMonth(d.getUTCMonth() + 1);
+    return d.toISOString().slice(0, 10);
+  });
+  const [newErr, setNewErr] = useState('');
 
   // ── Calcul live des éléments de paie ───────────────────────────────────────
   const computed = useMemo(() => {
@@ -114,9 +196,6 @@ export function ProfilForm({
       primeInstFonction, primeInstAnnee, prime330Count, annexe as AnnexeData] as const;
 
     const main = computeFullProfile(...profileArgs);
-
-    // Pour les régimes 10/12 : en juil/août il n'y a pas de jours TAF (congé TAF),
-    // donc nb30e = 30 → les primes sont plus élevées ces 2 mois.
     const juillAout = is10_12
       ? computeFullProfile(aircraft, fonction, cl, categorie, ech, bonusAtpl, 30, 'LC',
           primeInstFonction, primeInstAnnee, prime330Count, annexe as AnnexeData)
@@ -125,14 +204,9 @@ export function ProfilForm({
     return { ...main, juillAout };
   }, [annexe, fonction, regime, aircraft, classe, categorie, echelon, bonusAtpl, isTri, triNiveau, prime330Count]);
 
-  function handleSave() {
-    if (!fonction || !regime) return;
-    setErr(''); setSaved(false);
-    if (!isOnline) {
-      setErr("Hors ligne — la sauvegarde du profil nécessite une connexion. Réessaie une fois en ligne.");
-      return;
-    }
-    const data: ProfileData = {
+  /** Champs à persister (commun entre saveProfile et saveProfileVersion). */
+  function buildPayload(): ProfileData {
+    return {
       fonction:           fonction as FonctionEnum,
       regime:             regime   as RegimeEnum,
       qualifs_avion:      [],
@@ -152,14 +226,54 @@ export function ProfilForm({
       valeur_jour:        parseFloat(valeurJour) || 600,
       tmi:                tmi,
     };
+  }
+
+  function handleSave() {
+    if (!fonction || !regime) return;
+    setErr(''); setSaved(false);
+    if (!isOnline) {
+      setErr("Hors ligne — la sauvegarde du profil nécessite une connexion. Réessaie une fois en ligne.");
+      return;
+    }
+    const data = buildPayload();
+    const targetValidFrom = selectedValidFrom;
+    // Sync user_profile uniquement si on édite la version la plus récente (ou le 1er enregistrement d'un new user).
+    const shouldSyncUserProfile = isNew || targetValidFrom === latestValidFrom;
+
     start(async () => {
       try {
-        const res = await saveProfile(data);
-        if (res && 'error' in res) setErr(res.error ?? 'Erreur inconnue');
-        else { setSaved(true); setTimeout(() => setSaved(false), 3000); }
+        // 1. user_profile : pour les compats (display_name, fallback queries, onboarding check)
+        if (shouldSyncUserProfile) {
+          const res = await saveProfile(data);
+          if (res && 'error' in res) { setErr(res.error ?? 'Erreur user_profile'); return; }
+        }
+        // 2. user_profile_version : source de vérité pour les calculs paie
+        const res2 = await saveProfileVersion(targetValidFrom, {
+          fonction:   data.fonction,
+          regime:     data.regime,
+          qualifs_avion: data.qualifs_avion,
+          classe:     data.classe,
+          categorie:  data.categorie,
+          echelon:    data.echelon,
+          bonus_atpl: data.bonus_atpl,
+          transport:  data.transport,
+          navigo_eur: data.navigo_eur,
+          voiture_km_aller:     data.voiture_km_aller,
+          voiture_indemnite_km: data.voiture_indemnite_km,
+          aircraft_principal:   data.aircraft_principal,
+          cng_pv:     data.cng_pv,
+          cng_hs:     data.cng_hs,
+          tri_niveau: data.tri_niveau,
+          prime_330_count: data.prime_330_count,
+          valeur_jour: data.valeur_jour,
+          tmi:        data.tmi,
+        });
+        if ('error' in res2) { setErr(res2.error); return; }
+
+        setSaved(true);
+        setTimeout(() => setSaved(false), 3000);
+        router.refresh();
       } catch (e) {
-        // Safari iPad PWA renvoie "TypeError: Load failed" quand le réseau tombe
-        // pendant le fetch du server action. On le présente proprement.
         if (e instanceof TypeError) {
           setErr("Connexion perdue pendant l'enregistrement — réessaie une fois reconnecté.");
         } else {
@@ -170,10 +284,105 @@ export function ProfilForm({
     });
   }
 
+  function handleCreateNewVersion() {
+    setNewErr('');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) { setNewErr('Format YYYY-MM-DD requis'); return; }
+    const [, , day] = newDate.split('-');
+    if (day !== '01') { setNewErr('La date doit être le 1er du mois'); return; }
+    if (sortedVersions.some(v => v.valid_from === newDate)) { setNewErr('Une version existe déjà à cette date'); return; }
+    if (!fonction || !regime) { setNewErr('Fonction + régime requis avant de créer une version'); return; }
+
+    const data = buildPayload();
+    start(async () => {
+      const res = await saveProfileVersion(newDate, {
+        fonction:   data.fonction,
+        regime:     data.regime,
+        qualifs_avion: data.qualifs_avion,
+        classe:     data.classe,
+        categorie:  data.categorie,
+        echelon:    data.echelon,
+        bonus_atpl: data.bonus_atpl,
+        transport:  data.transport,
+        navigo_eur: data.navigo_eur,
+        voiture_km_aller:     data.voiture_km_aller,
+        voiture_indemnite_km: data.voiture_indemnite_km,
+        aircraft_principal:   data.aircraft_principal,
+        cng_pv:     data.cng_pv,
+        cng_hs:     data.cng_hs,
+        tri_niveau: data.tri_niveau,
+        prime_330_count: data.prime_330_count,
+        valeur_jour: data.valeur_jour,
+        tmi:        data.tmi,
+      });
+      if ('error' in res) { setNewErr(res.error); return; }
+      setShowNewForm(false);
+      setSelectedValidFrom(newDate);
+      router.refresh();
+    });
+  }
+
   const canSave = !!fonction && !!regime;
+  const hasVersions = sortedVersions.length > 0;
 
   return (
     <div className="space-y-6">
+
+      {/* ── Sélecteur de version ────────────────────────────────────────────── */}
+      {hasVersions && (
+        <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800">
+          <label className="text-xs text-zinc-500 font-medium">Version éditée :</label>
+          <select
+            value={selectedValidFrom}
+            onChange={e => setSelectedValidFrom(e.target.value)}
+            className="text-xs px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900"
+          >
+            {sortedVersions.map(v => (
+              <option key={v.valid_from} value={v.valid_from}>
+                À partir du {fmtDateApp(v.valid_from)}
+                {v.valid_from === latestValidFrom ? ' (la plus récente)' : ''}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => { setShowNewForm(s => !s); setNewErr(''); }}
+            className="text-xs px-2 py-1 rounded border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30"
+          >
+            + Nouvelle version
+          </button>
+        </div>
+      )}
+
+      {showNewForm && (
+        <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900 text-xs">
+          <span className="text-blue-700 dark:text-blue-300 font-medium">Nouvelle version à partir du :</span>
+          <input
+            type="date"
+            value={newDate}
+            onChange={e => setNewDate(e.target.value)}
+            className="px-2 py-1 rounded border border-blue-200 dark:border-blue-800 bg-white dark:bg-zinc-900 font-mono"
+          />
+          <span className="text-blue-600 dark:text-blue-400 italic">
+            (valeurs actuelles du formulaire dupliquées comme point de départ)
+          </span>
+          <button
+            type="button"
+            onClick={handleCreateNewVersion}
+            disabled={isPending}
+            className="px-3 py-1 rounded bg-blue-600 text-white font-semibold disabled:opacity-40"
+          >
+            {isPending ? '…' : 'Créer'}
+          </button>
+          <button
+            type="button"
+            onClick={() => { setShowNewForm(false); setNewErr(''); }}
+            className="text-zinc-500 hover:text-zinc-700"
+          >
+            Annuler
+          </button>
+          {newErr && <span className="text-red-500">{newErr}</span>}
+        </div>
+      )}
 
       {/* Fonction */}
       <Section label="Fonction">
@@ -182,8 +391,6 @@ export function ProfilForm({
             <button key={value} type="button"
               onClick={() => {
                 setFonction(value);
-                // Auto-sélection du niveau 1 quand on bascule sur TRI : sinon
-                // primeInstruction reste à 0 et la prime n'apparaît pas.
                 if ((value === 'TRI_OPL' || value === 'TRI_CDB') && triNiveau === '') {
                   setTriNiveau('1');
                 }
@@ -195,7 +402,7 @@ export function ProfilForm({
         </div>
         {isTri && (
           <div className="mt-3">
-            <label className="block text-xs text-zinc-500 mb-1">Niveau d'instruction</label>
+            <label className="block text-xs text-zinc-500 mb-1">Niveau d&apos;instruction</label>
             <div className="flex flex-wrap gap-2">
               {['1', '2', '3', '4', '5'].map(n => (
                 <button key={n} type="button" onClick={() => setTriNiveau(n)} className={pill(triNiveau === n)}>
@@ -262,7 +469,7 @@ export function ProfilForm({
         </label>
         {prime330 && (
           <div className="mt-3">
-            <label className="block text-xs text-zinc-500 mb-1">Nombre d'avions sur la flotte</label>
+            <label className="block text-xs text-zinc-500 mb-1">Nombre d&apos;avions sur la flotte</label>
             <div className="flex flex-wrap gap-2">
               {[
                 { count: 9, label: '< 9' },
@@ -371,7 +578,9 @@ export function ProfilForm({
 
       <button type="button" onClick={handleSave} disabled={isPending || !canSave}
         className="w-full rounded-lg bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-4 py-2.5 text-sm font-semibold hover:opacity-80 disabled:opacity-40 transition-opacity">
-        {saved ? '✓ Enregistré' : isPending ? 'Enregistrement…' : isNew ? 'Créer mon profil' : 'Enregistrer'}
+        {saved ? '✓ Enregistré' : isPending ? 'Enregistrement…' : isNew
+          ? 'Créer mon profil'
+          : `Enregistrer la version du ${fmtDateApp(selectedValidFrom)}`}
       </button>
 
       {/* ── Éléments de paie calculés (live) ─────────────────────────────── */}
@@ -388,25 +597,21 @@ export function ProfilForm({
             </span>
           </p>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            {/* ligne 1 */}
             <ValueCard label="PVEI"     value={`${computed.pvei.toFixed(2)} €/h`}  color="blue"
               formula="Avion × (ATPL + Classe) × CAT" />
             <ValueCard label="K.S.P"    value={KSP.toFixed(2)}                     color="zinc" />
             <ValueCard label="Seuil HS" value={`${computed.hsSeuil.toFixed(2)} h`} color="green"
               formula="75 − 2,5 × congés − 2,5 × (30 − 30e)" />
-            {/* ligne 2 */}
             <ValueCard label="MGA"              value={`${computed.mga.toFixed(2)} €`}            color="violet"
               formula="T.Fixe + 85 × 30e × PVEI" />
             <ValueCard label="Traitement fixe"  value={`${computed.fixe.toFixed(2)} €`}           color="zinc"
               formula="Fixe × Coef(FO/CDB) × Echelon × 30e" />
             <ValueCard label="Prime bi-tronçon" value={`${computed.primeBiTroncon.toFixed(2)} €`} color="amber"
               formula="2,5 × PVEI (sans KSP)" />
-            {/* ligne 3 */}
             <ValueCard label="MGA temps plein"     value={`${computed.mgaTP.toFixed(2)} €`}           color="violet"
               formula="T.Fixe + 85 × PVEI" />
             <ValueCard label="T. Fixe temps plein" value={`${computed.fixeTP.toFixed(2)} €`}          color="zinc"   />
             <ValueCard label="Prime d'incitation"  value={`${computed.primeIncitation.toFixed(2)} €`} color="amber"  />
-            {/* ligne 4 (conditionnelle) */}
             {isTri && computed.primeInstruction > 0 && (
               <>
                 <ValueCard
