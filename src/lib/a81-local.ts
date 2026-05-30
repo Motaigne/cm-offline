@@ -165,15 +165,20 @@ export async function computeA81ForYearLocal(
     const instId = it.pairing_instance_id as string;
     const ov = ovByInstId.get(instId);
     const sig = sigByInstId.get(instId);
-    if (!sig?.debut_sejour_at || !sig.fin_sejour_at) continue;
+    if (!sig) continue;
 
-    const debutOrigin = sig.debut_sejour_at;
-    const finOrigin   = sig.fin_sejour_at;
+    // Préférer les timestamps PAR INSTANCE (correct pour chaque date du mois)
+    // plutôt que les timestamps signature (= absolus de l'instance capturée,
+    // faux pour toutes les autres). Fallback signature.* pour cache obsolète
+    // (avant ce fix, instance.debut_sejour_at n'existait pas).
+    const instance = sig.instances.find(i => i.id === instId);
+    const debutOrigin = instance?.debut_sejour_at ?? sig.debut_sejour_at;
+    const finOrigin   = instance?.fin_sejour_at   ?? sig.fin_sejour_at;
+    if (!debutOrigin || !finOrigin) continue;
+
     const escaleDebut = sig.escale_debut ?? sig.first_layover ?? '';
     const escaleFin   = sig.escale_fin   ?? sig.first_layover ?? '';
 
-    // Trouve l'instance dans sig.instances pour récupérer depart_at
-    const instance = sig.instances.find(i => i.id === instId);
     const debutRotation = instance ? instance.depart_at.slice(0, 10) : debutOrigin.slice(0, 10);
 
     if (ov?.deleted) {

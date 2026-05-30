@@ -8,6 +8,7 @@ import type { IrMfRate } from '@/lib/ir-rates';
 import type { PairingDetail } from '@/lib/scraper/types';
 import { getPlanPrestation } from '@/lib/plan-prestation';
 import { loadAnnexeRowForMonth } from '@/app/actions/annexe';
+import { computeSejourOffsetsFromDetail, type SejourOffsets } from '@/lib/article81';
 
 export type RotationInstance = {
   id: string;
@@ -23,6 +24,12 @@ export type RotationInstance = {
   scheduled_begin_activity_at: string | null;
   /** scheduledEndActivityDate — fin d'activité (closeout). Null si pas backfilled. */
   scheduled_end_activity_at: string | null;
+  /** Début / fin séjour A81 calculés PAR INSTANCE (depart_at + offsets de la
+   *  signature). Null si raw_detail absent ou flightDuty < 2. Doivent être
+   *  utilisés à la place de signature.debut_sejour_at, qui est l'absolu d'UNE
+   *  seule instance capturée (= faux pour toutes les autres). */
+  debut_sejour_at: string | null;
+  fin_sejour_at:   string | null;
 };
 
 export type RotationSignature = {
@@ -108,11 +115,15 @@ export async function getRotationsForMonth(month: string): Promise<RotationSigna
   const irRowData = await loadAnnexeRowForMonth('ir_mf_rates', month);
   const irRates = (irRowData ?? []) as unknown as IrMfRate[];
   const irMfBySig = new Map<string, IrMfResult>();
+  const sejourOffsetsBySig = new Map<string, SejourOffsets>();
   for (const s of sigs) {
     if (!s.raw_detail) continue;
+    const detail = s.raw_detail as unknown as PairingDetail;
     try {
-      irMfBySig.set(s.id, computeIRandMF(s.raw_detail as unknown as PairingDetail, irRates, getPlanPrestation));
+      irMfBySig.set(s.id, computeIRandMF(detail, irRates, getPlanPrestation));
     } catch { /* skip — raw_detail invalide */ }
+    const off = computeSejourOffsetsFromDetail(detail);
+    if (off) sejourOffsetsBySig.set(s.id, off);
   }
 
   const sigIds = sigs.map(s => s.id);
@@ -162,6 +173,8 @@ export async function getRotationsForMonth(month: string): Promise<RotationSigna
     });
   }
   for (const inst of instances) {
+    const off = sejourOffsetsBySig.get(inst.signature_id);
+    const departMs = off ? new Date(inst.depart_at).getTime() : 0;
     sigMap.get(inst.signature_id)?.instances.push({
       id:            inst.id,
       activity_id:   inst.activity_id,
@@ -172,6 +185,8 @@ export async function getRotationsForMonth(month: string): Promise<RotationSigna
       rest_after_h:  inst.rest_after_h,
       scheduled_begin_activity_at: inst.scheduled_begin_activity_at,
       scheduled_end_activity_at:   inst.scheduled_end_activity_at,
+      debut_sejour_at: off ? new Date(departMs + off.debutSejourOffsetMs).toISOString() : null,
+      fin_sejour_at:   off ? new Date(departMs + off.finSejourOffsetMs).toISOString()   : null,
     });
   }
 

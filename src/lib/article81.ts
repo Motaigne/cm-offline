@@ -14,8 +14,12 @@
 // suivant — nécessite cumul cross-mois sur l'année).
 
 import type { Database } from '@/types/supabase';
+import type { PairingDetail } from '@/lib/scraper/types';
 
 type RegimeEnum = Database['public']['Enums']['regime_enum'];
+
+const FIVE_MIN_MS = 5  * 60 * 1000;
+const TEN_MIN_MS  = 10 * 60 * 1000;
 
 export interface Article81Data {
   rates: { taux: Record<string, number | null>; duree: string }[];
@@ -106,6 +110,31 @@ export function computeValeurJour(args: {
     ? fixe + primeInstruction + 96 * pvei * ksp
     : fixe + 76 * pvei * ksp;
   return baseAmount * 13 / 12 / 18;
+}
+
+/** Offsets stables d'une signature : durées (ms) du début de rotation
+ *  (flightDuty[0].schBeginDate) au début de séjour (firstDuty.schEnd − 5min)
+ *  et à la fin de séjour (lastDuty.schBegin + 10min). Les offsets sont
+ *  invariants pour toutes les instances de la signature ; on les applique
+ *  à instance.depart_at pour obtenir les vrais timestamps de séjour. */
+export interface SejourOffsets {
+  debutSejourOffsetMs: number;
+  finSejourOffsetMs:   number;
+}
+
+/** Calcule les offsets séjour depuis un PairingDetail. Renvoie null si
+ *  flightDuty absent ou < 2 entrées (= pas de séjour applicable). */
+export function computeSejourOffsetsFromDetail(detail: PairingDetail | null | undefined): SejourOffsets | null {
+  if (!detail?.flightDuty || detail.flightDuty.length < 2) return null;
+  const firstDuty = detail.flightDuty[0];
+  const lastDuty  = detail.flightDuty[detail.flightDuty.length - 1];
+  const rotationStartMs = firstDuty.schBeginDate;
+  const debutSejourMs   = firstDuty.schEndDate  - FIVE_MIN_MS;
+  const finSejourMs     = lastDuty.schBeginDate + TEN_MIN_MS;
+  return {
+    debutSejourOffsetMs: debutSejourMs - rotationStartMs,
+    finSejourOffsetMs:   finSejourMs   - rotationStartMs,
+  };
 }
 
 /** Si debutMs et finMs sont dans 2 mois UTC différents, renvoie le ms UTC

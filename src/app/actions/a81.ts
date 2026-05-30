@@ -3,15 +3,12 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { computeTSej24, lookupTauxSej, getPlafondJours, computeValeurJour, splitRotationAtMonth, type Article81Data } from '@/lib/article81';
+import { computeTSej24, lookupTauxSej, getPlafondJours, computeValeurJour, splitRotationAtMonth, computeSejourOffsetsFromDetail, type Article81Data } from '@/lib/article81';
 import { loadAnnexeRowForMonth, loadAllAnnexeRows } from '@/app/actions/annexe';
 import { loadAllProfileVersions } from '@/app/actions/profile-version';
 import { computeFullProfile, getAnnexeDataFromRows, type AnnexeData } from '@/lib/annexe';
 import { REGIME_NB30E } from '@/lib/finance';
 import type { PairingDetail } from '@/lib/scraper/types';
-
-const FIVE_MIN_MS  = 5  * 60 * 1000;
-const TEN_MIN_MS   = 10 * 60 * 1000;
 
 export interface A81Row {
   /** Identifiant unique = pairing_instance.id (sert aux overrides). */
@@ -225,14 +222,19 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
     const sig = sigById.get(inst.signature_id);
     if (!sig) continue;
     const detail = sig.raw_detail as unknown as PairingDetail | null;
-    if (!detail || !detail.flightDuty || detail.flightDuty.length < 2) continue; // pas de séjour
+    const offsets = computeSejourOffsetsFromDetail(detail);
+    if (!offsets || !detail) continue; // pas de séjour
 
     const firstDuty = detail.flightDuty[0];
     const lastDuty  = detail.flightDuty[detail.flightDuty.length - 1];
-    const debutSejourOriginMs = firstDuty.schEndDate - FIVE_MIN_MS;
-    const finSejourOriginMs   = lastDuty.schBeginDate + TEN_MIN_MS;
+    // CRITICAL : raw_detail = absolus de l'instance capturée (1 parmi N).
+    // Pour cette instance, on shift en fonction de inst.depart_at.
+    const instDepartMs = typeof inst.depart_at === 'string' ? new Date(inst.depart_at).getTime() : 0;
+    const debutSejourOriginMs = instDepartMs + offsets.debutSejourOffsetMs;
+    const finSejourOriginMs   = instDepartMs + offsets.finSejourOffsetMs;
 
-    // Escales depuis legs (fallback signature.first_layover si pb)
+    // Escales depuis legs (fallback signature.first_layover si pb) — stables
+    // par signature, donc lecture du raw_detail OK même pour autres instances.
     const firstDutyLegs = firstDuty.dutyLegAssociation?.flatMap(d => d.legs) ?? [];
     const lastDutyLegs  = lastDuty.dutyLegAssociation?.flatMap(d => d.legs) ?? [];
     const escaleDebut = firstDutyLegs[firstDutyLegs.length - 1]?.arrivalStationCode ?? sig.first_layover ?? '';
