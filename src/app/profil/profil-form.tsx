@@ -3,7 +3,7 @@
 import { useState, useMemo, useTransition, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { saveProfile, type ProfileData } from '@/app/actions/profile';
-import { saveProfileVersion, type ProfileVersion } from '@/app/actions/profile-version';
+import { saveProfileVersion, deleteProfileVersion, type ProfileVersion } from '@/app/actions/profile-version';
 import { signOut } from '@/app/actions/auth';
 import { computeFullProfile, KSP, type AnnexeData } from '@/lib/annexe';
 import { useOnlineStatus } from '@/hooks/use-online';
@@ -106,10 +106,16 @@ export function ProfilForm({
   const router = useRouter();
   const isOnline = useOnlineStatus();
 
+  // State local optimiste pour les versions — évite de devoir recharger la
+  // page après un create/delete. Resync depuis les props quand router.refresh()
+  // ramène les nouvelles données.
+  const [localVersions, setLocalVersions] = useState<ProfileVersion[]>(allVersions);
+  useEffect(() => { setLocalVersions(allVersions); }, [allVersions]);
+
   // Versions triées (plus récente d'abord). Si aucune version → fallback initialData.
   const sortedVersions = useMemo(
-    () => [...allVersions].sort((a, b) => b.valid_from.localeCompare(a.valid_from)),
-    [allVersions],
+    () => [...localVersions].sort((a, b) => b.valid_from.localeCompare(a.valid_from)),
+    [localVersions],
   );
   const latestValidFrom = sortedVersions[0]?.valid_from;
 
@@ -293,30 +299,61 @@ export function ProfilForm({
     if (!fonction || !regime) { setNewErr('Fonction + régime requis avant de créer une version'); return; }
 
     const data = buildPayload();
+    const fields = {
+      fonction:   data.fonction,
+      regime:     data.regime,
+      qualifs_avion: data.qualifs_avion,
+      classe:     data.classe,
+      categorie:  data.categorie,
+      echelon:    data.echelon,
+      bonus_atpl: data.bonus_atpl,
+      transport:  data.transport,
+      navigo_eur: data.navigo_eur,
+      voiture_km_aller:     data.voiture_km_aller,
+      voiture_indemnite_km: data.voiture_indemnite_km,
+      aircraft_principal:   data.aircraft_principal,
+      cng_pv:     data.cng_pv,
+      cng_hs:     data.cng_hs,
+      tri_niveau: data.tri_niveau,
+      prime_330_count: data.prime_330_count,
+      valeur_jour: data.valeur_jour,
+      tmi:        data.tmi,
+    };
     start(async () => {
-      const res = await saveProfileVersion(newDate, {
-        fonction:   data.fonction,
-        regime:     data.regime,
-        qualifs_avion: data.qualifs_avion,
-        classe:     data.classe,
-        categorie:  data.categorie,
-        echelon:    data.echelon,
-        bonus_atpl: data.bonus_atpl,
-        transport:  data.transport,
-        navigo_eur: data.navigo_eur,
-        voiture_km_aller:     data.voiture_km_aller,
-        voiture_indemnite_km: data.voiture_indemnite_km,
-        aircraft_principal:   data.aircraft_principal,
-        cng_pv:     data.cng_pv,
-        cng_hs:     data.cng_hs,
-        tri_niveau: data.tri_niveau,
-        prime_330_count: data.prime_330_count,
-        valeur_jour: data.valeur_jour,
-        tmi:        data.tmi,
-      });
+      const res = await saveProfileVersion(newDate, fields);
       if ('error' in res) { setNewErr(res.error); return; }
+      // Optimistic update : ajoute la nouvelle version au state local
+      // immédiatement → dropdown reflète la création sans navigation.
+      const optimistic: ProfileVersion = {
+        user_id: selectedVersion?.user_id ?? sortedVersions[0]?.user_id ?? '',
+        valid_from: newDate,
+        base: selectedVersion?.base ?? 'PAR',
+        instructeur: selectedVersion?.instructeur ?? false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        ...fields,
+      };
+      setLocalVersions(prev => [...prev, optimistic]);
       setShowNewForm(false);
       setSelectedValidFrom(newDate);
+      router.refresh(); // resync silencieux en arrière-plan
+    });
+  }
+
+  function handleDeleteVersion() {
+    if (sortedVersions.length <= 1) return;
+    const label = fmtDateApp(selectedValidFrom);
+    if (!confirm(`Supprimer la version du ${label} ?\n\nLes mois utilisant cette version basculeront sur la version précédente.`)) return;
+    start(async () => {
+      const res = await deleteProfileVersion(selectedValidFrom);
+      if ('error' in res) { setErr(res.error); return; }
+      // Optimistic : retire la version du state local + sélectionne la suivante (la plus récente restante).
+      const remaining = localVersions.filter(v => v.valid_from !== selectedValidFrom);
+      setLocalVersions(remaining);
+      const nextValidFrom = remaining
+        .map(v => v.valid_from)
+        .sort((a, b) => b.localeCompare(a))[0];
+      if (nextValidFrom) setSelectedValidFrom(nextValidFrom);
       router.refresh();
     });
   }
@@ -350,37 +387,52 @@ export function ProfilForm({
           >
             + Nouvelle version
           </button>
+          {sortedVersions.length > 1 && (
+            <button
+              type="button"
+              onClick={handleDeleteVersion}
+              disabled={isPending}
+              className="text-xs px-2 py-1 rounded border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-40 ml-auto"
+              title="Supprime cette version. Les mois concernés basculeront sur la version précédente."
+            >
+              Supprimer cette version
+            </button>
+          )}
         </div>
       )}
 
       {showNewForm && (
-        <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900 text-xs">
-          <span className="text-blue-700 dark:text-blue-300 font-medium">Nouvelle version à partir du :</span>
-          <input
-            type="date"
-            value={newDate}
-            onChange={e => setNewDate(e.target.value)}
-            className="px-2 py-1 rounded border border-blue-200 dark:border-blue-800 bg-white dark:bg-zinc-900 font-mono"
-          />
-          <span className="text-blue-600 dark:text-blue-400 italic">
-            (valeurs actuelles du formulaire dupliquées comme point de départ)
-          </span>
-          <button
-            type="button"
-            onClick={handleCreateNewVersion}
-            disabled={isPending}
-            className="px-3 py-1 rounded bg-blue-600 text-white font-semibold disabled:opacity-40"
-          >
-            {isPending ? '…' : 'Créer'}
-          </button>
-          <button
-            type="button"
-            onClick={() => { setShowNewForm(false); setNewErr(''); }}
-            className="text-zinc-500 hover:text-zinc-700"
-          >
-            Annuler
-          </button>
-          {newErr && <span className="text-red-500">{newErr}</span>}
+        <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900 text-xs space-y-2">
+          <ol className="list-decimal list-inside text-blue-700 dark:text-blue-300 space-y-0.5">
+            <li>Choisis la date d&apos;application (1<sup>er</sup> du mois) ci-dessous.</li>
+            <li>Modifie les champs du profil plus bas selon ce qui change à cette date.</li>
+            <li>Reviens ici cliquer sur <strong>Créer</strong>.</li>
+          </ol>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <label className="text-blue-700 dark:text-blue-300 font-medium">Date d&apos;application :</label>
+            <input
+              type="date"
+              value={newDate}
+              onChange={e => setNewDate(e.target.value)}
+              className="px-2 py-1 rounded border border-blue-200 dark:border-blue-800 bg-white dark:bg-zinc-900 font-mono"
+            />
+            <button
+              type="button"
+              onClick={handleCreateNewVersion}
+              disabled={isPending}
+              className="px-3 py-1 rounded bg-blue-600 text-white font-semibold disabled:opacity-40"
+            >
+              {isPending ? '…' : 'Créer'}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setShowNewForm(false); setNewErr(''); }}
+              className="text-zinc-500 hover:text-zinc-700"
+            >
+              Annuler
+            </button>
+            {newErr && <span className="text-red-500">{newErr}</span>}
+          </div>
         </div>
       )}
 
