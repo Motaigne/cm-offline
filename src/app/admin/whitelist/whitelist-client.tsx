@@ -36,6 +36,10 @@ export function WhitelistClient({ emails, logs, profiles }: { emails: AllowedEma
   const [csvBusy,   setCsvBusy]   = useState(false);
   const [csvStatus, setCsvStatus] = useState<string[]>([]);
 
+  // Wipe mois (Jan→Mai 2026 par défaut)
+  const [wipeBusy,   setWipeBusy]   = useState(false);
+  const [wipeStatus, setWipeStatus] = useState('');
+
   // Backfill RPC (rest_before_h / rest_after_h)
   const [showRpcForm, setShowRpcForm]   = useState(false);
   const [rpcMonth,  setRpcMonth]        = useState('');
@@ -75,6 +79,33 @@ export function WhitelistClient({ emails, logs, profiles }: { emails: AllowedEma
       setRpcStatus(`! ${String(e)}`);
     } finally {
       setRpcBusy(false);
+    }
+  }
+
+  async function handleWipeMonths() {
+    const months = ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05'];
+    if (!window.confirm(`Vider les snapshots + sigs + instances pour ${months.join(', ')} ?\n\nLes planning_item utilisateurs seront préservés (pairing_instance_id remis à null).`)) return;
+    setWipeBusy(true);
+    setWipeStatus('en cours…');
+    try {
+      const res = await fetch('/api/admin/wipe-months', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ months }),
+      });
+      if (!res.ok) {
+        setWipeStatus(`! ${await res.text()}`);
+        return;
+      }
+      const j = await res.json() as { results: Array<{ month: string; snapshots: number; signatures: number; instances: number; items_unlinked: number }> };
+      const totalSigs = j.results.reduce((a, r) => a + r.signatures, 0);
+      const totalInst = j.results.reduce((a, r) => a + r.instances, 0);
+      const totalUnlinked = j.results.reduce((a, r) => a + r.items_unlinked, 0);
+      setWipeStatus(`✓ ${totalSigs} sigs · ${totalInst} inst supprimées · ${totalUnlinked} items unlinkés`);
+    } catch (e) {
+      setWipeStatus(`! ${String(e)}`);
+    } finally {
+      setWipeBusy(false);
     }
   }
 
@@ -220,6 +251,20 @@ export function WhitelistClient({ emails, logs, profiles }: { emails: AllowedEma
           >
             Backfill RPC (repos avant/après)
           </button>
+
+          {/* Wipe mois Jan→Mai 2026 */}
+          <button
+            onClick={handleWipeMonths}
+            disabled={wipeBusy}
+            className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-semibold disabled:opacity-40 transition-colors"
+          >
+            {wipeBusy ? '…' : 'Wipe Jan→Mai 2026'}
+          </button>
+          {wipeStatus && (
+            <span className={`text-[11px] font-mono ${wipeStatus.startsWith('✓') ? 'text-emerald-600 dark:text-emerald-400' : wipeStatus.startsWith('!') ? 'text-red-500' : 'text-zinc-500'}`}>
+              {wipeStatus}
+            </span>
+          )}
 
           {/* Import CSV historique (Jan→Mai 2026) */}
           <label className={`px-3 py-1.5 rounded-lg text-white text-xs font-semibold transition-colors cursor-pointer ${csvBusy ? 'bg-zinc-400 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500'}`}>
