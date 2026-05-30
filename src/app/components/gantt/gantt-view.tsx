@@ -1110,9 +1110,18 @@ export function GanttView({
         .catch(() => { /* offline ou erreur : on garde les valeurs courantes */ });
       // FinBase : pvei + fixe + primes versionnés selon la date d'application de
       // l'annexe applicable au mois. Important pour les mois pré/post 1er avril.
+      // eslint-disable-next-line no-console
+      console.log('[finBase] fetching for month', newMonth);
       loadFinBaseForMonth(newMonth)
-        .then(fb => { if (fb && myToken === navTokenRef.current) setFinBaseState(fb); })
-        .catch(() => { /* offline : on garde les valeurs courantes */ });
+        .then(fb => {
+          // eslint-disable-next-line no-console
+          console.log('[finBase] received for', newMonth, fb);
+          if (fb && myToken === navTokenRef.current) setFinBaseState(fb);
+        })
+        .catch(err => {
+          // eslint-disable-next-line no-console
+          console.log('[finBase] error for', newMonth, err);
+        });
       // IR/MF : recalculé client à partir du cache rotations fraîchement mis à jour.
       // (Le useEffect [localScenarios,currentMonth] est déjà déclenché par le setState
       //  plus haut, mais à ce moment-là cacheRotations n'avait pas encore tourné.)
