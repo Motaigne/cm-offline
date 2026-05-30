@@ -207,6 +207,12 @@ function computeStats(
   a81CumulBefore = 0,
   irMfEur = 0,
   itEur = 0,
+  // Éléments de paie issus de l'annexe (version applicable au mois M). Si non
+  // fournis → fallback aux constantes legacy de lib/finance.
+  pvei = PVEI,
+  ksp = KSP,
+  fixeRegime = FIXE_MENSUEL,   // fixe proratisé selon nb30e du régime
+  fixeTPArg: number | null = null,    // fixe TP (nb30e=30) ; si null → calculé via FIXE_MENSUEL * 30 / nb30eRegime
 ) {
   let onDays = 0, congeDays = 0;
   const flights = items.filter(i => i.kind === 'flight').length;
@@ -248,8 +254,8 @@ function computeStats(
     totalTsvNuit += tsvNuit;
     flightBreakdown.push({
       destination: typeof m.destination === 'string' ? m.destination as string : '?',
-      hcrEur:      hcr * PVEI * KSP,
-      pvNuitEur:   (tsvNuit / 2) * PVEI * KSP,
+      hcrEur:      hcr * pvei * ksp,
+      pvNuitEur:   (tsvNuit / 2) * pvei * ksp,
       instanceId:  item.pairing_instance_id ?? null,
     });
   }
@@ -258,8 +264,8 @@ function computeStats(
   // (→ seuil HS). sol = 4/j (réserve+méd+autre), sim = 5/j.
   const solHcr    = solDays * 4;
   const simHcr    = simDays * 5;
-  const solHcrEur = solHcr * PVEI * KSP;
-  const simHcrEur = simHcr * PVEI * KSP;
+  const solHcrEur = solHcr * pvei * ksp;
+  const simHcrEur = simHcr * pvei * ksp;
   totalHcr += solHcr + simHcr;
   totalHc  += solHcr + simHcr;
 
@@ -301,16 +307,20 @@ function computeStats(
   const fullPrime   = isFullPrimeMonth(regime, mo);
   const nb30eBase   = fullPrime ? 30 : nb30eRegime;
   const nb30eEff    = Math.max(0, nb30eBase - congeDays);
-  const fixeForFin  = fullPrime && nb30eRegime > 0 ? FIXE_MENSUEL * 30 / nb30eRegime : FIXE_MENSUEL;
+  // En jul/août pour TAF*_10_12 (full-prime month) : on bascule sur le fixe TP.
+  // fixeTPArg fourni par le caller (depuis l'annexe versionnée) ; sinon legacy
+  // = FIXE_MENSUEL * 30 / nb30eRegime.
+  const fixeTPVal   = fixeTPArg ?? (nb30eRegime > 0 ? FIXE_MENSUEL * 30 / nb30eRegime : FIXE_MENSUEL);
+  const fixeForFin  = fullPrime ? fixeTPVal : fixeRegime;
   // Le nb30e passé à monthlyFinancialsP n'a pas d'effet sur les valeurs qu'on
   // garde (fixe, pv, primes) — on override hs/total/mga avec les bonnes formules.
-  const finBase = monthlyFinancialsP(totalHcr, totalPrime, totalTsvNuit, { pvei: PVEI, ksp: KSP, fixe: fixeForFin, nb30e: nb30eEff });
+  const finBase = monthlyFinancialsP(totalHcr, totalPrime, totalTsvNuit, { pvei, ksp, fixe: fixeForFin, nb30e: nb30eEff });
   // HS : nouvelle formule HS.FIXE + HS.VOL
   // HS.FIXE = fixe × 1.25 / 75 (1/75e du fixe × 1.25)
   // HS.VOL  = taux_moyen × 0.25 ; taux_moyen = PV€ / totalHC (HC, pas HCr)
   const totalPv    = totalHcr + totalTsvNuit / 2;
-  const pvEur      = totalPv * PVEI * KSP;
-  const tauxMoyen  = totalHc > 0 ? pvEur / totalHc : PVEI * KSP;
+  const pvEur      = totalPv * pvei * ksp;
+  const tauxMoyen  = totalHc > 0 ? pvEur / totalHc : pvei * ksp;
   const hsFixeRate = nb30eEff > 0 ? fixeForFin * 1.25 / 75 : 0;
   const hsVolRate  = tauxMoyen * 0.25;
   const hsSeuil    = 75 * (nb30eEff / 30);
@@ -322,7 +332,7 @@ function computeStats(
   const primesTotal = finBase.primes + monthlyFixedPrimes;
   const congeAmount = congeDays * (cngPv + cngHs);
   // MGA est indépendant des congés (n'utilise PAS nb30eEff).
-  const mga         = fixeForFin + 85 * (nb30eBase / 30) * PVEI;
+  const mga         = fixeForFin + 85 * (nb30eBase / 30) * pvei;
   // TOTAL = FIXE + PV + HS (hors primes et hors congés)
   // DIFF  = TOTAL − MGA (signé, rouge si <0, vert si ≥0)
   // BRUT : si (TOTAL + congés) ≥ MGA → on garde TOTAL + congés (et on ajoute
@@ -629,6 +639,7 @@ interface SheetState {
 export function GanttView({
   month, scenarios, userName, userRegime, cngPv, cngHs,
   primeIncitationUnit = 0, primeA330 = 0, primeInstruction = 0,
+  pvei: pveiProp, ksp: kspProp, fixeRegime: fixeRegimeProp, fixeTP: fixeTPProp,
   article81Data = null, valeurJour = 600,
   a81CumulBefore = { A: 0, B: 0, C: 0 },
   irMfByScenario,
@@ -654,6 +665,14 @@ export function GanttView({
   primeA330?: number;
   /** Prime mensuelle d'instruction (TRI). */
   primeInstruction?: number;
+  /** PVEI calculé depuis l'annexe versionnée du mois. Si absent → fallback constante. */
+  pvei?: number;
+  /** KSP (constante mais passé explicitement pour cohérence). */
+  ksp?: number;
+  /** Traitement fixe mensuel proratisé au régime utilisateur. */
+  fixeRegime?: number;
+  /** Traitement fixe TP (utilisé en jul/août pour TAF*_10_12). */
+  fixeTP?: number;
   /** Mode transport profil pour calcul IT ('Navigo' | 'Voiture' | null). */
   transport?: string | null;
   /** IT mensuelle forfaitaire si transport = Navigo. */
@@ -1486,7 +1505,11 @@ export function GanttView({
               const irMfEur = (irMfScn?.ir_eur ?? 0) + (irMfScn?.mf_eur ?? 0);
               const nbActivites = countItActivities(scenario.items, year, mo);
               const itEur = computeItEur(transport, nbActivites, navigoEur, voitureKmAller, voitureIndemniteKm);
-              const stats = computeStats(scenario.items, year, mo, cngPv, cngHs, userRegime, monthlyFixedPrimes, article81Data, valeurJour, cumulBeforeForScenario, irMfEur, itEur);
+              const stats = computeStats(
+                scenario.items, year, mo, cngPv, cngHs, userRegime, monthlyFixedPrimes,
+                article81Data, valeurJour, cumulBeforeForScenario, irMfEur, itEur,
+                pveiProp ?? PVEI, kspProp ?? KSP, fixeRegimeProp ?? FIXE_MENSUEL, fixeTPProp ?? null,
+              );
               const isLast = idx === localScenarios.length - 1;
               const tafDays      = tafOk ? tafDur : 0;
               const joursProrata = stats.congeDays + tafDays;
@@ -1566,12 +1589,15 @@ export function GanttView({
                         if (isDetailOpen) { setDetailPanel(null); return; }
                         const rowEl = (e.currentTarget as HTMLElement).closest<HTMLElement>('[data-sr]');
                         const rect  = rowEl?.getBoundingClientRect() ?? e.currentTarget.getBoundingClientRect();
-                        const pvHcrEur  = stats.totalHcr * PVEI * KSP;
-                        const pvNuitEur = (stats.totalTsvNuit / 2) * PVEI * KSP;
+                        const pveiEff   = pveiProp ?? PVEI;
+                        const kspEff    = kspProp ?? KSP;
+                        const fixeReg   = fixeRegimeProp ?? FIXE_MENSUEL;
+                        const pvHcrEur  = stats.totalHcr * pveiEff * kspEff;
+                        const pvNuitEur = (stats.totalTsvNuit / 2) * pveiEff * kspEff;
                         const nb30eReg2 = REGIME_NB30E[userRegime] ?? NB_30E;
-                        const fixeFF    = isFullPrimeMonth(userRegime, mo) && nb30eReg2 > 0
-                          ? FIXE_MENSUEL * 30 / nb30eReg2 : FIXE_MENSUEL;
-                        const bitroncon = stats.totalPrime * 2.5 * PVEI;
+                        const fixeTPEff = fixeTPProp ?? (nb30eReg2 > 0 ? FIXE_MENSUEL * 30 / nb30eReg2 : FIXE_MENSUEL);
+                        const fixeFF    = isFullPrimeMonth(userRegime, mo) ? fixeTPEff : fixeReg;
+                        const bitroncon = stats.totalPrime * 2.5 * pveiEff;
                         const boost     = isFullPrimeMonth(userRegime, mo) && nb30eReg2 > 0 ? 30 / nb30eReg2 : 1;
                         setDetailPanel({
                           name: scenario.name, rect,

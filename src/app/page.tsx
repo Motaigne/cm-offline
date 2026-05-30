@@ -72,13 +72,11 @@ export default async function Home({
   const article81Data: Article81Data | null = (a81RowData as Article81Data | null) ?? null;
   const valeurJour = Number(profile.valeur_jour ?? 600);
 
-  // Calcul des primes mensuelles fixes (incitation + A330 + instruction).
-  // - primeIncitationUnit : montant pour 1 prime (le calendrier multiplie par
-  //   le compteur 0–5 saisi dans la barre du bas).
-  // - primeA330 / primeInstruction : valeurs déjà proratisées au régime
-  //   (nb30e_regime / 30). Indépendantes du compteur d'incitation.
-  // Hors prime bi-tronçon (sommée par vol) et hors Prime Mai (lot séparé).
-  const primes = (() => {
+  // Calcul des primes mensuelles fixes (incitation + A330 + instruction) +
+  // éléments de paie versionnés (pvei, fixe, fixeTP, ksp) qui pilotent le
+  // calendrier. `fixe` = fixe régime (proratisé nb30e), `fixeTP` = fixe TP
+  // (utilisé en jul/août pour TAF*_10_12 quand full-prime).
+  const finBase = (() => {
     const hasAnnexe = !!(
       annexe.cat_anciennete?.length &&
       annexe.coef_classe?.length &&
@@ -86,7 +84,7 @@ export default async function Home({
       annexe.traitement_base
     );
     if (!hasAnnexe || !profile.fonction || !profile.classe || !profile.echelon || !profile.categorie) {
-      return { primeIncitationUnit: 0, primeA330: 0, primeInstruction: 0 };
+      return { primeIncitationUnit: 0, primeA330: 0, primeInstruction: 0, pvei: null, ksp: null, fixe: null, fixeTP: null };
     }
     const isTri = profile.fonction === 'TRI_OPL' || profile.fonction === 'TRI_CDB';
     const primeInstFonction = profile.fonction === 'TRI_OPL' ? 'TRI_OPL'
@@ -111,6 +109,10 @@ export default async function Home({
       primeIncitationUnit: c.primeIncitation,
       primeA330:           c.primeA330,
       primeInstruction:    c.primeInstruction,
+      pvei:                c.pvei,
+      ksp:                 c.ksp,
+      fixe:                c.fixe,
+      fixeTP:              c.fixeTP,
     };
   })();
 
@@ -122,9 +124,13 @@ export default async function Home({
       userRegime={profile.regime}
       cngPv={profile.cng_pv ?? 0}
       cngHs={profile.cng_hs ?? 0}
-      primeIncitationUnit={primes.primeIncitationUnit}
-      primeA330={primes.primeA330}
-      primeInstruction={primes.primeInstruction}
+      primeIncitationUnit={finBase.primeIncitationUnit}
+      primeA330={finBase.primeA330}
+      primeInstruction={finBase.primeInstruction}
+      pvei={finBase.pvei ?? undefined}
+      ksp={finBase.ksp ?? undefined}
+      fixeRegime={finBase.fixe ?? undefined}
+      fixeTP={finBase.fixeTP ?? undefined}
       article81Data={article81Data}
       valeurJour={valeurJour}
       a81CumulBefore={a81Cumul.byScenarioBefore}
