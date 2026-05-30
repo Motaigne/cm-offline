@@ -385,6 +385,23 @@ export async function restoreA81Row(instanceId: string): Promise<{ ok: true } | 
   return { ok: true };
 }
 
+/** Liste tous les overrides A81 du user (pour cache offline). */
+export async function loadAllA81Overrides(): Promise<Array<{
+  pairing_instance_id: string;
+  deleted: boolean;
+  debut_sejour_at: string | null;
+  fin_sejour_at: string | null;
+}>> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return [];
+  const { data } = await supabase
+    .from('user_a81_override')
+    .select('pairing_instance_id, deleted, debut_sejour_at, fin_sejour_at')
+    .eq('user_id', user.id);
+  return data ?? [];
+}
+
 /** Liste les années qui ont au moins 1 draft A non vide pour l'utilisateur. */
 export async function getA81AvailableYears(): Promise<number[]> {
   const supabase = await createClient();

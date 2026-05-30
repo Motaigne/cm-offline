@@ -3,7 +3,9 @@
 import { useRouter } from 'next/navigation';
 import { useState, useTransition, useEffect } from 'react';
 import type { A81YearData, A81Row } from '@/app/actions/a81';
-import { upsertA81Override, deleteA81Row, restoreA81Row } from '@/app/actions/a81';
+import { upsertA81Override, deleteA81Row, restoreA81Row, loadAllA81Overrides } from '@/app/actions/a81';
+import { computeA81ForYearLocal } from '@/lib/a81-local';
+import { loadA81OverridesLocal, cacheA81Overrides } from '@/lib/local-db';
 
 const MONTHS_FR_SHORT = ['Janv.', 'Févr.', 'Mars', 'Avril', 'Mai', 'Juin', 'Juil.', 'Août', 'Sept.', 'Oct.', 'Nov.', 'Déc.'];
 
@@ -112,7 +114,7 @@ function EditableDateTimeCell({
 }
 
 export function A81Client({
-  data, availableYears, currentYear,
+  data: initialData, availableYears, currentYear,
 }: {
   data: A81YearData;
   availableYears: number[];
@@ -121,6 +123,36 @@ export function A81Client({
   const router = useRouter();
   const [isPending, start] = useTransition();
   const [err, setErr] = useState('');
+
+  // Compute local depuis Dexie au mount + après mutations. Fallback aux data
+  // serveur si Dexie vide (1ère visite, jamais Sync) ou cache incomplet.
+  const [localData, setLocalData] = useState<A81YearData | null>(null);
+  const data = localData ?? initialData;
+
+  async function recomputeLocal() {
+    try {
+      // Récupère les overrides : depuis serveur si online (frais), sinon Dexie.
+      let overrides: Awaited<ReturnType<typeof loadAllA81Overrides>>;
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        overrides = await loadAllA81Overrides();
+        void cacheA81Overrides(overrides);
+      } else {
+        overrides = await loadA81OverridesLocal();
+      }
+      const local = await computeA81ForYearLocal(currentYear, overrides);
+      // Si on n'a pas de rotations cachées localement, local.rows est vide ;
+      // dans ce cas on garde le data serveur (sinon page blanche).
+      if (local.rows.length > 0 || initialData.rows.length === 0) {
+        setLocalData(local);
+      }
+    } catch {
+      // Erreur lecture Dexie → on garde initialData
+    }
+  }
+
+  useEffect(() => { void recomputeLocal(); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentYear]);
+
   // Cartouches restaurées localement — pour cacher instantanément sans attendre
   // que revalidatePath/router.refresh propage côté serveur.
   const [restoredIds, setRestoredIds] = useState<Set<string>>(new Set());
@@ -141,6 +173,7 @@ export function A81Client({
     start(async () => {
       const res = await upsertA81Override(row.instance_id, { debut_sejour_at: newIso });
       if ('error' in res) { setErr(res.error); return; }
+      await recomputeLocal();
       router.refresh();
     });
   }
@@ -149,6 +182,7 @@ export function A81Client({
     start(async () => {
       const res = await upsertA81Override(row.instance_id, { fin_sejour_at: newIso });
       if ('error' in res) { setErr(res.error); return; }
+      await recomputeLocal();
       router.refresh();
     });
   }
@@ -159,6 +193,7 @@ export function A81Client({
     start(async () => {
       const res = await deleteA81Row(row.instance_id);
       if ('error' in res) { setErr(res.error); return; }
+      await recomputeLocal();
       router.refresh();
     });
   }
@@ -174,6 +209,7 @@ export function A81Client({
         setErr(res.error);
         return;
       }
+      await recomputeLocal();
       router.refresh();
     });
   }

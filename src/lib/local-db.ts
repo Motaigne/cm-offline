@@ -4,6 +4,7 @@ import type { RotationSignature } from '@/app/actions/search';
 import type { UserNote } from '@/app/actions/notes';
 import type { ProfileVersion } from '@/app/actions/profile-version';
 import type { AnnexeRow } from '@/lib/annexe';
+import type { A81OverrideLocal } from '@/lib/a81-local';
 
 interface StoredDraft {
   id: string;
@@ -54,14 +55,15 @@ function annexeRowKey(slug: string, validFrom: string): string {
 }
 
 class CmDatabase extends Dexie {
-  drafts!:           Table<StoredDraft,      string>;
-  items!:            Table<StoredItem,       string>;
-  sync_queue!:       Table<SyncOp,           number>;
-  rotations!:        Table<StoredRotation,   string>;
-  releases!:         Table<StoredRelease,    string>;
-  notes!:            Table<UserNote,         string>;
-  profile_versions!: Table<ProfileVersion,   string>; // PK = valid_from (user_id implicite)
-  annexe_rows!:      Table<StoredAnnexeRow,  string>; // PK = `${slug}|${valid_from}`
+  drafts!:           Table<StoredDraft,        string>;
+  items!:            Table<StoredItem,         string>;
+  sync_queue!:       Table<SyncOp,             number>;
+  rotations!:        Table<StoredRotation,     string>;
+  releases!:         Table<StoredRelease,      string>;
+  notes!:            Table<UserNote,           string>;
+  profile_versions!: Table<ProfileVersion,     string>; // PK = valid_from (user_id implicite)
+  annexe_rows!:      Table<StoredAnnexeRow,    string>; // PK = `${slug}|${valid_from}`
+  a81_overrides!:    Table<A81OverrideLocal,   string>; // PK = pairing_instance_id
 
   constructor() {
     super('optip');
@@ -86,6 +88,10 @@ class CmDatabase extends Dexie {
     this.version(5).stores({
       profile_versions: 'valid_from',
       annexe_rows:      'key, slug, valid_from',
+    });
+    // v6 : overrides A81 (édits utilisateur sur le tableau A81)
+    this.version(6).stores({
+      a81_overrides: 'pairing_instance_id',
     });
   }
 }
@@ -319,6 +325,19 @@ export async function cacheAnnexeRows(rows: AnnexeRow[]): Promise<void> {
 export async function loadAnnexeRowsLocal(): Promise<AnnexeRow[]> {
   const all = await db.annexe_rows.toArray();
   return all.map(({ key: _k, ...r }) => { void _k; return r as AnnexeRow; });
+}
+
+// ─── Cache overrides A81 ──────────────────────────────────────────────────────
+
+export async function cacheA81Overrides(overrides: A81OverrideLocal[]): Promise<void> {
+  await db.transaction('rw', db.a81_overrides, async () => {
+    await db.a81_overrides.clear();
+    if (overrides.length) await db.a81_overrides.bulkPut(overrides);
+  });
+}
+
+export async function loadA81OverridesLocal(): Promise<A81OverrideLocal[]> {
+  return db.a81_overrides.toArray();
 }
 
 /** Notes locales overlappant le mois donné. */
