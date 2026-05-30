@@ -83,39 +83,65 @@ export function WhitelistClient({ emails, logs, profiles }: { emails: AllowedEma
     setCsvBusy(true);
     setCsvStatus([]);
     const logs: string[] = [];
-    // Nom attendu : 8_cleanEp4_MMYYYY.csv (ex: 8_cleanEp4_012026.csv)
+    // Apparie les fichiers par mois. Noms attendus :
+    //   - 8_cleanEp4_MMYYYY.csv  (rotations uniques, source des sigs)
+    //   - 1_extract_MMYYYY.csv   (toutes les actID datées, source des instances)
+    type Pair = { month: string; clean?: File; extract?: File };
+    const byMonth = new Map<string, Pair>();
     for (const file of Array.from(files)) {
       const m = file.name.match(/(\d{2})(\d{4})\.csv$/i);
       if (!m) {
         logs.push(`! ${file.name} : nom non reconnu (attendu *MMYYYY.csv)`);
-        setCsvStatus([...logs]);
         continue;
       }
       const month = `${m[2]}-${m[1]}`;
-      logs.push(`… ${file.name} → ${month}`);
+      const pair = byMonth.get(month) ?? { month };
+      if (/^8_cleanEp4/i.test(file.name)) pair.clean = file;
+      else if (/^1_extract/i.test(file.name)) pair.extract = file;
+      else {
+        logs.push(`! ${file.name} : préfixe inconnu (attendu 8_cleanEp4_* ou 1_extract_*)`);
+        continue;
+      }
+      byMonth.set(month, pair);
+    }
+    setCsvStatus([...logs]);
+
+    // Boucle par mois (ordre chronologique pour lisibilité)
+    const months = Array.from(byMonth.keys()).sort();
+    for (const month of months) {
+      const pair = byMonth.get(month)!;
+      if (!pair.clean) {
+        logs.push(`! ${month} : 8_cleanEp4 manquant (extract seul ne suffit pas)`);
+        setCsvStatus([...logs]);
+        continue;
+      }
+      const tag = pair.extract ? 'clean+extract' : 'clean seul (instances dégradées)';
+      logs.push(`… ${month} (${tag})`);
       setCsvStatus([...logs]);
       try {
-        const csvText = await file.text();
+        const csvText = await pair.clean.text();
+        const extractCsvText = pair.extract ? await pair.extract.text() : undefined;
         const res = await fetch('/api/admin/import-csv-month', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ month, csvText }),
+          body: JSON.stringify({ month, csvText, extractCsvText }),
         });
         if (!res.ok) {
-          logs[logs.length - 1] = `! ${file.name} → ${month} : ${await res.text()}`;
+          logs[logs.length - 1] = `! ${month} : ${await res.text()}`;
         } else {
           const j = await res.json() as {
-            inserted: number; skipped: number; errors: number; in_target_month: number;
+            cleanEp4: { inserted: number; skipped: number; errors: number; in_target_month: number };
+            extract:  { inserted: number; skipped: number; unmatched: number; in_target_month: number };
             errorSamples: string[];
           };
           logs[logs.length - 1] =
-            `✓ ${month} : +${j.inserted} insérés · ${j.skipped} déjà en DB · ${j.errors} erreurs · ${j.in_target_month} dans le mois`;
+            `✓ ${month} sigs +${j.cleanEp4.inserted}/${j.cleanEp4.in_target_month} (${j.cleanEp4.skipped} dups) · inst +${j.extract.inserted}/${j.extract.in_target_month} (${j.extract.skipped} dups, ${j.extract.unmatched} non matchés)`;
           if (j.errorSamples?.length) {
             for (const s of j.errorSamples) logs.push(`   · ${s}`);
           }
         }
       } catch (e) {
-        logs[logs.length - 1] = `! ${file.name} : ${String(e)}`;
+        logs[logs.length - 1] = `! ${month} : ${String(e)}`;
       }
       setCsvStatus([...logs]);
     }
@@ -197,7 +223,7 @@ export function WhitelistClient({ emails, logs, profiles }: { emails: AllowedEma
 
           {/* Import CSV historique (Jan→Mai 2026) */}
           <label className={`px-3 py-1.5 rounded-lg text-white text-xs font-semibold transition-colors cursor-pointer ${csvBusy ? 'bg-zinc-400 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500'}`}>
-            {csvBusy ? '…' : 'Import CSV historique (8_cleanEp4_*.csv)'}
+            {csvBusy ? '…' : 'Import CSV historique (8_cleanEp4 + 1_extract)'}
             <input
               type="file"
               accept=".csv,text/csv"
