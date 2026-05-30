@@ -336,32 +336,48 @@ export function A81Client({
               {data.rows.map((r, i) => {
                 const monthIdx = Number(r.debut_rotation.slice(5, 7)) - 1;
                 const anyOverride = r.debut_sejour_overridden || r.fin_sejour_overridden;
+                const isM0 = r.split_part === 'm0';
+                const isM1 = r.split_part === 'm1';
                 return (
-                  <tr key={r.instance_id} className={i % 2 ? 'bg-zinc-50/50 dark:bg-zinc-800/20' : ''}>
+                  <tr key={`${r.instance_id}${r.split_part ?? ''}`} className={i % 2 ? 'bg-zinc-50/50 dark:bg-zinc-800/20' : ''}>
                     <td className="px-2 py-1.5 whitespace-nowrap text-zinc-700 dark:text-zinc-200 italic">
                       {fmtDate(r.debut_rotation)}
                       <div className="text-[9px] text-zinc-400 leading-none">{MONTHS_FR_SHORT[monthIdx]}</div>
                     </td>
                     <td className="px-2 py-1.5 whitespace-nowrap">
-                      <EditableDateTimeCell
-                        iso={r.debut_sejour_at}
-                        originIso={r.debut_sejour_at_origin}
-                        overridden={r.debut_sejour_overridden}
-                        onSave={iso => handleEditDebut(r, iso)}
-                      />
+                      {isM1 ? (
+                        <span
+                          className="block font-mono italic text-zinc-300 dark:text-zinc-600 px-1"
+                          title="Borne synthétique du début de mois (M+1 00:00)"
+                        >{fmtDateTime(r.debut_sejour_at)}</span>
+                      ) : (
+                        <EditableDateTimeCell
+                          iso={r.debut_sejour_at}
+                          originIso={r.debut_sejour_at_origin}
+                          overridden={r.debut_sejour_overridden}
+                          onSave={iso => handleEditDebut(r, iso)}
+                        />
+                      )}
                     </td>
                     <td className="px-2 py-1.5 text-center font-mono font-semibold text-zinc-700 dark:text-zinc-200 italic">{r.escale_debut}</td>
                     <td className="px-2 py-1.5 whitespace-nowrap">
-                      <EditableDateTimeCell
-                        iso={r.fin_sejour_at}
-                        originIso={r.fin_sejour_at_origin}
-                        overridden={r.fin_sejour_overridden}
-                        onSave={iso => handleEditFin(r, iso)}
-                      />
+                      {isM0 ? (
+                        <span
+                          className="block font-mono italic text-zinc-300 dark:text-zinc-600 px-1"
+                          title="Borne synthétique de fin de mois (M 24:00)"
+                        >{fmtDateTime(r.fin_sejour_at)}</span>
+                      ) : (
+                        <EditableDateTimeCell
+                          iso={r.fin_sejour_at}
+                          originIso={r.fin_sejour_at_origin}
+                          overridden={r.fin_sejour_overridden}
+                          onSave={iso => handleEditFin(r, iso)}
+                        />
+                      )}
                     </td>
                     <td className="px-2 py-1.5 text-center font-mono font-semibold text-zinc-700 dark:text-zinc-200 italic">{r.escale_fin}</td>
-                    <td className={`px-2 py-1.5 text-right font-mono ${anyOverride ? 'font-bold not-italic text-zinc-800 dark:text-zinc-100' : 'italic text-zinc-700 dark:text-zinc-200'}`}>
-                      {r.temps_sej_h.toFixed(2)}
+                    <td className={`px-2 py-1.5 text-right font-mono ${isM0 ? 'italic text-zinc-400' : anyOverride ? 'font-bold not-italic text-zinc-800 dark:text-zinc-100' : 'italic text-zinc-700 dark:text-zinc-200'}`}>
+                      {isM0 ? 'sur M+1' : r.temps_sej_h.toFixed(2)}
                     </td>
                     <td className={`px-2 py-1.5 text-right font-mono ${r.plafond ? 'text-amber-600 dark:text-amber-400 font-semibold' : anyOverride ? 'font-bold not-italic text-zinc-800 dark:text-zinc-100' : 'italic text-zinc-700 dark:text-zinc-200'}`}>
                       {r.plafond ? 'PLAF' : r.nb_jours.toFixed(1)}
@@ -377,12 +393,14 @@ export function A81Client({
                       {fmtEur(r.montant)}
                     </td>
                     <td className="px-1 py-1.5 text-center">
-                      <button
-                        onClick={() => handleDelete(r)}
-                        disabled={isPending}
-                        className="text-zinc-300 hover:text-red-500 dark:text-zinc-600 dark:hover:text-red-400 text-base leading-none disabled:opacity-30"
-                        title="Supprimer cette ligne du tableau A81"
-                      >×</button>
+                      {!isM1 && (
+                        <button
+                          onClick={() => handleDelete(r)}
+                          disabled={isPending}
+                          className="text-zinc-300 hover:text-red-500 dark:text-zinc-600 dark:hover:text-red-400 text-base leading-none disabled:opacity-30"
+                          title="Supprimer cette ligne du tableau A81"
+                        >×</button>
+                      )}
                     </td>
                   </tr>
                 );

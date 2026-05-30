@@ -3,7 +3,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { computeTSej24, lookupTauxSej, getPlafondJours, computeValeurJour, type Article81Data } from '@/lib/article81';
+import { computeTSej24, lookupTauxSej, getPlafondJours, computeValeurJour, splitRotationAtMonth, type Article81Data } from '@/lib/article81';
 import { loadAnnexeRowForMonth, loadAllAnnexeRows } from '@/app/actions/annexe';
 import { loadAllProfileVersions } from '@/app/actions/profile-version';
 import { computeFullProfile, getAnnexeDataFromRows, type AnnexeData } from '@/lib/annexe';
@@ -48,6 +48,11 @@ export interface A81Row {
   debut_sejour_overridden: boolean;
   /** True si l'utilisateur a modifié fin_sejour_at. */
   fin_sejour_overridden: boolean;
+  /** Sous-ligne d'une rotation à cheval :
+   *   - undefined : ligne unique (rotation entièrement dans un seul mois)
+   *   - 'm0'      : 1ʳᵉ part (Début Séjour = réel, Fin = boundary 24:00 synthétique)
+   *   - 'm1'      : 2ᵉ part  (Début = boundary 00:00 synthétique, Fin = réel) */
+  split_part?: 'm0' | 'm1';
 }
 
 /** Ligne supprimée par l'utilisateur — métadata pour la section restauration. */
@@ -288,10 +293,52 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
     return true;
   });
 
+  // 7b. Expand rotations à cheval en 2 sous-rows (m0 = part mois début, m1 = part
+  //     mois suivant). valeur_jour est recalculée par mois ; nb_jours est splitté
+  //     selon la règle de splitRotationAtMonth (sum garantie = totalNbJours).
+  const expanded: A81Row[] = [];
+  for (const r of unique) {
+    const debutMs = new Date(r.debut_sejour_at).getTime();
+    const finMs   = new Date(r.fin_sejour_at).getTime();
+    const split = splitRotationAtMonth(debutMs, finMs, r.nb_jours);
+    if (!split) { expanded.push(r); continue; }
+    const m0DebutAt = new Date(split.m0.debutMs).toISOString();
+    const m0FinAt   = new Date(split.m0.finMs).toISOString();
+    const m1DebutAt = new Date(split.m1.debutMs).toISOString();
+    const m1FinAt   = new Date(split.m1.finMs).toISOString();
+    const m0ValeurJour = computeValeurJourForMonth(m0DebutAt.slice(0, 7));
+    const m1ValeurJour = computeValeurJourForMonth(m1DebutAt.slice(0, 7));
+    expanded.push({
+      ...r,
+      debut_sejour_at: m0DebutAt,
+      fin_sejour_at:   m0FinAt,
+      nb_jours:        split.m0.nbJours,
+      valeur_jour:     m0ValeurJour,
+      montant:         0,
+      // Le flag fin_sejour_overridden ne concerne que m1 (m0.fin = boundary synthétique)
+      fin_sejour_overridden: false,
+      split_part: 'm0',
+    });
+    expanded.push({
+      ...r,
+      debut_sejour_at: m1DebutAt,
+      fin_sejour_at:   m1FinAt,
+      nb_jours:        split.m1.nbJours,
+      valeur_jour:     m1ValeurJour,
+      montant:         0,
+      // m1.debut = boundary synthétique → flag debut_sejour_overridden ne s'applique pas
+      debut_sejour_overridden: false,
+      split_part: 'm1',
+    });
+  }
+  // Re-tri chrono : assure que les sous-rows d'une rotation à cheval sont
+  // intercalées au bon endroit par rapport à d'autres rotations.
+  expanded.sort((a, b) => a.debut_sejour_at.localeCompare(b.debut_sejour_at));
+
   // 8. Plafond running + calcul montants
   let cumul = 0;
   let montantTotal = 0;
-  for (const r of unique) {
+  for (const r of expanded) {
     if (r.nb_jours === 0 || r.taux == null) {
       r.montant = 0; continue;
     }
@@ -319,7 +366,7 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
 
   return {
     year,
-    rows: unique,
+    rows: expanded,
     deleted_rows: uniqueDeleted,
     nb_total_jours: Math.min(plafondJours, cumul),
     cumul_jours: cumul,

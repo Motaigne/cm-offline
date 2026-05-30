@@ -23,6 +23,7 @@ import {
   lookupTauxSej,
   getPlafondJours,
   computeValeurJour,
+  splitRotationAtMonth,
   type Article81Data,
 } from '@/lib/article81';
 import {
@@ -210,14 +211,50 @@ export async function computeA81ForYearLocal(
     });
   }
 
-  // 8. Tri + dédup + plafond running
+  // 8. Tri + dédup + expansion split + plafond running
   const seen = new Set<string>();
   rows.sort((a, b) => a.debut_sejour_at.localeCompare(b.debut_sejour_at));
   const unique = rows.filter(r => { if (seen.has(r.instance_id)) return false; seen.add(r.instance_id); return true; });
 
+  // Expansion rotations à cheval (cf. server actions/a81.ts pour la règle).
+  const expanded: A81Row[] = [];
+  for (const r of unique) {
+    const debutMs = new Date(r.debut_sejour_at).getTime();
+    const finMs   = new Date(r.fin_sejour_at).getTime();
+    const split = splitRotationAtMonth(debutMs, finMs, r.nb_jours);
+    if (!split) { expanded.push(r); continue; }
+    const m0DebutAt = new Date(split.m0.debutMs).toISOString();
+    const m0FinAt   = new Date(split.m0.finMs).toISOString();
+    const m1DebutAt = new Date(split.m1.debutMs).toISOString();
+    const m1FinAt   = new Date(split.m1.finMs).toISOString();
+    const m0ValeurJour = computeValeurJourForMonth(m0DebutAt.slice(0, 7));
+    const m1ValeurJour = computeValeurJourForMonth(m1DebutAt.slice(0, 7));
+    expanded.push({
+      ...r,
+      debut_sejour_at: m0DebutAt,
+      fin_sejour_at:   m0FinAt,
+      nb_jours:        split.m0.nbJours,
+      valeur_jour:     m0ValeurJour,
+      montant:         0,
+      fin_sejour_overridden: false,
+      split_part: 'm0',
+    });
+    expanded.push({
+      ...r,
+      debut_sejour_at: m1DebutAt,
+      fin_sejour_at:   m1FinAt,
+      nb_jours:        split.m1.nbJours,
+      valeur_jour:     m1ValeurJour,
+      montant:         0,
+      debut_sejour_overridden: false,
+      split_part: 'm1',
+    });
+  }
+  expanded.sort((a, b) => a.debut_sejour_at.localeCompare(b.debut_sejour_at));
+
   let cumul = 0;
   let montantTotal = 0;
-  for (const r of unique) {
+  for (const r of expanded) {
     if (r.nb_jours === 0 || r.taux == null) { r.montant = 0; continue; }
     if (cumul + r.nb_jours > plafondJours) {
       r.plafond = true; r.montant = 0; cumul += r.nb_jours;
@@ -239,7 +276,7 @@ export async function computeA81ForYearLocal(
 
   return {
     year,
-    rows: unique,
+    rows: expanded,
     deleted_rows: uniqueDeleted,
     nb_total_jours: Math.min(plafondJours, cumul),
     cumul_jours: cumul,

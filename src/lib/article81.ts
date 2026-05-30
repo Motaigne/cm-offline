@@ -108,6 +108,44 @@ export function computeValeurJour(args: {
   return baseAmount * 13 / 12 / 18;
 }
 
+/** Si debutMs et finMs sont dans 2 mois UTC différents, renvoie le ms UTC
+ *  du 1er du mois de finMs à 00:00 (= boundary M→M+1). Sinon null.
+ *  Cas multi-boundary (>2 mois) non géré — irréaliste pour un séjour A81. */
+export function findMonthBoundary(debutMs: number, finMs: number): number | null {
+  const d = new Date(debutMs);
+  const dY = d.getUTCFullYear();
+  const dM = d.getUTCMonth();
+  const f = new Date(finMs);
+  if (f.getUTCFullYear() === dY && f.getUTCMonth() === dM) return null;
+  return Date.UTC(dY, dM + 1, 1, 0, 0, 0, 0);
+}
+
+/** Représente une rotation à cheval splittée en 2 parts mensuelles. */
+export interface A81RotationSplit {
+  m0: { debutMs: number; finMs: number; tempsSejH: number; nbJours: number };
+  m1: { debutMs: number; finMs: number; tempsSejH: number; nbJours: number };
+}
+
+/** Split une rotation à cheval entre 2 mois UTC.
+ *  Règle nb_jours : m0 = computeTSej24(h_m0), m1 = totalNbJours − m0.
+ *  Garantit que m0.nbJours + m1.nbJours = totalNbJours (constraint user). */
+export function splitRotationAtMonth(
+  debutMs: number,
+  finMs: number,
+  totalNbJours: number,
+): A81RotationSplit | null {
+  const boundary = findMonthBoundary(debutMs, finMs);
+  if (boundary === null) return null;
+  const m0Hours = (boundary - debutMs) / 3600000;
+  const m1Hours = (finMs - boundary) / 3600000;
+  const m0NbJours = computeTSej24(m0Hours);
+  const m1NbJours = Math.max(0, totalNbJours - m0NbJours);
+  return {
+    m0: { debutMs, finMs: boundary, tempsSejH: m0Hours, nbJours: m0NbJours },
+    m1: { debutMs: boundary, finMs, tempsSejH: m1Hours, nbJours: m1NbJours },
+  };
+}
+
 /** Plafond annuel de jours défiscalisés par régime. */
 export function getPlafondJours(regime: RegimeEnum): number {
   switch (regime) {
