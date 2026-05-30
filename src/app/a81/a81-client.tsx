@@ -3,9 +3,10 @@
 import { useRouter } from 'next/navigation';
 import { useState, useTransition, useEffect } from 'react';
 import type { A81YearData, A81Row } from '@/app/actions/a81';
-import { upsertA81Override, deleteA81Row, restoreA81Row, loadAllA81Overrides } from '@/app/actions/a81';
+import { loadAllA81Overrides } from '@/app/actions/a81';
 import { computeA81ForYearLocal } from '@/lib/a81-local';
 import { loadA81OverridesLocal, cacheA81Overrides } from '@/lib/local-db';
+import { enqueueA81UpsertOverride, enqueueA81Delete, enqueueA81Restore, syncNow } from '@/lib/sync-service';
 
 const MONTHS_FR_SHORT = ['Janv.', 'Févr.', 'Mars', 'Avril', 'Mai', 'Juin', 'Juil.', 'Août', 'Sept.', 'Oct.', 'Nov.', 'Déc.'];
 
@@ -168,21 +169,30 @@ export function A81Client({
     router.push(`/a81?y=${y}`);
   }
 
+  /** Tente de pousser la queue vers le serveur si online. Silencieux en cas
+   *  d'échec (les ops restent en queue, badge nav reflète, sync manuel
+   *  rejouera). */
+  async function tryPushNow() {
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      try { await syncNow(); } catch { /* offline ou erreur — on retry au prochain Sync */ }
+    }
+  }
+
   function handleEditDebut(row: A81Row, newIso: string | null) {
     setErr('');
     start(async () => {
-      const res = await upsertA81Override(row.instance_id, { debut_sejour_at: newIso });
-      if ('error' in res) { setErr(res.error); return; }
+      await enqueueA81UpsertOverride(row.instance_id, { debut_sejour_at: newIso });
       await recomputeLocal();
+      await tryPushNow();
       router.refresh();
     });
   }
   function handleEditFin(row: A81Row, newIso: string | null) {
     setErr('');
     start(async () => {
-      const res = await upsertA81Override(row.instance_id, { fin_sejour_at: newIso });
-      if ('error' in res) { setErr(res.error); return; }
+      await enqueueA81UpsertOverride(row.instance_id, { fin_sejour_at: newIso });
       await recomputeLocal();
+      await tryPushNow();
       router.refresh();
     });
   }
@@ -191,9 +201,9 @@ export function A81Client({
     if (!confirm(`Supprimer cette ligne du tableau A81 ?\n\n${label}\n\nLa rotation reste dans le planning ; elle est juste masquée du tableau A81.`)) return;
     setErr('');
     start(async () => {
-      const res = await deleteA81Row(row.instance_id);
-      if ('error' in res) { setErr(res.error); return; }
+      await enqueueA81Delete(row.instance_id);
       await recomputeLocal();
+      await tryPushNow();
       router.refresh();
     });
   }
@@ -202,14 +212,9 @@ export function A81Client({
     // Optimistic : cache la cartouche dès le clic.
     setRestoredIds(prev => { const n = new Set(prev); n.add(instanceId); return n; });
     start(async () => {
-      const res = await restoreA81Row(instanceId);
-      if ('error' in res) {
-        // Rollback : ré-affiche la cartouche.
-        setRestoredIds(prev => { const n = new Set(prev); n.delete(instanceId); return n; });
-        setErr(res.error);
-        return;
-      }
+      await enqueueA81Restore(instanceId);
       await recomputeLocal();
+      await tryPushNow();
       router.refresh();
     });
   }

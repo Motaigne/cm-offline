@@ -19,8 +19,7 @@ const TABS: { label: string; href: string; offlineDisabled?: boolean }[] = [
   { label: 'EP4',         href: '/ep4',         offlineDisabled: true },
   { label: 'Catalogue',   href: '/catalogue'  },
   { label: 'Comparatif',  href: '/comparatif' },
-  // A81 server-side (lit raw_detail des signatures + profile versions) — pas offline pour l'instant.
-  { label: 'A81',         href: '/a81',         offlineDisabled: true },
+  { label: 'A81',         href: '/a81'        },
   { label: 'Annexe',      href: '/annexe'     },
 ];
 

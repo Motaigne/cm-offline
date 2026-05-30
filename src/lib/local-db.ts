@@ -19,7 +19,8 @@ interface StoredItem extends CalendarItem {
 export interface SyncOp {
   id?: number;
   op: 'add' | 'delete' | 'update' | 'update_bid' | 'update_meta'
-    | 'add_note' | 'update_note' | 'delete_note';
+    | 'add_note' | 'update_note' | 'delete_note'
+    | 'a81_upsert_override' | 'a81_delete' | 'a81_restore';
   payload: string; // JSON
   created_at: number;
 }

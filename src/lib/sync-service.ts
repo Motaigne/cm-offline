@@ -12,9 +12,15 @@ import {
   deleteNote,
   type UserNote,
 } from '@/app/actions/notes';
+import {
+  upsertA81Override,
+  deleteA81Row,
+  restoreA81Row,
+} from '@/app/actions/a81';
 import type { CalendarItem } from '@/app/page';
 import type { ActivityKind, BidCategory } from '@/lib/activity-meta';
 import type { Json } from '@/types/supabase';
+import type { A81OverrideLocal } from '@/lib/a81-local';
 
 // ─── Types payload ────────────────────────────────────────────────────────────
 
@@ -36,6 +42,11 @@ type UpdateMetaPayload = { id: string; meta: Json | null };
 type AddNotePayload    = UserNote;
 type UpdateNotePayload = { id: string; start_date?: string; end_date?: string; text?: string; color?: string | null };
 type DeleteNotePayload = { id: string };
+
+// A81 overrides (édit/delete/restore par instance)
+type A81UpsertPayload  = { pairing_instance_id: string; debut_sejour_at?: string | null; fin_sejour_at?: string | null };
+type A81DeletePayload  = { pairing_instance_id: string };
+type A81RestorePayload = { pairing_instance_id: string };
 
 // ─── Enqueue helpers (écriture locale + mise en queue) ───────────────────────
 
@@ -116,6 +127,50 @@ export async function enqueueDeleteNote(id: string): Promise<void> {
   });
 }
 
+// ─── A81 overrides ────────────────────────────────────────────────────────────
+
+async function applyA81OverrideLocal(
+  instanceId: string,
+  patch: Partial<Omit<A81OverrideLocal, 'pairing_instance_id'>>,
+): Promise<void> {
+  const existing = await db.a81_overrides.get(instanceId);
+  const next: A81OverrideLocal = {
+    pairing_instance_id: instanceId,
+    deleted:         existing?.deleted ?? false,
+    debut_sejour_at: existing?.debut_sejour_at ?? null,
+    fin_sejour_at:   existing?.fin_sejour_at   ?? null,
+    ...patch,
+  };
+  await db.a81_overrides.put(next);
+}
+
+export async function enqueueA81UpsertOverride(
+  instanceId: string,
+  fields: { debut_sejour_at?: string | null; fin_sejour_at?: string | null },
+): Promise<void> {
+  const payload: A81UpsertPayload = { pairing_instance_id: instanceId, ...fields };
+  await db.transaction('rw', db.a81_overrides, db.sync_queue, async () => {
+    await applyA81OverrideLocal(instanceId, fields);
+    await db.sync_queue.add({ op: 'a81_upsert_override', payload: JSON.stringify(payload), created_at: Date.now() });
+  });
+}
+
+export async function enqueueA81Delete(instanceId: string): Promise<void> {
+  const payload: A81DeletePayload = { pairing_instance_id: instanceId };
+  await db.transaction('rw', db.a81_overrides, db.sync_queue, async () => {
+    await applyA81OverrideLocal(instanceId, { deleted: true });
+    await db.sync_queue.add({ op: 'a81_delete', payload: JSON.stringify(payload), created_at: Date.now() });
+  });
+}
+
+export async function enqueueA81Restore(instanceId: string): Promise<void> {
+  const payload: A81RestorePayload = { pairing_instance_id: instanceId };
+  await db.transaction('rw', db.a81_overrides, db.sync_queue, async () => {
+    await applyA81OverrideLocal(instanceId, { deleted: false });
+    await db.sync_queue.add({ op: 'a81_restore', payload: JSON.stringify(payload), created_at: Date.now() });
+  });
+}
+
 // ─── Sync ─────────────────────────────────────────────────────────────────────
 
 /** Rejoue toute la queue vers Supabase. Appelé quand online revient.
@@ -154,6 +209,19 @@ export async function syncNow(): Promise<void> {
       } else if (op.op === 'delete_note') {
         const p = JSON.parse(op.payload) as DeleteNotePayload;
         res = await deleteNote(p.id);
+      } else if (op.op === 'a81_upsert_override') {
+        const p = JSON.parse(op.payload) as A81UpsertPayload;
+        const { pairing_instance_id, ...fields } = p;
+        const r = await upsertA81Override(pairing_instance_id, fields);
+        res = 'error' in r ? r : {};
+      } else if (op.op === 'a81_delete') {
+        const p = JSON.parse(op.payload) as A81DeletePayload;
+        const r = await deleteA81Row(p.pairing_instance_id);
+        res = 'error' in r ? r : {};
+      } else if (op.op === 'a81_restore') {
+        const p = JSON.parse(op.payload) as A81RestorePayload;
+        const r = await restoreA81Row(p.pairing_instance_id);
+        res = 'error' in r ? r : {};
       }
       if (res?.error) {
         throw new Error(res.error);
