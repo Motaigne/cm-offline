@@ -46,6 +46,33 @@ function computeTempsSej(detail: PairingDetail): number {
   return (duties[duties.length - 1].schBeginDate - duties[0].schEndDate) / 3600000;
 }
 
+const FIVE_MIN_MS = 5  * 60 * 1000;
+const TEN_MIN_MS  = 10 * 60 * 1000;
+
+/**
+ * Pré-calcule les 4 champs A81 depuis raw_detail. Stockés sur pairing_signature
+ * pour permettre le compute offline (page A81) sans recharger raw_detail.
+ */
+function computeA81Meta(detail: PairingDetail | null, firstLayoverFallback: string | null) {
+  if (!detail?.flightDuty || detail.flightDuty.length < 2) {
+    return { debut_sejour_at: null, fin_sejour_at: null, escale_debut: null, escale_fin: null };
+  }
+  const firstDuty = detail.flightDuty[0];
+  const lastDuty  = detail.flightDuty[detail.flightDuty.length - 1];
+  const debutSejourMs = firstDuty.schEndDate - FIVE_MIN_MS;
+  const finSejourMs   = lastDuty.schBeginDate + TEN_MIN_MS;
+  const firstDutyLegs = firstDuty.dutyLegAssociation?.flatMap(d => d.legs) ?? [];
+  const lastDutyLegs  = lastDuty.dutyLegAssociation?.flatMap(d => d.legs) ?? [];
+  const escaleDebut = firstDutyLegs[firstDutyLegs.length - 1]?.arrivalStationCode ?? firstLayoverFallback ?? null;
+  const escaleFin   = lastDutyLegs[0]?.departureStationCode ?? firstLayoverFallback ?? null;
+  return {
+    debut_sejour_at: new Date(debutSejourMs).toISOString(),
+    fin_sejour_at:   new Date(finSejourMs).toISOString(),
+    escale_debut:    escaleDebut,
+    escale_fin:      escaleFin,
+  };
+}
+
 function computePrime(detail: PairingDetail): number {
   let prime = 0;
   for (const fd of detail.flightDuty) {
@@ -367,6 +394,7 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
       const lastDuty   = detail?.flightDuty?.[detail.flightDuty.length - 1];
       const heureDebut = firstDuty ? msToTimeStr(firstDuty.schBeginDate) : msToTimeStr(repr.beginDutyDate);
       const heureFin   = lastDuty  ? msToTimeStr(lastDuty.schEndDate)   : msToTimeStr(repr.endDutyDate);
+      const a81Meta    = computeA81Meta(detail, repr.firstLayover ?? null);
 
       const { data: sig, error: sigErr } = await supabase
         .from('pairing_signature')
@@ -397,6 +425,10 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
           rest_after_h:        restAfterH,
           tsv_nuit:            tsvNuit,
           raw_detail:          detail as any ?? null,
+          debut_sejour_at:     a81Meta.debut_sejour_at,
+          fin_sejour_at:       a81Meta.fin_sejour_at,
+          escale_debut:        a81Meta.escale_debut,
+          escale_fin:          a81Meta.escale_fin,
         })
         .select('id')
         .single();

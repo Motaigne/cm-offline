@@ -188,6 +188,10 @@ export type Database = {
           mep_flight: string | null;
           peq: number | null;
           activity_number: string | null;
+          debut_sejour_at: string | null;
+          fin_sejour_at: string | null;
+          escale_debut: string | null;
+          escale_fin: string | null;
           created_at: string;
         };
         Insert: Partial<Database['public']['Tables']['pairing_signature']['Row']> & {
