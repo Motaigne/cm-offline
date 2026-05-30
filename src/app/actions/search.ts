@@ -48,6 +48,12 @@ export type RotationSignature = {
   peq: number | null;
   first_layover: string | null;
   layovers: number;
+  /** Pré-calculés au scrape (migration 0031) — utilisés par la page A81 pour le
+   *  compute offline. Null si raw_detail manquait ou flightDuty < 2. */
+  debut_sejour_at: string | null;
+  fin_sejour_at:   string | null;
+  escale_debut:    string | null;
+  escale_fin:      string | null;
   instances: RotationInstance[];
   /** IR + MF par rotation (entiers de comptage). Pré-calculé serveur depuis
    *  raw_detail pour permettre l'agrégation offline côté client. */
@@ -93,7 +99,7 @@ export async function getRotationsForMonth(month: string): Promise<RotationSigna
 
   const { data: sigs } = await supabase
     .from('pairing_signature')
-    .select('id, rotation_code, nb_on_days, aircraft_code, zone, hc, hcr_crew, hdv, a81, heure_debut, heure_fin, temps_sej, legs_number, prime, rest_before_h, rest_after_h, tsv_nuit, dead_head, mep_flight, peq, first_layover, layovers, raw_detail')
+    .select('id, rotation_code, nb_on_days, aircraft_code, zone, hc, hcr_crew, hdv, a81, heure_debut, heure_fin, temps_sej, legs_number, prime, rest_before_h, rest_after_h, tsv_nuit, dead_head, mep_flight, peq, first_layover, layovers, debut_sejour_at, fin_sejour_at, escale_debut, escale_fin, raw_detail')
     .eq('snapshot_id', snap.id);
 
   if (!sigs?.length) return [];

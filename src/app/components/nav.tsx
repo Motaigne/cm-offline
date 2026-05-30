@@ -5,7 +5,9 @@ import { usePathname, useRouter } from 'next/navigation';
 import { getAvailableMonths, getRotationsForMonth } from '@/app/actions/search';
 import { getScenariosWithItems } from '@/app/actions/planning';
 import { getCurrentUserIsAdmin } from '@/app/actions/auth';
-import { cacheRotations, hydrateDB } from '@/lib/local-db';
+import { loadAllProfileVersions } from '@/app/actions/profile-version';
+import { loadAllAnnexeRows } from '@/app/actions/annexe';
+import { cacheRotations, hydrateDB, cacheProfileVersions, cacheAnnexeRows } from '@/lib/local-db';
 import { syncNow, pendingOpsCount } from '@/lib/sync-service';
 import { downloadBackup, parseBackup, importBackup } from '@/lib/backup';
 
@@ -134,6 +136,11 @@ export function NavBar() {
     })();
     void getCurrentUserIsAdmin().then(setIsAdmin).catch(() => setIsAdmin(false));
     void pendingOpsCount().then(setPendingCount);
+    // Pré-cache silencieux profil + annexe (offline pour A81 + finBase calendrier).
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      void loadAllProfileVersions().then(v => cacheProfileVersions(v)).catch(() => {});
+      void loadAllAnnexeRows().then(r => cacheAnnexeRows(r)).catch(() => {});
+    }
   }, []);
 
   // Suit l'état réseau pour griser les onglets offlineDisabled (EP4).
@@ -165,6 +172,12 @@ export function NavBar() {
       }
       // 2. Pull toutes les données depuis Supabase
       setSyncStatus('pull');
+      // Cache profil + annexe versionnés (légers — quelques rows, < 50KB).
+      // Indispensables pour le compute offline (calendrier finBase, page A81).
+      void withTimeout(loadAllProfileVersions(), 5000, [])
+        .then(v => cacheProfileVersions(v)).catch(() => {});
+      void withTimeout(loadAllAnnexeRows(), 5000, [])
+        .then(r => cacheAnnexeRows(r)).catch(() => {});
       const ready = await waitForSWController();
       if (ready) {
         const months = await withTimeout(getAvailableMonths(), 8000, [] as string[]);

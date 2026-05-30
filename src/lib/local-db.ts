@@ -2,6 +2,8 @@ import Dexie, { type Table } from 'dexie';
 import type { CalendarItem, Scenario } from '@/app/page';
 import type { RotationSignature } from '@/app/actions/search';
 import type { UserNote } from '@/app/actions/notes';
+import type { ProfileVersion } from '@/app/actions/profile-version';
+import type { AnnexeRow } from '@/lib/annexe';
 
 interface StoredDraft {
   id: string;
@@ -45,13 +47,21 @@ export interface StoredRelease {
   downloaded_at: number;
 }
 
+/** Annexe row stockée en Dexie. Clé primaire composite slug+valid_from. */
+type StoredAnnexeRow = AnnexeRow & { key: string };
+function annexeRowKey(slug: string, validFrom: string): string {
+  return `${slug}|${validFrom}`;
+}
+
 class CmDatabase extends Dexie {
-  drafts!:    Table<StoredDraft,    string>;
-  items!:     Table<StoredItem,     string>;
-  sync_queue!:Table<SyncOp,         number>;
-  rotations!: Table<StoredRotation, string>;
-  releases!:  Table<StoredRelease,  string>;
-  notes!:     Table<UserNote,       string>;
+  drafts!:           Table<StoredDraft,      string>;
+  items!:            Table<StoredItem,       string>;
+  sync_queue!:       Table<SyncOp,           number>;
+  rotations!:        Table<StoredRotation,   string>;
+  releases!:         Table<StoredRelease,    string>;
+  notes!:            Table<UserNote,         string>;
+  profile_versions!: Table<ProfileVersion,   string>; // PK = valid_from (user_id implicite)
+  annexe_rows!:      Table<StoredAnnexeRow,  string>; // PK = `${slug}|${valid_from}`
 
   constructor() {
     super('optip');
@@ -71,6 +81,11 @@ class CmDatabase extends Dexie {
     // v4 : notes utilisateur (cross-scénario, indépendantes des drafts)
     this.version(4).stores({
       notes: 'id, start_date, end_date',
+    });
+    // v5 : cache profil versionné + annexe versionnée (pour A81 + GanttView offline)
+    this.version(5).stores({
+      profile_versions: 'valid_from',
+      annexe_rows:      'key, slug, valid_from',
     });
   }
 }
@@ -273,6 +288,37 @@ export async function hydrateNotes(notes: UserNote[], month: string): Promise<vo
     const toAdd = notes.filter(n => !pendingIds.has(n.id));
     if (toAdd.length) await db.notes.bulkPut(toAdd);
   });
+}
+
+// ─── Cache profil versionné ───────────────────────────────────────────────────
+
+/** Remplace le cache local des versions de profil avec celles passées. */
+export async function cacheProfileVersions(versions: ProfileVersion[]): Promise<void> {
+  await db.transaction('rw', db.profile_versions, async () => {
+    await db.profile_versions.clear();
+    if (versions.length) await db.profile_versions.bulkPut(versions);
+  });
+}
+
+export async function loadProfileVersionsLocal(): Promise<ProfileVersion[]> {
+  const all = await db.profile_versions.toArray();
+  return all.sort((a, b) => b.valid_from.localeCompare(a.valid_from));
+}
+
+// ─── Cache annexe versionnée ──────────────────────────────────────────────────
+
+/** Remplace le cache local des rows annexe avec celles passées. */
+export async function cacheAnnexeRows(rows: AnnexeRow[]): Promise<void> {
+  const stored: StoredAnnexeRow[] = rows.map(r => ({ ...r, key: annexeRowKey(r.slug, r.valid_from) }));
+  await db.transaction('rw', db.annexe_rows, async () => {
+    await db.annexe_rows.clear();
+    if (stored.length) await db.annexe_rows.bulkPut(stored);
+  });
+}
+
+export async function loadAnnexeRowsLocal(): Promise<AnnexeRow[]> {
+  const all = await db.annexe_rows.toArray();
+  return all.map(({ key: _k, ...r }) => { void _k; return r as AnnexeRow; });
 }
 
 /** Notes locales overlappant le mois donné. */
