@@ -25,6 +25,36 @@ export interface AnnexeData {
 
 export const KSP = 1.07;
 
+// Row brute de annexe_table (versionnée). Sérialisable → traverse la frontière
+// serveur/client sans souci.
+export interface AnnexeRow { slug: string; valid_from: string; data: unknown; }
+
+/**
+ * Version client-side de `loadAnnexeForMonth` : à partir de toutes les rows
+ * versionnées de annexe_table, renvoie la version applicable au mois cible
+ * (valid_from <= 1er du mois, plus récente). Utilisé par le calendrier pour
+ * recomputer instantanément lors d'un changeMonth, sans round-trip serveur.
+ */
+export function getAnnexeDataFromRows(rows: AnnexeRow[], month: string): Partial<AnnexeData> {
+  const cutoff = /^\d{4}-\d{2}$/.test(month) ? `${month}-01` : month;
+  const sorted = [...rows].sort((a, b) => b.valid_from.localeCompare(a.valid_from));
+  const map = new Map<string, unknown>();
+  for (const r of sorted) {
+    if (r.valid_from > cutoff) continue;
+    if (!map.has(r.slug)) map.set(r.slug, r.data);
+  }
+  const u = Object.fromEntries(map) as Record<string, unknown>;
+  return {
+    cat_anciennete:        (u.cat_anciennete        ?? []) as AnnexeData['cat_anciennete'],
+    coef_classe:           (u.coef_classe           ?? []) as AnnexeData['coef_classe'],
+    taux_avion:            (u.taux_avion            ?? []) as AnnexeData['taux_avion'],
+    prime_incitation:      (u.prime_incitation      ?? []) as AnnexeData['prime_incitation'],
+    prime_incitation_330:  (u.prime_incitation_330  ?? []) as AnnexeData['prime_incitation_330'],
+    prime_instruction:     (u.prime_instruction     ?? { icpl_a1: 0, tri_opl_b1: 0, multiplier: 1, max_annee: 5 }) as AnnexeData['prime_instruction'],
+    traitement_base:       (u.traitement_base       ?? { base_cdb_a1: 2559.19, coef_opl: 0.665 }) as AnnexeData['traitement_base'],
+  };
+}
+
 // Coefficient catégorie pour PVEI (CCT AF)
 // Catégorie A = 0.70, B = 0.85, C = 1.00
 const CAT_PVEI: Record<string, number> = { A: 0.70, B: 0.85, C: 1.00 };

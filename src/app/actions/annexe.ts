@@ -1,7 +1,7 @@
 'use server';
 
 import { createClient } from '@/lib/supabase/server';
-import { computeFullProfile, type AnnexeData } from '@/lib/annexe';
+import { computeFullProfile, type AnnexeData, type AnnexeRow } from '@/lib/annexe';
 import { REGIME_NB30E } from '@/lib/finance';
 import type { Json } from '@/types/supabase';
 
@@ -70,6 +70,18 @@ export async function loadAnnexeRowForMonth(slug: string, month: string): Promis
     .limit(1)
     .maybeSingle();
   return data?.data ?? null;
+}
+
+/**
+ * Charge toutes les rows de annexe_table (toutes versions confondues).
+ * Utilisé par le calendrier pour computer finBase client-side et offline.
+ */
+export async function loadAllAnnexeRows(): Promise<AnnexeRow[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from('annexe_table')
+    .select('slug, valid_from, data');
+  return (data ?? []) as AnnexeRow[];
 }
 
 /**

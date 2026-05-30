@@ -33,7 +33,7 @@ import { DdaViolationsStrip } from './dda-violations-strip';
 import { getRotationsForMonth } from '@/app/actions/search';
 import { getCurrentUserScrapeRights } from '@/app/actions/auth';
 import { getYearA81CumulBefore } from '@/app/actions/article81';
-import { loadFinBaseForMonth, type FinBaseForMonth } from '@/app/actions/annexe';
+import { computeFullProfile, getAnnexeDataFromRows, type AnnexeData, type AnnexeRow } from '@/lib/annexe';
 import { computeMonthlyIrMfFromLocalCache } from '@/lib/ir-mf-local';
 import { computeEffectiveRpc } from '@/lib/rpc';
 import { enqueueAddNote, enqueueUpdateNote, enqueueDeleteNote } from '@/lib/sync-service';
@@ -641,6 +641,8 @@ export function GanttView({
   month, scenarios, userName, userRegime, cngPv, cngHs,
   primeIncitationUnit = 0, primeA330 = 0, primeInstruction = 0,
   pvei: pveiProp, ksp: kspProp, fixeRegime: fixeRegimeProp, fixeTP: fixeTPProp,
+  annexeRows = [],
+  financeProfile = null,
   article81Data = null, valeurJour = 600,
   a81CumulBefore = { A: 0, B: 0, C: 0 },
   irMfByScenario,
@@ -674,6 +676,22 @@ export function GanttView({
   fixeRegime?: number;
   /** Traitement fixe TP (utilisé en jul/août pour TAF*_10_12). */
   fixeTP?: number;
+  /** Toutes les rows de annexe_table (versionnées) — sert à recomputer finBase
+   *  client-side lors d'un changeMonth. */
+  annexeRows?: AnnexeRow[];
+  /** Champs du profil nécessaires à computeFullProfile. */
+  financeProfile?: {
+    aircraft: string;
+    fonction: string;
+    classe: number;
+    categorie: string;
+    echelon: number;
+    atpl: boolean;
+    primeIncitationType: 'LC' | 'MC';
+    primeInstFonction: string | null;
+    primeInstAnnee: number | null;
+    prime330Count: number | null;
+  } | null;
   /** Mode transport profil pour calcul IT ('Navigo' | 'Voiture' | null). */
   transport?: string | null;
   /** IT mensuelle forfaitaire si transport = Navigo. */
@@ -743,24 +761,14 @@ export function GanttView({
     });
   }
 
-  // IR/MF + A81 cumul + finBase : props serveur figées au render initial, on
-  // copie en state pour pouvoir les rafraîchir lors d'une navigation
-  // client-side (changeMonth) — sinon le mois courant utilise les valeurs du
-  // mois initial. finBase porte les éléments de paie versionnés (pvei/fixe/
-  // primes) — change quand on traverse une date d'application annexe.
+  // IR/MF + A81 cumul : props serveur figées au render initial, on copie en
+  // state pour pouvoir les rafraîchir lors d'une navigation client-side
+  // (changeMonth) — sinon le mois courant utilise les valeurs du mois initial.
   const [irMfState, setIrMfState] = useState(() => ({
     byScenario: irMfByScenario,
     perFlightByScenario: irMfPerFlightByScenario,
   }));
   const [a81CumulBeforeState, setA81CumulBeforeState] = useState(a81CumulBefore);
-  const [finBaseState, setFinBaseState] = useState<FinBaseForMonth | null>(() =>
-    (pveiProp != null && kspProp != null && fixeRegimeProp != null && fixeTPProp != null)
-      ? {
-          pvei: pveiProp, ksp: kspProp, fixe: fixeRegimeProp, fixeTP: fixeTPProp,
-          primeIncitationUnit, primeA330, primeInstruction,
-        }
-      : null
-  );
 
   // Resync depuis les props quand le serveur renvoie de nouvelles valeurs
   // (router.refresh après Sync / mount initial sur un autre mois via URL).
@@ -768,6 +776,57 @@ export function GanttView({
     setIrMfState({ byScenario: irMfByScenario, perFlightByScenario: irMfPerFlightByScenario });
   }, [irMfByScenario, irMfPerFlightByScenario]);
   useEffect(() => { setA81CumulBeforeState(a81CumulBefore); }, [a81CumulBefore]);
+
+  // Éléments de paie versionnés (pvei, fixe, primes) — calculés client-side à
+  // partir de toutes les rows annexe + le profil, pour le mois courant.
+  // Instantané (zéro fetch) et offline-compatible. Fallback aux props initiales
+  // si annexeRows/financeProfile absents (ex: legacy / profil incomplet).
+  const finBaseState = useMemo(() => {
+    if (financeProfile && annexeRows.length > 0) {
+      const annexe = getAnnexeDataFromRows(annexeRows, currentMonth);
+      const hasAnnexe = !!(
+        annexe.cat_anciennete?.length &&
+        annexe.coef_classe?.length &&
+        annexe.taux_avion?.length &&
+        annexe.traitement_base
+      );
+      if (hasAnnexe) {
+        const nb30e = REGIME_NB30E[userRegime] ?? 30;
+        const c = computeFullProfile(
+          financeProfile.aircraft,
+          financeProfile.fonction,
+          financeProfile.classe,
+          financeProfile.categorie,
+          financeProfile.echelon,
+          financeProfile.atpl,
+          nb30e,
+          financeProfile.primeIncitationType,
+          financeProfile.primeInstFonction,
+          financeProfile.primeInstAnnee,
+          financeProfile.prime330Count,
+          annexe as AnnexeData,
+        );
+        return {
+          pvei: c.pvei, ksp: c.ksp, fixe: c.fixe, fixeTP: c.fixeTP,
+          primeIncitationUnit: c.primeIncitation,
+          primeA330: c.primeA330,
+          primeInstruction: c.primeInstruction,
+        };
+      }
+    }
+    // Fallback aux props initiales (server-rendered pour le mois initial).
+    if (pveiProp != null && kspProp != null && fixeRegimeProp != null && fixeTPProp != null) {
+      return {
+        pvei: pveiProp, ksp: kspProp, fixe: fixeRegimeProp, fixeTP: fixeTPProp,
+        primeIncitationUnit, primeA330, primeInstruction,
+      };
+    }
+    return null;
+  }, [
+    currentMonth, annexeRows, financeProfile, userRegime,
+    pveiProp, kspProp, fixeRegimeProp, fixeTPProp,
+    primeIncitationUnit, primeA330, primeInstruction,
+  ]);
 
   // Recalcul IR/MF local à chaque changement de mois ou d'items (add / delete /
   // edit). Lecture depuis le cache rotations IndexedDB (mois M + M-1 spillovers),
@@ -1108,20 +1167,8 @@ export function GanttView({
       getYearA81CumulBefore(yy, mm)
         .then(a81 => { if (myToken === navTokenRef.current) setA81CumulBeforeState(a81.byScenarioBefore); })
         .catch(() => { /* offline ou erreur : on garde les valeurs courantes */ });
-      // FinBase : pvei + fixe + primes versionnés selon la date d'application de
-      // l'annexe applicable au mois. Important pour les mois pré/post 1er avril.
-      // eslint-disable-next-line no-console
-      console.log('[finBase] fetching for month', newMonth);
-      loadFinBaseForMonth(newMonth)
-        .then(fb => {
-          // eslint-disable-next-line no-console
-          console.log('[finBase] received for', newMonth, fb);
-          if (fb && myToken === navTokenRef.current) setFinBaseState(fb);
-        })
-        .catch(err => {
-          // eslint-disable-next-line no-console
-          console.log('[finBase] error for', newMonth, err);
-        });
+      // FinBase : calculé client-side via useMemo(currentMonth) à partir de
+      // annexeRows + financeProfile (passés en props). Aucun fetch ici.
       // IR/MF : recalculé client à partir du cache rotations fraîchement mis à jour.
       // (Le useEffect [localScenarios,currentMonth] est déjà déclenché par le setState
       //  plus haut, mais à ce moment-là cacheRotations n'avait pas encore tourné.)

@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { getScenariosWithItems } from '@/app/actions/planning';
 import { listNotesForMonth } from '@/app/actions/notes';
-import { loadAnnexeForMonth, loadAnnexeRowForMonth } from '@/app/actions/annexe';
+import { loadAnnexeForMonth, loadAnnexeRowForMonth, loadAllAnnexeRows } from '@/app/actions/annexe';
 import { getYearA81CumulBefore } from '@/app/actions/article81';
 import { getMonthlyIrMfEuros } from '@/app/actions/ir-mf';
 import { GanttView } from '@/app/components/gantt/gantt-view';
@@ -53,10 +53,11 @@ export default async function Home({
   if (!profile) redirect('/profil');
 
   const [y, mo] = month.split('-').map(Number);
-  const [scenarios, notes, annexe, a81RowData, a81Cumul, irMfMonth, prorataRowData, ddaRulesRowData, volPRulesRowData] = await Promise.all([
+  const [scenarios, notes, annexe, allAnnexeRows, a81RowData, a81Cumul, irMfMonth, prorataRowData, ddaRulesRowData, volPRulesRowData] = await Promise.all([
     getScenariosWithItems(month),
     listNotesForMonth(month),
     loadAnnexeForMonth(month),
+    loadAllAnnexeRows(),
     loadAnnexeRowForMonth('article_81', month),
     getYearA81CumulBefore(y, mo),
     getMonthlyIrMfEuros(month),
@@ -131,6 +132,25 @@ export default async function Home({
       ksp={finBase.ksp ?? undefined}
       fixeRegime={finBase.fixe ?? undefined}
       fixeTP={finBase.fixeTP ?? undefined}
+      annexeRows={allAnnexeRows}
+      financeProfile={
+        profile.fonction && profile.classe != null && profile.categorie && profile.echelon != null
+          ? {
+              aircraft: profile.aircraft_principal ?? 'A335',
+              fonction: profile.fonction,
+              classe: profile.classe,
+              categorie: profile.categorie,
+              echelon: profile.echelon,
+              atpl: profile.bonus_atpl ?? false,
+              primeIncitationType: 'LC' as const,
+              primeInstFonction: profile.fonction === 'TRI_OPL' ? 'TRI_OPL'
+                : profile.fonction === 'TRI_CDB' ? 'ICPL'
+                : null,
+              primeInstAnnee: (profile.fonction === 'TRI_OPL' || profile.fonction === 'TRI_CDB') ? profile.tri_niveau : null,
+              prime330Count: profile.prime_330_count ?? null,
+            }
+          : null
+      }
       article81Data={article81Data}
       valeurJour={valeurJour}
       a81CumulBefore={a81Cumul.byScenarioBefore}
