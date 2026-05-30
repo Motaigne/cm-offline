@@ -85,6 +85,29 @@ export function lookupTauxSej(
   return last?.taux[zone] ?? null;
 }
 
+/**
+ * Valeur jour de référence pour la prime de séjour A81. Formule officielle :
+ *   - Non-instructeur (100%) : (fixe + 76 × PVEI × KSP) × 13/12 / 18
+ *   - Instructeur            : (fixe + primeInstruction + 96 × PVEI × KSP) × 13/12 / 18
+ *
+ * Évolue avec :
+ *   - Profil individuel versionné (fonction, classe, échelon, régime, …)
+ *   - Profil catégoriel versionné (taux avion, traitement base, prime instruction)
+ */
+export function computeValeurJour(args: {
+  fixe: number;            // traitement mensuel proratisé régime
+  pvei: number;
+  ksp: number;
+  primeInstruction: number; // 0 si non-instructeur
+  isTri: boolean;
+}): number {
+  const { fixe, pvei, ksp, primeInstruction, isTri } = args;
+  const baseAmount = isTri
+    ? fixe + primeInstruction + 96 * pvei * ksp
+    : fixe + 76 * pvei * ksp;
+  return baseAmount * 13 / 12 / 18;
+}
+
 /** Plafond annuel de jours défiscalisés par régime. */
 export function getPlafondJours(regime: RegimeEnum): number {
   switch (regime) {

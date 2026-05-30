@@ -2,9 +2,11 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
-import { computeTSej24, lookupTauxSej, getPlafondJours, type Article81Data } from '@/lib/article81';
-import { loadAnnexeRowForMonth } from '@/app/actions/annexe';
+import { computeTSej24, lookupTauxSej, getPlafondJours, computeValeurJour, type Article81Data } from '@/lib/article81';
+import { loadAnnexeRowForMonth, loadAllAnnexeRows } from '@/app/actions/annexe';
 import { loadAllProfileVersions } from '@/app/actions/profile-version';
+import { computeFullProfile, getAnnexeDataFromRows, type AnnexeData } from '@/lib/annexe';
+import { REGIME_NB30E } from '@/lib/finance';
 import type { PairingDetail } from '@/lib/scraper/types';
 
 const FIVE_MIN_MS  = 5  * 60 * 1000;
@@ -73,9 +75,10 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
     .gte('target_month', yearStart)
     .lt('target_month', yearEnd);
 
-  // 2. Annexe article_81 + profil versions + plafond
-  const [a81Row, profileVersions] = await Promise.all([
+  // 2. Annexe (article_81 + toutes versions pour valeur_jour) + profil versions + plafond
+  const [a81Row, allAnnexeRows, profileVersions] = await Promise.all([
     loadAnnexeRowForMonth('article_81', `${year}-01`),
+    loadAllAnnexeRows(),
     loadAllProfileVersions(user.id),
   ]);
   const article81Data = (a81Row as Article81Data | null) ?? null;
@@ -84,6 +87,46 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
     const cutoff = `${month}-01`;
     return sortedVersions.find(v => v.valid_from <= cutoff) ?? sortedVersions[sortedVersions.length - 1] ?? null;
   };
+
+  /** Calcule la valeur_jour A81 pour un mois donné depuis profil + annexe versionnés. */
+  function computeValeurJourForMonth(month: string): number {
+    const prof = profileForMonth(month);
+    if (!prof?.fonction || !prof.classe || !prof.echelon || !prof.categorie) return 600;
+    const annexe = getAnnexeDataFromRows(allAnnexeRows, month);
+    const hasAnnexe = !!(
+      annexe.cat_anciennete?.length &&
+      annexe.coef_classe?.length &&
+      annexe.taux_avion?.length &&
+      annexe.traitement_base
+    );
+    if (!hasAnnexe) return Number(prof.valeur_jour ?? 600);
+    const isTri = prof.fonction === 'TRI_OPL' || prof.fonction === 'TRI_CDB';
+    const primeInstFonction = prof.fonction === 'TRI_OPL' ? 'TRI_OPL'
+      : prof.fonction === 'TRI_CDB' ? 'ICPL'
+      : null;
+    const nb30e = REGIME_NB30E[prof.regime] ?? 30;
+    const c = computeFullProfile(
+      prof.aircraft_principal ?? 'A335',
+      prof.fonction,
+      prof.classe,
+      prof.categorie,
+      prof.echelon,
+      prof.bonus_atpl ?? false,
+      nb30e,
+      'LC',
+      primeInstFonction,
+      isTri ? prof.tri_niveau : null,
+      prof.prime_330_count ?? null,
+      annexe as AnnexeData,
+    );
+    return computeValeurJour({
+      fixe: c.fixe,
+      pvei: c.pvei,
+      ksp: c.ksp,
+      primeInstruction: c.primeInstruction,
+      isTri,
+    });
+  }
   // Plafond : utilise le profil au 1er janv (cohérent avec un suivi annuel).
   const profileJan = profileForMonth(`${year}-01`);
   const regime = profileJan?.regime ?? null;
@@ -149,8 +192,7 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
     const taux      = lookupTauxSej(article81Data, sig.zone, tempsSejH);
 
     const monthOfDepart = new Date(debutSejourMs).toISOString().slice(0, 7);
-    const profMo = profileForMonth(monthOfDepart);
-    const valeurJour = Number(profMo?.valeur_jour ?? 600);
+    const valeurJour = computeValeurJourForMonth(monthOfDepart);
 
     rows.push({
       instance_id: inst.id,
