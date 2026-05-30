@@ -16,10 +16,12 @@ const TABS: { label: string; href: string; offlineDisabled?: boolean }[] = [
   { label: 'EP4',         href: '/ep4',         offlineDisabled: true },
   { label: 'Catalogue',   href: '/catalogue'  },
   { label: 'Comparatif',  href: '/comparatif' },
+  // A81 server-side (lit raw_detail des signatures + profile versions) — pas offline pour l'instant.
+  { label: 'A81',         href: '/a81',         offlineDisabled: true },
   { label: 'Annexe',      href: '/annexe'     },
 ];
 
-const PAGES = ['/', '/ep4', '/catalogue', '/comparatif', '/annexe', '/profil', '/login'];
+const PAGES = ['/', '/ep4', '/catalogue', '/comparatif', '/a81', '/annexe', '/profil', '/login'];
 // Pages qui acceptent ?m=YYYY-MM — à précacher en variantes par mois
 const PAGES_MONTH = ['/', '/ep4', '/catalogue', '/comparatif'];
 const DL_KEY = 'cm-last-download';
