@@ -163,12 +163,25 @@ export function A81Client({
       // Toujours lire Dexie : = état mergé (serveur + pending optimistic).
       const overrides = await loadA81OverridesLocal();
       const local = await computeA81ForYearLocal(currentYear, overrides);
-      // Si on n'a pas de rotations cachées localement, local.rows est vide ;
-      // dans ce cas on garde le data serveur (sinon page blanche).
-      if (local.rows.length > 0 || initialData.rows.length === 0) {
-        a81LocalCache.set(currentYear, local);
-        setLocalData(local);
+      // Si Dexie n'a pas les rotations cachées (1ère visite, jamais Sync, etc.)
+      // mais le serveur a renvoyé des rows : merge fallback. On garde les
+      // rotations serveur pour le tableau + total, et on applique le plafond
+      // local au footer fiscal pour que l'édit hors-ligne soit visible.
+      if (local.rows.length === 0 && initialData.rows.length > 0) {
+        local.rows           = initialData.rows;
+        local.deleted_rows   = initialData.deleted_rows;
+        local.nb_total_jours = initialData.nb_total_jours;
+        local.cumul_jours    = initialData.cumul_jours;
+        local.plafond_jours  = initialData.plafond_jours;
+        local.montant_total  = initialData.montant_total;
+        local.regime_used    = initialData.regime_used;
+        // Recompute exo avec le plafond local + montant_total serveur
+        const pe = local.plafond_exo_brut;
+        local.montant_exo     = pe != null && pe > 0 ? Math.min(0.4 * pe, local.montant_total) : 0;
+        local.montant_net_exo = 0.818 * local.montant_exo;
       }
+      a81LocalCache.set(currentYear, local);
+      setLocalData(local);
     } catch {
       // Erreur lecture Dexie → on garde initialData
     }
@@ -428,8 +441,17 @@ export function A81Client({
         <div className="flex items-baseline justify-between gap-4 flex-wrap">
           <span className="text-zinc-600 dark:text-zinc-300">
             <strong>Nombre total de jours de missions hors de France :</strong>
+            <span className="block text-[10px] italic text-zinc-400">
+              plafond {data.plafond_jours} j
+              {data.regime_used ? ` · régime ${data.regime_used}` : ''}
+              {data.cumul_jours > data.plafond_jours && (
+                <span className="ml-1 text-amber-600 dark:text-amber-400">· cumul brut {data.cumul_jours.toFixed(1)} j</span>
+              )}
+            </span>
           </span>
-          <span className="font-mono text-zinc-800 dark:text-zinc-100">{data.nb_total_jours.toFixed(1)} j</span>
+          <span className="font-mono text-zinc-800 dark:text-zinc-100">
+            {data.nb_total_jours.toFixed(1)} / {data.plafond_jours} j
+          </span>
         </div>
         <div className="flex items-baseline justify-between gap-4 flex-wrap">
           <span className="text-zinc-600 dark:text-zinc-300">
@@ -461,7 +483,14 @@ export function A81Client({
         <div className="flex items-baseline justify-between gap-4 flex-wrap">
           <span className="text-zinc-600 dark:text-zinc-300">
             <strong>Montant brut fiscal exonérable au titre de l&apos;article 81A II :</strong>
-            <span className="block text-[10px] italic text-zinc-400">= MIN(0,4 × plafond ; primes séjour)</span>
+            <span className="block text-[10px] italic text-zinc-400">
+              = MIN(0,4 × plafond ; primes séjour)
+              {data.plafond_exo_brut != null && data.plafond_exo_brut > 0 && (
+                <span className="ml-1 font-mono">
+                  · 0,4 × plafond = <span className="text-zinc-500">{fmtEur(0.4 * data.plafond_exo_brut)} €</span>
+                </span>
+              )}
+            </span>
           </span>
           <span className={`font-mono ${data.montant_exo > 0 ? 'text-zinc-800 dark:text-zinc-100' : 'text-zinc-400'}`}>
             {fmtEur(data.montant_exo)} €
