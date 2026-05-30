@@ -28,6 +28,49 @@ const PAGES = ['/', '/ep4', '/catalogue', '/comparatif', '/a81', '/annexe', '/pr
 const PAGES_MONTH = ['/', '/ep4', '/catalogue', '/comparatif'];
 const DL_KEY = 'cm-last-download';
 
+// Mode de sync sélective. Lite (défaut) = m + 3 mois suivants en intégralité +
+// mois antérieurs filtrés sur les vols posés (drafts A/B/C). Perso = l'user
+// coche les mois à télécharger en intégralité, le reste n'est pas téléchargé.
+type SyncMode = 'lite' | 'perso';
+const SYNC_MODE_KEY    = 'cm-sync-mode';
+const SYNC_PERSO_KEY   = 'cm-sync-perso-months';
+const DEFAULT_SYNC_MODE: SyncMode = 'lite';
+
+/** "YYYY-MM" + delta mois → "YYYY-MM" (delta peut être négatif). */
+function shiftMonthStr(m: string, delta: number): string {
+  const [y, mo] = m.split('-').map(Number);
+  const d = new Date(Date.UTC(y, mo - 1 + delta, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+interface SyncPlan {
+  /** Mois à télécharger en intégralité (toutes les rotations du mois). */
+  full: string[];
+  /** Mois à télécharger en mode planning_only (uniquement les vols A/B/C posés). */
+  planningOnly: string[];
+}
+
+function buildSyncPlan(availableMonths: string[], mode: SyncMode, persoMonths: string[]): SyncPlan {
+  const now = new Date();
+  const currentMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+  const available = new Set(availableMonths);
+
+  if (mode === 'perso') {
+    return {
+      full:         persoMonths.filter(m => available.has(m)),
+      planningOnly: [],
+    };
+  }
+
+  // Lite : m..m+3 full ; tous mois < m disponibles → planning_only.
+  const liteFull = [0, 1, 2, 3]
+    .map(d => shiftMonthStr(currentMonth, d))
+    .filter(m => available.has(m));
+  const liteFullSet = new Set(liteFull);
+  const liteOnly = availableMonths.filter(m => m < currentMonth && !liteFullSet.has(m));
+  return { full: liteFull, planningOnly: liteOnly };
+}
+
 async function waitForSWController(): Promise<boolean> {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return false;
   if (navigator.serviceWorker.controller) return true;
@@ -122,6 +165,34 @@ export function NavBar() {
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Sync mode (Lite / Perso) + sélection Perso (mois cochés)
+  const [syncMenuOpen, setSyncMenuOpen] = useState(false);
+  const [syncMode, setSyncMode]   = useState<SyncMode>(DEFAULT_SYNC_MODE);
+  const [persoMonths, setPersoMonths] = useState<string[]>([]);
+  const [availableMonths, setAvailableMonths] = useState<string[]>([]);
+  useEffect(() => {
+    const m = (localStorage.getItem(SYNC_MODE_KEY) as SyncMode | null) ?? DEFAULT_SYNC_MODE;
+    setSyncMode(m);
+    const raw = localStorage.getItem(SYNC_PERSO_KEY);
+    try { setPersoMonths(JSON.parse(raw ?? '[]') as string[]); } catch { setPersoMonths([]); }
+  }, []);
+  async function ensureAvailableMonths() {
+    if (availableMonths.length > 0 || !navigator.onLine) return;
+    const months = await withTimeout(getAvailableMonths(), 5000, [] as string[]);
+    setAvailableMonths(months);
+  }
+  function persistMode(m: SyncMode) {
+    setSyncMode(m);
+    localStorage.setItem(SYNC_MODE_KEY, m);
+  }
+  function togglePersoMonth(m: string) {
+    setPersoMonths(prev => {
+      const next = prev.includes(m) ? prev.filter(x => x !== m) : [...prev, m].sort().reverse();
+      localStorage.setItem(SYNC_PERSO_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
+
   useEffect(() => {
     void (async () => {
       const ready = await waitForSWController();
@@ -195,31 +266,49 @@ export function NavBar() {
       const ready = await waitForSWController();
       if (ready) {
         const months = await withTimeout(getAvailableMonths(), 8000, [] as string[]);
+        const mode: SyncMode = (localStorage.getItem(SYNC_MODE_KEY) as SyncMode | null) ?? DEFAULT_SYNC_MODE;
+        const persoRaw = localStorage.getItem(SYNC_PERSO_KEY);
+        const persoMonths: string[] = (() => {
+          try { return JSON.parse(persoRaw ?? '[]') as string[]; } catch { return []; }
+        })();
+        const plan = buildSyncPlan(months, mode, persoMonths);
+        // Pour chaque mois on a besoin du planning utilisateur (drafts A/B/C)
+        // — pour les mois full ET planning_only (un mois passé planning_only
+        // n'aurait aucun sens sans les items posés).
+        const planningMonths = Array.from(new Set([...plan.full, ...plan.planningOnly]));
         let failed = 0;
-        for (let i = 0; i < months.length; i++) {
-          const m = months[i];
-          // Sub-progress par phase pour qu'on sache où ça bloque.
-          setDlProgress(`${i + 1}/${months.length} rot`);
-          const rots = await withTimeout(getRotationsForMonth(m), 12000, [] as Awaited<ReturnType<typeof getRotationsForMonth>>);
-          setDlProgress(`${i + 1}/${months.length} scn`);
-          const scs  = await withTimeout(getScenariosWithItems(m), 8000, [] as Awaited<ReturnType<typeof getScenariosWithItems>>);
+        const queue: Array<{ m: string; loadMode: 'full' | 'planning_only' }> = [
+          ...plan.full.map(m => ({ m, loadMode: 'full' as const })),
+          ...plan.planningOnly.map(m => ({ m, loadMode: 'planning_only' as const })),
+        ];
+        for (let i = 0; i < queue.length; i++) {
+          const { m, loadMode } = queue[i];
+          const label = loadMode === 'planning_only' ? 'lite' : 'rot';
+          setDlProgress(`${i + 1}/${queue.length} ${label}`);
+          const rots = await withTimeout(
+            getRotationsForMonth(m, loadMode),
+            12000,
+            [] as Awaited<ReturnType<typeof getRotationsForMonth>>,
+          );
+          setDlProgress(`${i + 1}/${queue.length} scn`);
+          const scs = planningMonths.includes(m)
+            ? await withTimeout(getScenariosWithItems(m), 8000, [] as Awaited<ReturnType<typeof getScenariosWithItems>>)
+            : [];
           if (rots.length === 0 && scs.length === 0) { failed++; continue; }
-          setDlProgress(`${i + 1}/${months.length} db`);
-          // Dexie transactions peuvent bloquer (autre onglet, IDB locked, etc.) :
-          // timeout 8s pour ne pas figer tout le sync. Si timeout : on continue,
-          // le mois sera re-tenté au prochain Sync.
+          setDlProgress(`${i + 1}/${queue.length} db`);
           await withTimeout(
             Promise.all([cacheRotations(rots, m), hydrateDB(scs, m)]),
             8000,
             undefined,
           );
         }
-        setDlProgress(months.length > 0 ? `pages` : '');
+        setDlProgress(queue.length > 0 ? `pages` : '');
         const urlVariants: string[] = [];
+        const cachedMonths = queue.map(q => q.m);
         for (const url of PAGES) {
           urlVariants.push(url);
           if (PAGES_MONTH.includes(url)) {
-            for (const m of months) urlVariants.push(`${url}?m=${m}`);
+            for (const m of cachedMonths) urlVariants.push(`${url}?m=${m}`);
           }
         }
         // Timeout par page (10s) — empêche un fetch qui hang de bloquer Sync.
@@ -381,6 +470,58 @@ export function NavBar() {
               </span>
             )}
           </button>
+          {/* Sélecteur Lite / Perso */}
+          <div className="relative">
+            <button
+              onClick={() => { setSyncMenuOpen(o => !o); void ensureAvailableMonths(); }}
+              title={syncMode === 'lite' ? 'Sync Lite : mois courant +3 + planning posé sur mois passés' : 'Sync Perso : mois sélectionnés'}
+              className="px-2 h-8 flex items-center text-[10px] uppercase tracking-wide font-semibold text-zinc-500 hover:text-zinc-200 rounded hover:bg-zinc-800 transition-colors"
+            >
+              {syncMode === 'lite' ? 'Lite' : `Perso${persoMonths.length ? ` (${persoMonths.length})` : ''}`}
+            </button>
+            {syncMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setSyncMenuOpen(false)} />
+                <div className="absolute right-0 top-full mt-1 z-50 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-lg p-3 min-w-64">
+                  <p className="text-[11px] font-semibold text-zinc-700 dark:text-zinc-200 mb-2">Mode de synchronisation</p>
+                  <label className="flex items-start gap-2 text-xs text-zinc-700 dark:text-zinc-200 mb-2 cursor-pointer">
+                    <input type="radio" name="syncmode" checked={syncMode === 'lite'} onChange={() => persistMode('lite')} className="mt-0.5" />
+                    <span>
+                      <span className="font-semibold">Lite</span>
+                      <span className="block text-[10px] text-zinc-400">mois courant + 3 suivants en entier · mois passés filtrés sur vos vols posés (A/B/C)</span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2 text-xs text-zinc-700 dark:text-zinc-200 cursor-pointer">
+                    <input type="radio" name="syncmode" checked={syncMode === 'perso'} onChange={() => persistMode('perso')} className="mt-0.5" />
+                    <span>
+                      <span className="font-semibold">Perso</span>
+                      <span className="block text-[10px] text-zinc-400">téléchargez uniquement les mois cochés (intégralité)</span>
+                    </span>
+                  </label>
+                  {syncMode === 'perso' && (
+                    <div className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-700">
+                      <p className="text-[10px] text-zinc-500 mb-1.5">Mois à télécharger :</p>
+                      <div className="max-h-56 overflow-y-auto space-y-0.5">
+                        {availableMonths.length === 0 && (
+                          <p className="text-[10px] italic text-zinc-400">Chargement…</p>
+                        )}
+                        {availableMonths.map(m => (
+                          <label key={m} className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-200 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-700 px-1.5 py-1 rounded">
+                            <input
+                              type="checkbox"
+                              checked={persoMonths.includes(m)}
+                              onChange={() => togglePersoMonth(m)}
+                            />
+                            <span className="font-mono">{m}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
           <div className="relative">
             <button
               onClick={() => setBackupMenuOpen(o => !o)}

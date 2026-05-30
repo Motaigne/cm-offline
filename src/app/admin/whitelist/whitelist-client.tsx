@@ -32,6 +32,10 @@ export function WhitelistClient({ emails, logs, profiles }: { emails: AllowedEma
 
   const [backfillStatus, setBackfillStatus] = useState<string>('');
 
+  // Import CSV historique (Jan→Mai 2026)
+  const [csvBusy,   setCsvBusy]   = useState(false);
+  const [csvStatus, setCsvStatus] = useState<string[]>([]);
+
   // Backfill RPC (rest_before_h / rest_after_h)
   const [showRpcForm, setShowRpcForm]   = useState(false);
   const [rpcMonth,  setRpcMonth]        = useState('');
@@ -72,6 +76,50 @@ export function WhitelistClient({ emails, logs, profiles }: { emails: AllowedEma
     } finally {
       setRpcBusy(false);
     }
+  }
+
+  async function handleImportCsv(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setCsvBusy(true);
+    setCsvStatus([]);
+    const logs: string[] = [];
+    // Nom attendu : 8_cleanEp4_MMYYYY.csv (ex: 8_cleanEp4_012026.csv)
+    for (const file of Array.from(files)) {
+      const m = file.name.match(/(\d{2})(\d{4})\.csv$/i);
+      if (!m) {
+        logs.push(`! ${file.name} : nom non reconnu (attendu *MMYYYY.csv)`);
+        setCsvStatus([...logs]);
+        continue;
+      }
+      const month = `${m[2]}-${m[1]}`;
+      logs.push(`… ${file.name} → ${month}`);
+      setCsvStatus([...logs]);
+      try {
+        const csvText = await file.text();
+        const res = await fetch('/api/admin/import-csv-month', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ month, csvText }),
+        });
+        if (!res.ok) {
+          logs[logs.length - 1] = `! ${file.name} → ${month} : ${await res.text()}`;
+        } else {
+          const j = await res.json() as {
+            inserted: number; skipped: number; errors: number; in_target_month: number;
+            errorSamples: string[];
+          };
+          logs[logs.length - 1] =
+            `✓ ${month} : +${j.inserted} insérés · ${j.skipped} déjà en DB · ${j.errors} erreurs · ${j.in_target_month} dans le mois`;
+          if (j.errorSamples?.length) {
+            for (const s of j.errorSamples) logs.push(`   · ${s}`);
+          }
+        }
+      } catch (e) {
+        logs[logs.length - 1] = `! ${file.name} : ${String(e)}`;
+      }
+      setCsvStatus([...logs]);
+    }
+    setCsvBusy(false);
   }
 
   function handleBackfillTsvNuit() {
@@ -146,7 +194,32 @@ export function WhitelistClient({ emails, logs, profiles }: { emails: AllowedEma
           >
             Backfill RPC (repos avant/après)
           </button>
+
+          {/* Import CSV historique (Jan→Mai 2026) */}
+          <label className={`px-3 py-1.5 rounded-lg text-white text-xs font-semibold transition-colors cursor-pointer ${csvBusy ? 'bg-zinc-400 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500'}`}>
+            {csvBusy ? '…' : 'Import CSV historique (8_cleanEp4_*.csv)'}
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              multiple
+              disabled={csvBusy}
+              className="hidden"
+              onChange={e => { void handleImportCsv(e.target.files); e.target.value = ''; }}
+            />
+          </label>
         </div>
+
+        {csvStatus.length > 0 && (
+          <div className="mt-2 p-2 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 font-mono text-[11px] space-y-0.5">
+            {csvStatus.map((s, i) => (
+              <div key={i} className={
+                s.startsWith('✓') ? 'text-emerald-600 dark:text-emerald-400'
+                  : s.startsWith('!') ? 'text-red-500'
+                  : 'text-zinc-500 dark:text-zinc-400'
+              }>{s}</div>
+            ))}
+          </div>
+        )}
 
         {showRpcForm && (
           <div className="mt-3 p-3 rounded-lg border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/30 space-y-2">

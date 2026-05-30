@@ -88,7 +88,12 @@ export async function getAvailableMonths(): Promise<string[]> {
   return [...new Set(data.map(d => (d.target_month as string).slice(0, 7)))];
 }
 
-export async function getRotationsForMonth(month: string): Promise<RotationSignature[]> {
+export type RotationLoadMode = 'full' | 'planning_only';
+
+export async function getRotationsForMonth(
+  month: string,
+  mode: RotationLoadMode = 'full',
+): Promise<RotationSignature[]> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
@@ -104,10 +109,47 @@ export async function getRotationsForMonth(month: string): Promise<RotationSigna
 
   if (!snap) return [];
 
-  const { data: sigs } = await supabase
+  // Mode planning_only : ne télécharge que les signatures référencées par
+  // au moins un planning_item kind=flight du user pour ce mois (drafts
+  // A/B/C). Utilisé pour les mois antérieurs au mois courant en sync Lite.
+  let sigIdsWhitelist: Set<string> | null = null;
+  if (mode === 'planning_only') {
+    const { data: drafts } = await supabase
+      .from('planning_draft')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('target_month', `${month}-01`);
+    const draftIds = (drafts ?? []).map(d => d.id);
+    if (draftIds.length === 0) return [];
+    const { data: items } = await supabase
+      .from('planning_item')
+      .select('pairing_instance_id')
+      .in('draft_id', draftIds)
+      .eq('kind', 'flight')
+      .not('pairing_instance_id', 'is', null);
+    const plannedInstanceIds = Array.from(new Set(
+      (items ?? []).map(i => i.pairing_instance_id).filter(Boolean) as string[],
+    ));
+    if (plannedInstanceIds.length === 0) return [];
+    // Récupère les signature_id correspondants
+    const plannedInstances = await fetchAllPaginated<{ signature_id: string }>((from, to) =>
+      supabase.from('pairing_instance')
+        .select('signature_id')
+        .in('id', plannedInstanceIds)
+        .range(from, to),
+    );
+    sigIdsWhitelist = new Set(plannedInstances.map(i => i.signature_id));
+    if (sigIdsWhitelist.size === 0) return [];
+  }
+
+  let sigsQuery = supabase
     .from('pairing_signature')
     .select('id, rotation_code, nb_on_days, aircraft_code, zone, hc, hcr_crew, hdv, a81, heure_debut, heure_fin, temps_sej, legs_number, prime, rest_before_h, rest_after_h, tsv_nuit, dead_head, mep_flight, peq, first_layover, layovers, debut_sejour_at, fin_sejour_at, escale_debut, escale_fin, raw_detail')
     .eq('snapshot_id', snap.id);
+  if (sigIdsWhitelist) {
+    sigsQuery = sigsQuery.in('id', Array.from(sigIdsWhitelist));
+  }
+  const { data: sigs } = await sigsQuery;
 
   if (!sigs?.length) return [];
 
