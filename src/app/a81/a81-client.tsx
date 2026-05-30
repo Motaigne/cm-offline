@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
+import { useState, useTransition, useEffect } from 'react';
 import type { A81YearData, A81Row } from '@/app/actions/a81';
 import { upsertA81Override, deleteA81Row, restoreA81Row } from '@/app/actions/a81';
 
@@ -121,6 +121,12 @@ export function A81Client({
   const router = useRouter();
   const [isPending, start] = useTransition();
   const [err, setErr] = useState('');
+  // Cartouches restaurées localement — pour cacher instantanément sans attendre
+  // que revalidatePath/router.refresh propage côté serveur.
+  const [restoredIds, setRestoredIds] = useState<Set<string>>(new Set());
+  // Reset quand on change d'année (= props sont d'un autre dataset).
+  useEffect(() => { setRestoredIds(new Set()); }, [data.year]);
+  const visibleDeletedRows = data.deleted_rows.filter(r => !restoredIds.has(r.instance_id));
 
   const yearsToShow = availableYears.includes(currentYear)
     ? availableYears
@@ -158,9 +164,16 @@ export function A81Client({
   }
   function handleRestore(instanceId: string) {
     setErr('');
+    // Optimistic : cache la cartouche dès le clic.
+    setRestoredIds(prev => { const n = new Set(prev); n.add(instanceId); return n; });
     start(async () => {
       const res = await restoreA81Row(instanceId);
-      if ('error' in res) { setErr(res.error); return; }
+      if ('error' in res) {
+        // Rollback : ré-affiche la cartouche.
+        setRestoredIds(prev => { const n = new Set(prev); n.delete(instanceId); return n; });
+        setErr(res.error);
+        return;
+      }
       router.refresh();
     });
   }
@@ -303,13 +316,13 @@ export function A81Client({
       </div>
 
       {/* Lignes supprimées — restauration */}
-      {data.deleted_rows.length > 0 && (
+      {visibleDeletedRows.length > 0 && (
         <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-3 space-y-2">
           <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
-            Lignes supprimées · {data.deleted_rows.length}
+            Lignes supprimées · {visibleDeletedRows.length}
           </p>
           <div className="flex flex-wrap gap-2">
-            {data.deleted_rows.map(d => {
+            {visibleDeletedRows.map(d => {
               const label = `${fmtDate(d.debut_rotation)} ${d.escale_debut}${d.escale_fin !== d.escale_debut ? '/' + d.escale_fin : ''}`;
               return (
                 <button
