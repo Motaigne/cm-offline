@@ -8,6 +8,12 @@ import { computeA81ForYearLocal } from '@/lib/a81-local';
 import { loadA81OverridesLocal, cacheA81Overrides } from '@/lib/local-db';
 import { enqueueA81UpsertOverride, enqueueA81Delete, enqueueA81Restore, syncNow } from '@/lib/sync-service';
 
+// Cache module-level pour survivre aux remounts (notamment quand Next.js
+// re-fetch la page en passant online → A81Client se ré-instancie avec
+// localData=null → flicker vers initialData stale). En gardant le dernier
+// local compute ici, la 1ère render après remount affiche déjà la bonne valeur.
+const a81LocalCache = new Map<number, A81YearData>();
+
 const MONTHS_FR_SHORT = ['Janv.', 'Févr.', 'Mars', 'Avril', 'Mai', 'Juin', 'Juil.', 'Août', 'Sept.', 'Oct.', 'Nov.', 'Déc.'];
 
 function fmtDate(iso: string): string {
@@ -138,7 +144,10 @@ export function A81Client({
 
   // Compute local depuis Dexie au mount + après mutations. Fallback aux data
   // serveur si Dexie vide (1ère visite, jamais Sync) ou cache incomplet.
-  const [localData, setLocalData] = useState<A81YearData | null>(null);
+  // Init synchrone depuis le cache module-level pour éviter le flicker au remount.
+  const [localData, setLocalData] = useState<A81YearData | null>(
+    () => a81LocalCache.get(currentYear) ?? null,
+  );
   const data = localData ?? initialData;
 
   async function recomputeLocal() {
@@ -157,6 +166,7 @@ export function A81Client({
       // Si on n'a pas de rotations cachées localement, local.rows est vide ;
       // dans ce cas on garde le data serveur (sinon page blanche).
       if (local.rows.length > 0 || initialData.rows.length === 0) {
+        a81LocalCache.set(currentYear, local);
         setLocalData(local);
       }
     } catch {
