@@ -6,7 +6,7 @@ import type { A81YearData, A81Row } from '@/app/actions/a81';
 import { loadAllA81Overrides } from '@/app/actions/a81';
 import { computeA81ForYearLocal } from '@/lib/a81-local';
 import { loadA81OverridesLocal, cacheA81Overrides } from '@/lib/local-db';
-import { enqueueA81UpsertOverride, enqueueA81Delete, enqueueA81Restore, syncNow } from '@/lib/sync-service';
+import { enqueueA81UpsertOverride, enqueueA81Delete, enqueueA81Restore, enqueueA81SavePlafondExo, syncNow } from '@/lib/sync-service';
 
 // Cache module-level pour survivre aux remounts (notamment quand Next.js
 // re-fetch la page en passant online → A81Client se ré-instancie avec
@@ -242,9 +242,27 @@ export function A81Client({
     });
   }
 
-  const plafondExoBrut = 0;
-  const montantExo = plafondExoBrut > 0 ? Math.min(0.4 * plafondExoBrut, data.montant_total) : 0;
-  const montantNetExo = 0.818 * montantExo;
+  // Plafond exo brut : utilise data computed (server ou local) ; édition inline.
+  const [plafondInput, setPlafondInput] = useState<string>(
+    data.plafond_exo_brut != null ? String(data.plafond_exo_brut) : '',
+  );
+  useEffect(() => {
+    setPlafondInput(data.plafond_exo_brut != null ? String(data.plafond_exo_brut) : '');
+  }, [data.plafond_exo_brut]);
+
+  function handlePlafondCommit() {
+    const trimmed = plafondInput.trim();
+    const parsed = trimmed === '' ? null : parseFloat(trimmed.replace(',', '.'));
+    const newValue = parsed != null && !isNaN(parsed) ? parsed : null;
+    if (newValue === (data.plafond_exo_brut ?? null)) return; // no-op
+    setErr('');
+    start(async () => {
+      await enqueueA81SavePlafondExo(currentYear, newValue);
+      await recomputeLocal();
+      await tryPushNow();
+      router.refresh();
+    });
+  }
 
   return (
     <div className="max-w-7xl mx-auto p-4 space-y-4">
@@ -420,24 +438,43 @@ export function A81Client({
           <span className="font-mono text-zinc-800 dark:text-zinc-100">{fmtEur(data.montant_total)} €</span>
         </div>
         <div className="flex items-baseline justify-between gap-4 flex-wrap border-t border-zinc-100 dark:border-zinc-800 pt-2 mt-2">
-          <span className="text-zinc-400">
+          <span className="text-zinc-600 dark:text-zinc-300">
             <strong>Montant brut fiscal pris en compte pour le calcul du plafond d&apos;exonération :</strong>
-            <span className="block text-[10px] italic">à saisir (étape suivante)</span>
+            <span className="block text-[10px] italic text-zinc-400">à saisir depuis la fiche de paie annuelle</span>
           </span>
-          <span className="font-mono text-zinc-400">— €</span>
+          <div className="flex items-center gap-1">
+            <input
+              type="number"
+              step="0.01"
+              min={0}
+              value={plafondInput}
+              onChange={e => setPlafondInput(e.target.value)}
+              onBlur={handlePlafondCommit}
+              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+              placeholder="0"
+              className="w-32 px-2 py-1 text-right font-mono text-sm rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100"
+              disabled={isPending}
+            />
+            <span className="font-mono text-zinc-600 dark:text-zinc-300">€</span>
+          </div>
         </div>
         <div className="flex items-baseline justify-between gap-4 flex-wrap">
-          <span className="text-zinc-400">
+          <span className="text-zinc-600 dark:text-zinc-300">
             <strong>Montant brut fiscal exonérable au titre de l&apos;article 81A II :</strong>
+            <span className="block text-[10px] italic text-zinc-400">= MIN(0,4 × plafond ; primes séjour)</span>
           </span>
-          <span className="font-mono text-zinc-400">{fmtEur(montantExo)} €</span>
+          <span className={`font-mono ${data.montant_exo > 0 ? 'text-zinc-800 dark:text-zinc-100' : 'text-zinc-400'}`}>
+            {fmtEur(data.montant_exo)} €
+          </span>
         </div>
         <div className="flex items-baseline justify-between gap-4 flex-wrap">
-          <span className="text-zinc-400">
+          <span className="text-zinc-600 dark:text-zinc-300">
             <strong>Montant net fiscal exonérable au titre de l&apos;article 81A II :</strong>
-            <span className="block text-[10px] italic">= 0,818 × Montant exo brut</span>
+            <span className="block text-[10px] italic text-zinc-400">= 0,818 × Montant exo brut</span>
           </span>
-          <span className="font-mono text-zinc-400">{fmtEur(montantNetExo)} €</span>
+          <span className={`font-mono ${data.montant_net_exo > 0 ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : 'text-zinc-400'}`}>
+            {fmtEur(data.montant_net_exo)} €
+          </span>
         </div>
       </div>
     </div>

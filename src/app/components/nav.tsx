@@ -7,8 +7,8 @@ import { getScenariosWithItems } from '@/app/actions/planning';
 import { getCurrentUserIsAdmin } from '@/app/actions/auth';
 import { loadAllProfileVersions } from '@/app/actions/profile-version';
 import { loadAllAnnexeRows } from '@/app/actions/annexe';
-import { loadAllA81Overrides } from '@/app/actions/a81';
-import { cacheRotations, hydrateDB, cacheProfileVersions, cacheAnnexeRows, cacheA81Overrides } from '@/lib/local-db';
+import { loadAllA81Overrides, loadAllA81YearData } from '@/app/actions/a81';
+import { cacheRotations, hydrateDB, cacheProfileVersions, cacheAnnexeRows, cacheA81Overrides, cacheA81YearData } from '@/lib/local-db';
 import { syncNow, pendingOpsCount, PENDING_CHANGED_EVENT } from '@/lib/sync-service';
 import { downloadBackup, parseBackup, importBackup } from '@/lib/backup';
 
@@ -136,11 +136,13 @@ export function NavBar() {
     })();
     void getCurrentUserIsAdmin().then(setIsAdmin).catch(() => setIsAdmin(false));
     void pendingOpsCount().then(setPendingCount);
-    // Pré-cache silencieux profil + annexe + overrides A81 (offline pour A81 + finBase calendrier).
+    // Pré-cache silencieux profil + annexe + overrides A81 + year data A81
+    // (offline pour A81 + finBase calendrier).
     if (typeof navigator !== 'undefined' && navigator.onLine) {
       void loadAllProfileVersions().then(v => cacheProfileVersions(v)).catch(() => {});
       void loadAllAnnexeRows().then(r => cacheAnnexeRows(r)).catch(() => {});
       void loadAllA81Overrides().then(o => cacheA81Overrides(o)).catch(() => {});
+      void loadAllA81YearData().then(y => cacheA81YearData(y)).catch(() => {});
     }
   }, []);
 
@@ -188,6 +190,8 @@ export function NavBar() {
         .then(r => cacheAnnexeRows(r)).catch(() => {});
       void withTimeout(loadAllA81Overrides(), 5000, [])
         .then(o => cacheA81Overrides(o)).catch(() => {});
+      void withTimeout(loadAllA81YearData(), 5000, [])
+        .then(y => cacheA81YearData(y)).catch(() => {});
       const ready = await waitForSWController();
       if (ready) {
         const months = await withTimeout(getAvailableMonths(), 8000, [] as string[]);

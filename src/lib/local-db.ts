@@ -20,9 +20,16 @@ export interface SyncOp {
   id?: number;
   op: 'add' | 'delete' | 'update' | 'update_bid' | 'update_meta'
     | 'add_note' | 'update_note' | 'delete_note'
-    | 'a81_upsert_override' | 'a81_delete' | 'a81_restore';
+    | 'a81_upsert_override' | 'a81_delete' | 'a81_restore'
+    | 'a81_save_plafond_exo';
   payload: string; // JSON
   created_at: number;
+}
+
+/** Année A81 — données saisies (plafond exo brut). */
+export interface A81YearDataLocal {
+  year: number;
+  plafond_exo_brut: number | null;
 }
 
 type StoredRotation = RotationSignature & { target_month: string };
@@ -65,6 +72,7 @@ class CmDatabase extends Dexie {
   profile_versions!: Table<ProfileVersion,     string>; // PK = valid_from (user_id implicite)
   annexe_rows!:      Table<StoredAnnexeRow,    string>; // PK = `${slug}|${valid_from}`
   a81_overrides!:    Table<A81OverrideLocal,   string>; // PK = pairing_instance_id
+  a81_year_data!:    Table<A81YearDataLocal,   number>; // PK = year
 
   constructor() {
     super('optip');
@@ -93,6 +101,10 @@ class CmDatabase extends Dexie {
     // v6 : overrides A81 (édits utilisateur sur le tableau A81)
     this.version(6).stores({
       a81_overrides: 'pairing_instance_id',
+    });
+    // v7 : données année A81 (plafond exo brut saisi par user)
+    this.version(7).stores({
+      a81_year_data: 'year',
     });
   }
 }
@@ -360,6 +372,35 @@ export async function cacheA81Overrides(overrides: A81OverrideLocal[]): Promise<
 
 export async function loadA81OverridesLocal(): Promise<A81OverrideLocal[]> {
   return db.a81_overrides.toArray();
+}
+
+// ─── Cache année A81 (plafond exo brut) ───────────────────────────────────────
+
+/** Préserve les années avec ops pending (même esprit que cacheA81Overrides). */
+export async function cacheA81YearData(rows: A81YearDataLocal[]): Promise<void> {
+  await db.transaction('rw', db.a81_year_data, db.sync_queue, async () => {
+    const pending = await db.sync_queue.toArray();
+    const pendingYears = new Set<number>();
+    for (const op of pending) {
+      if (op.op === 'a81_save_plafond_exo') {
+        try {
+          const p = JSON.parse(op.payload) as { year?: number };
+          if (p.year != null) pendingYears.add(p.year);
+        } catch { /* skip */ }
+      }
+    }
+    const existing = await db.a81_year_data.toArray();
+    const keptLocal = existing.filter(r => pendingYears.has(r.year));
+    const fromServer = rows.filter(r => !pendingYears.has(r.year));
+    await db.a81_year_data.clear();
+    if (keptLocal.length || fromServer.length) {
+      await db.a81_year_data.bulkPut([...keptLocal, ...fromServer]);
+    }
+  });
+}
+
+export async function loadA81YearDataLocal(year: number): Promise<A81YearDataLocal | null> {
+  return (await db.a81_year_data.get(year)) ?? null;
 }
 
 /** Notes locales overlappant le mois donné. */

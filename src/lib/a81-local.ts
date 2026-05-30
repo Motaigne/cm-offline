@@ -16,6 +16,7 @@ import {
   db,
   loadProfileVersionsLocal,
   loadAnnexeRowsLocal,
+  loadA81YearDataLocal,
 } from '@/lib/local-db';
 import {
   computeTSej24,
@@ -79,11 +80,16 @@ export async function computeA81ForYearLocal(
   const plafondJours = regime ? getPlafondJours(regime) : 70;
   const article81Data = pickAnnexeRowForMonth(annexeRows, 'article_81', `${year}-01`) as Article81Data | null;
 
+  // Données année (plafond exo brut saisi par user)
+  const yearLocal = await loadA81YearDataLocal(year);
+  const plafondExoBrut = yearLocal?.plafond_exo_brut ?? null;
+
   const empty: A81YearData = {
     year, rows: [], deleted_rows: [],
     nb_total_jours: 0, cumul_jours: 0,
     plafond_jours: plafondJours, montant_total: 0,
     regime_used: regime,
+    plafond_exo_brut: plafondExoBrut, montant_exo: 0, montant_net_exo: 0,
   };
   if (aDrafts.length === 0) return empty;
 
@@ -227,6 +233,10 @@ export async function computeA81ForYearLocal(
     .filter(r => { if (seenDel.has(r.instance_id)) return false; seenDel.add(r.instance_id); return true; })
     .sort((a, b) => a.debut_rotation.localeCompare(b.debut_rotation));
 
+  const montantExo = plafondExoBrut != null && plafondExoBrut > 0
+    ? Math.min(0.4 * plafondExoBrut, montantTotal) : 0;
+  const montantNetExo = 0.818 * montantExo;
+
   return {
     year,
     rows: unique,
@@ -236,5 +246,8 @@ export async function computeA81ForYearLocal(
     plafond_jours: plafondJours,
     montant_total: montantTotal,
     regime_used: regime,
+    plafond_exo_brut: plafondExoBrut,
+    montant_exo: montantExo,
+    montant_net_exo: montantNetExo,
   };
 }

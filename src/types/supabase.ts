@@ -49,6 +49,21 @@ export type Database = {
         Update: Partial<Database['public']['Tables']['user_profile']['Row']>;
         Relationships: [];
       };
+      user_a81_year_data: {
+        Row: {
+          user_id: string;
+          year: number;
+          plafond_exo_brut: number | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['user_a81_year_data']['Row']> & {
+          user_id: string;
+          year: number;
+        };
+        Update: Partial<Database['public']['Tables']['user_a81_year_data']['Row']>;
+        Relationships: [];
+      };
       user_a81_override: {
         Row: {
           user_id: string;

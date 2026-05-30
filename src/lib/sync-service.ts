@@ -16,6 +16,7 @@ import {
   upsertA81Override,
   deleteA81Row,
   restoreA81Row,
+  saveA81PlafondExo,
 } from '@/app/actions/a81';
 import type { CalendarItem } from '@/app/page';
 import type { ActivityKind, BidCategory } from '@/lib/activity-meta';
@@ -47,6 +48,7 @@ type DeleteNotePayload = { id: string };
 type A81UpsertPayload  = { pairing_instance_id: string; debut_sejour_at?: string | null; fin_sejour_at?: string | null };
 type A81DeletePayload  = { pairing_instance_id: string };
 type A81RestorePayload = { pairing_instance_id: string };
+type A81SavePlafondExoPayload = { year: number; plafond_exo_brut: number | null };
 
 // ─── Event : compteur de queue changé ─────────────────────────────────────────
 // Dispatché à chaque enqueue ET à chaque sync (pour MAJ instantanée du badge NavBar).
@@ -192,6 +194,15 @@ export async function enqueueA81Restore(instanceId: string): Promise<void> {
   notifyPendingChanged();
 }
 
+export async function enqueueA81SavePlafondExo(year: number, value: number | null): Promise<void> {
+  const payload: A81SavePlafondExoPayload = { year, plafond_exo_brut: value };
+  await db.transaction('rw', db.a81_year_data, db.sync_queue, async () => {
+    await db.a81_year_data.put({ year, plafond_exo_brut: value });
+    await db.sync_queue.add({ op: 'a81_save_plafond_exo', payload: JSON.stringify(payload), created_at: Date.now() });
+  });
+  notifyPendingChanged();
+}
+
 // ─── Sync ─────────────────────────────────────────────────────────────────────
 
 /** Rejoue toute la queue vers Supabase. Appelé quand online revient.
@@ -242,6 +253,10 @@ export async function syncNow(): Promise<void> {
       } else if (op.op === 'a81_restore') {
         const p = JSON.parse(op.payload) as A81RestorePayload;
         const r = await restoreA81Row(p.pairing_instance_id);
+        res = 'error' in r ? r : {};
+      } else if (op.op === 'a81_save_plafond_exo') {
+        const p = JSON.parse(op.payload) as A81SavePlafondExoPayload;
+        const r = await saveA81PlafondExo(p.year, p.plafond_exo_brut);
         res = 'error' in r ? r : {};
       }
       if (res?.error) {

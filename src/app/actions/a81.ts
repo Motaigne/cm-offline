@@ -73,6 +73,12 @@ export interface A81YearData {
   montant_total: number;
   /** Régime utilisé pour déterminer le plafond (= profil au 1er janv ou 1ère version applicable). */
   regime_used: string | null;
+  /** Saisi par l'utilisateur (somme des salaires bruts colonne A des plannings de l'année). */
+  plafond_exo_brut: number | null;
+  /** = MIN(0.4 × plafond_exo_brut, montant_total). 0 si plafond_exo_brut non saisi. */
+  montant_exo: number;
+  /** = 0.818 × montant_exo. */
+  montant_net_exo: number;
 }
 
 /** Charge le tableau A81 d'une année pour l'utilisateur authentifié.
@@ -151,9 +157,20 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
   const regime = profileJan?.regime ?? null;
   const plafondJours = regime ? getPlafondJours(regime) : 70;
 
+  // Plafond exo brut (saisi par user) pour l'année courante.
+  const { data: yearData } = await supabase
+    .from('user_a81_year_data')
+    .select('plafond_exo_brut')
+    .eq('user_id', user.id)
+    .eq('year', year)
+    .maybeSingle();
+  const plafondExoBrut: number | null = yearData?.plafond_exo_brut != null
+    ? Number(yearData.plafond_exo_brut) : null;
+
   const empty: A81YearData = {
     year, rows: [], deleted_rows: [], nb_total_jours: 0, cumul_jours: 0,
     plafond_jours: plafondJours, montant_total: 0, regime_used: regime,
+    plafond_exo_brut: plafondExoBrut, montant_exo: 0, montant_net_exo: 0,
   };
   if (!drafts?.length) return empty;
 
@@ -296,6 +313,10 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
     .filter(r => { if (seenDel.has(r.instance_id)) return false; seenDel.add(r.instance_id); return true; })
     .sort((a, b) => a.debut_rotation.localeCompare(b.debut_rotation));
 
+  const montantExo = plafondExoBrut != null && plafondExoBrut > 0
+    ? Math.min(0.4 * plafondExoBrut, montantTotal) : 0;
+  const montantNetExo = 0.818 * montantExo;
+
   return {
     year,
     rows: unique,
@@ -305,6 +326,9 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
     plafond_jours: plafondJours,
     montant_total: montantTotal,
     regime_used: regime,
+    plafond_exo_brut: plafondExoBrut,
+    montant_exo: montantExo,
+    montant_net_exo: montantNetExo,
   };
 }
 
@@ -380,6 +404,44 @@ export async function restoreA81Row(instanceId: string): Promise<{ ok: true } | 
     .update({ deleted: false })
     .eq('user_id', user.id)
     .eq('pairing_instance_id', instanceId);
+  if (error) return { error: error.message };
+  revalidatePath('/a81');
+  return { ok: true };
+}
+
+/** Charge toutes les rows user_a81_year_data (pour cache offline). */
+export async function loadAllA81YearData(): Promise<Array<{
+  year: number;
+  plafond_exo_brut: number | null;
+}>> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return [];
+  const { data } = await supabase
+    .from('user_a81_year_data')
+    .select('year, plafond_exo_brut')
+    .eq('user_id', user.id);
+  return (data ?? []).map(d => ({
+    year: d.year,
+    plafond_exo_brut: d.plafond_exo_brut != null ? Number(d.plafond_exo_brut) : null,
+  }));
+}
+
+/** Upsert le plafond exo brut pour une année. Pass null pour vider. */
+export async function saveA81PlafondExo(
+  year: number,
+  plafondExoBrut: number | null,
+): Promise<{ ok: true } | { error: string }> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Non authentifié' };
+  const { error } = await supabase
+    .from('user_a81_year_data')
+    .upsert({
+      user_id: user.id,
+      year,
+      plafond_exo_brut: plafondExoBrut,
+    }, { onConflict: 'user_id,year' });
   if (error) return { error: error.message };
   revalidatePath('/a81');
   return { ok: true };
