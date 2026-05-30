@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import type { A81YearData, A81Row } from '@/app/actions/a81';
-import { upsertA81Override, deleteA81Row } from '@/app/actions/a81';
+import { upsertA81Override, deleteA81Row, restoreA81Row } from '@/app/actions/a81';
 
 const MONTHS_FR_SHORT = ['Janv.', 'Févr.', 'Mars', 'Avril', 'Mai', 'Juin', 'Juil.', 'Août', 'Sept.', 'Oct.', 'Nov.', 'Déc.'];
 
@@ -156,6 +156,14 @@ export function A81Client({
       router.refresh();
     });
   }
+  function handleRestore(instanceId: string) {
+    setErr('');
+    start(async () => {
+      const res = await restoreA81Row(instanceId);
+      if ('error' in res) { setErr(res.error); return; }
+      router.refresh();
+    });
+  }
 
   const plafondExoBrut = 0;
   const montantExo = plafondExoBrut > 0 ? Math.min(0.4 * plafondExoBrut, data.montant_total) : 0;
@@ -293,6 +301,32 @@ export function A81Client({
           </table>
         </div>
       </div>
+
+      {/* Lignes supprimées — restauration */}
+      {data.deleted_rows.length > 0 && (
+        <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-3 space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+            Lignes supprimées · {data.deleted_rows.length}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {data.deleted_rows.map(d => {
+              const label = `${fmtDate(d.debut_rotation)} ${d.escale_debut}${d.escale_fin !== d.escale_debut ? '/' + d.escale_fin : ''}`;
+              return (
+                <button
+                  key={d.instance_id}
+                  onClick={() => handleRestore(d.instance_id)}
+                  disabled={isPending}
+                  className="text-[11px] px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-50 dark:hover:bg-zinc-800 disabled:opacity-40 inline-flex items-center gap-1"
+                  title="Restaurer cette ligne"
+                >
+                  <span>↺</span>
+                  <span className="font-mono">{label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Footer fiscal */}
       <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-2 text-sm">

@@ -2,6 +2,7 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
+import { revalidatePath } from 'next/cache';
 import { computeTSej24, lookupTauxSej, getPlafondJours, computeValeurJour, type Article81Data } from '@/lib/article81';
 import { loadAnnexeRowForMonth, loadAllAnnexeRows } from '@/app/actions/annexe';
 import { loadAllProfileVersions } from '@/app/actions/profile-version';
@@ -49,9 +50,19 @@ export interface A81Row {
   fin_sejour_overridden: boolean;
 }
 
+/** Ligne supprimée par l'utilisateur — métadata pour la section restauration. */
+export interface A81DeletedRow {
+  instance_id: string;
+  debut_rotation: string;
+  escale_debut: string;
+  escale_fin: string;
+}
+
 export interface A81YearData {
   year: number;
   rows: A81Row[];
+  /** Lignes supprimées (deleted=true) — à afficher en bas pour restauration. */
+  deleted_rows: A81DeletedRow[];
   /** MIN(plafond_jours, cumul_jours) — nb total jours décomptés. */
   nb_total_jours: number;
   /** Cumul brut (sans plafond) — utile pour info. */
@@ -141,7 +152,7 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
   const plafondJours = regime ? getPlafondJours(regime) : 70;
 
   const empty: A81YearData = {
-    year, rows: [], nb_total_jours: 0, cumul_jours: 0,
+    year, rows: [], deleted_rows: [], nb_total_jours: 0, cumul_jours: 0,
     plafond_jours: plafondJours, montant_total: 0, regime_used: regime,
   };
   if (!drafts?.length) return empty;
@@ -181,13 +192,13 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
     .in('pairing_instance_id', instIds);
   const overrideById = new Map((overrides ?? []).map(o => [o.pairing_instance_id, o]));
 
-  // 6. Construit les rows
+  // 6. Construit les rows (et collecte les supprimées)
   const rows: A81Row[] = [];
+  const deletedRows: A81DeletedRow[] = [];
   for (const it of items) {
     const inst = instById.get(it.pairing_instance_id as string);
     if (!inst) continue;
     const ov = overrideById.get(inst.id);
-    if (ov?.deleted) continue; // ligne supprimée par l'utilisateur
 
     const sig = sigById.get(inst.signature_id);
     if (!sig) continue;
@@ -199,16 +210,27 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
     const debutSejourOriginMs = firstDuty.schEndDate - FIVE_MIN_MS;
     const finSejourOriginMs   = lastDuty.schBeginDate + TEN_MIN_MS;
 
-    // Application des overrides (timestamp ISO en DB)
-    const debutSejourMs = ov?.debut_sejour_at ? new Date(ov.debut_sejour_at).getTime() : debutSejourOriginMs;
-    const finSejourMs   = ov?.fin_sejour_at   ? new Date(ov.fin_sejour_at).getTime()   : finSejourOriginMs;
-    if (finSejourMs <= debutSejourMs) continue;
-
     // Escales depuis legs (fallback signature.first_layover si pb)
     const firstDutyLegs = firstDuty.dutyLegAssociation?.flatMap(d => d.legs) ?? [];
     const lastDutyLegs  = lastDuty.dutyLegAssociation?.flatMap(d => d.legs) ?? [];
     const escaleDebut = firstDutyLegs[firstDutyLegs.length - 1]?.arrivalStationCode ?? sig.first_layover ?? '';
     const escaleFin   = lastDutyLegs[0]?.departureStationCode ?? sig.first_layover ?? '';
+
+    // Ligne supprimée : on collecte les méta pour permettre la restauration.
+    if (ov?.deleted) {
+      deletedRows.push({
+        instance_id: inst.id,
+        debut_rotation: typeof inst.depart_at === 'string' ? inst.depart_at.slice(0, 10) : '',
+        escale_debut: escaleDebut,
+        escale_fin: escaleFin,
+      });
+      continue;
+    }
+
+    // Application des overrides (timestamp ISO en DB)
+    const debutSejourMs = ov?.debut_sejour_at ? new Date(ov.debut_sejour_at).getTime() : debutSejourOriginMs;
+    const finSejourMs   = ov?.fin_sejour_at   ? new Date(ov.fin_sejour_at).getTime()   : finSejourOriginMs;
+    if (finSejourMs <= debutSejourMs) continue;
 
     const tempsSejH = (finSejourMs - debutSejourMs) / 3600000;
     const tSej24    = computeTSej24(tempsSejH);
@@ -268,9 +290,16 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
     }
   }
 
+  // Dédup deleted_rows + tri chrono.
+  const seenDel = new Set<string>();
+  const uniqueDeleted = deletedRows
+    .filter(r => { if (seenDel.has(r.instance_id)) return false; seenDel.add(r.instance_id); return true; })
+    .sort((a, b) => a.debut_rotation.localeCompare(b.debut_rotation));
+
   return {
     year,
     rows: unique,
+    deleted_rows: uniqueDeleted,
     nb_total_jours: Math.min(plafondJours, cumul),
     cumul_jours: cumul,
     plafond_jours: plafondJours,
@@ -309,6 +338,7 @@ export async function upsertA81Override(
       .insert({ user_id: user.id, pairing_instance_id: instanceId, ...fields });
     if (error) return { error: error.message };
   }
+  revalidatePath('/a81');
   return { ok: true };
 }
 
@@ -336,6 +366,7 @@ export async function deleteA81Row(instanceId: string): Promise<{ ok: true } | {
       .insert({ user_id: user.id, pairing_instance_id: instanceId, deleted: true });
     if (error) return { error: error.message };
   }
+  revalidatePath('/a81');
   return { ok: true };
 }
 
@@ -350,6 +381,7 @@ export async function restoreA81Row(instanceId: string): Promise<{ ok: true } | 
     .eq('user_id', user.id)
     .eq('pairing_instance_id', instanceId);
   if (error) return { error: error.message };
+  revalidatePath('/a81');
   return { ok: true };
 }
 
