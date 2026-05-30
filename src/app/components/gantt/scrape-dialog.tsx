@@ -9,7 +9,7 @@ const NON_ADMIN_CAP = 50;
 type Phase =
   | { name: 'idle' }
   | { name: 'analyzing' }
-  | { name: 'ready'; total_instances: number; unique_sigs: number; in_db: number; missing: number }
+  | { name: 'ready'; total_instances: number; unique_sigs: number; in_db: number; missing: number; missing_instances: number }
   | { name: 'scraping'; current: number; total: number; rotation: string }
   | { name: 'done'; snapshot_id: string; signatures: number; instances: number }
   | { name: 'stopped'; current: number; total: number }
@@ -75,11 +75,12 @@ export function ScrapeDialog({
       }
       const data = await res.json();
       setPhase({
-        name:            'ready',
-        total_instances: data.total_instances,
-        unique_sigs:     data.unique_sigs,
-        in_db:           data.in_db,
-        missing:         data.missing,
+        name:              'ready',
+        total_instances:   data.total_instances,
+        unique_sigs:       data.unique_sigs,
+        in_db:             data.in_db,
+        missing:           data.missing,
+        missing_instances: data.missing_instances ?? 0,
       });
     } catch (err) {
       setPhase({ name: 'error', message: String(err) });
@@ -245,11 +246,16 @@ export function ScrapeDialog({
               </p>
               {phase.missing > 0 ? (
                 <p className="text-amber-600 dark:text-amber-400 text-xs">
-                  {phase.in_db} déjà en DB · <strong>{phase.missing}</strong> à télécharger
+                  {phase.in_db} déjà en DB · <strong>{phase.missing}</strong> rotation{phase.missing > 1 ? 's' : ''} à télécharger
+                  {phase.missing_instances > 0 && <> · <strong>+{phase.missing_instances}</strong> date{phase.missing_instances > 1 ? 's' : ''} à ajouter</>}
+                </p>
+              ) : phase.missing_instances > 0 ? (
+                <p className="text-amber-600 dark:text-amber-400 text-xs">
+                  {phase.in_db}/{phase.unique_sigs} rotations en DB · <strong>{phase.missing_instances}</strong> date{phase.missing_instances > 1 ? 's' : ''} à ajouter
                 </p>
               ) : (
                 <p className="text-emerald-600 dark:text-emerald-400 text-xs">
-                  ✓ Tout est déjà en DB ({phase.in_db}/{phase.unique_sigs})
+                  ✓ Tout est déjà en DB ({phase.in_db}/{phase.unique_sigs} rotations · {phase.total_instances} dates)
                 </p>
               )}
               {phase.missing > 0 && (
@@ -343,10 +349,17 @@ export function ScrapeDialog({
                         onClick={startScrape}
                         className="flex-1 py-3 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 active:bg-blue-800 transition-colors"
                       >
-                        Télécharger {willDownload}
+                        Télécharger {willDownload}{phase.missing_instances > 0 ? ` + ${phase.missing_instances} dates` : ''}
                       </button>
                     );
-                  })() : (
+                  })() : phase.missing_instances > 0 ? (
+                    <button
+                      onClick={startScrape}
+                      className="flex-1 py-3 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 active:bg-blue-800 transition-colors"
+                    >
+                      Ajouter {phase.missing_instances} date{phase.missing_instances > 1 ? 's' : ''}
+                    </button>
+                  ) : (
                     <button
                       onClick={onClose}
                       className="flex-1 py-3 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 active:bg-emerald-800 transition-colors"

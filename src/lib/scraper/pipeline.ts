@@ -104,15 +104,21 @@ async function getOrCreateMonthSnapshot(
 }
 
 /**
- * Charge l'état du snapshot pour calculer la diff :
- *  - existingNumbers : activity_number déjà en DB (filtre principal)
- *  - legacySigByActId : signature_id indexé par activity_id pour les
- *    lignes héritées dont activity_number est NULL. Le pipeline répare
- *    ces lignes au passage.
+ * Charge l'état du snapshot pour calculer la diff (niveau signature ET niveau
+ * instance, pour détecter les sigs déjà en DB qui ont des dates manquantes) :
+ *  - existingNumbers : activity_number déjà en DB.
+ *  - sigIdByActNum  : signature_id (DB) indexé par activity_number.
+ *  - existingActIdsBySig : pour chaque signature_id en DB, l'ensemble des
+ *    activity_id déjà persistés en pairing_instance.
+ *  - legacySigByActId : signature_id indexé par activity_id pour les lignes
+ *    héritées dont activity_number est NULL. Le pipeline répare ces lignes
+ *    au passage.
  */
 async function loadSnapshotDiffState(supabase: SupabaseClient, snapshotId: string) {
-  const existingNumbers = new Set<string>();
-  const legacySigByActId = new Map<string, string>();
+  const existingNumbers       = new Set<string>();
+  const sigIdByActNum         = new Map<string, string>();
+  const existingActIdsBySig   = new Map<string, Set<string>>();
+  const legacySigByActId      = new Map<string, string>();
 
   const sigs = await fetchAllPaginated<{ id: string; activity_number: string | null }>((from, to) =>
     supabase
@@ -123,25 +129,61 @@ async function loadSnapshotDiffState(supabase: SupabaseClient, snapshotId: strin
   );
 
   const legacySigIds: string[] = [];
+  const allSigIds:    string[] = [];
   for (const s of sigs) {
-    if (s.activity_number) existingNumbers.add(s.activity_number);
-    else legacySigIds.push(s.id);
+    allSigIds.push(s.id);
+    if (s.activity_number) {
+      existingNumbers.add(s.activity_number);
+      sigIdByActNum.set(s.activity_number, s.id);
+    } else {
+      legacySigIds.push(s.id);
+    }
   }
 
-  if (legacySigIds.length > 0) {
+  if (allSigIds.length > 0) {
     const insts = await fetchAllPaginated<{ signature_id: string; activity_id: string }>((from, to) =>
       supabase
         .from('pairing_instance')
         .select('signature_id, activity_id')
-        .in('signature_id', legacySigIds)
+        .in('signature_id', allSigIds)
         .range(from, to),
     );
     for (const r of insts) {
-      legacySigByActId.set(String(r.activity_id), r.signature_id);
+      let set = existingActIdsBySig.get(r.signature_id);
+      if (!set) { set = new Set(); existingActIdsBySig.set(r.signature_id, set); }
+      set.add(String(r.activity_id));
+      // Index legacy par actId aussi (utilisé en fallback pour matcher
+      // une signature dont activity_number serait NULL).
+      if (legacySigIds.includes(r.signature_id)) {
+        legacySigByActId.set(String(r.activity_id), r.signature_id);
+      }
     }
   }
 
-  return { existingNumbers, legacySigByActId };
+  return { existingNumbers, sigIdByActNum, existingActIdsBySig, legacySigByActId };
+}
+
+/** Construit une row pairing_instance à partir d'une PairingSummary. */
+function buildInstanceRow(sigId: string, inst: PairingSummary) {
+  const beginAct = inst.scheduledBeginActivityDate;
+  const endAct   = inst.scheduledEndActivityDate;
+  const restBefore = (beginAct > 0 && inst.beginBlockDate > 0)
+    ? (inst.beginBlockDate - beginAct) / 3_600_000
+    : (inst.pairingDetail.restBeforeHaulDuration ?? null);
+  const restAfter = (endAct > 0 && inst.endBlockDate > 0)
+    ? (endAct - inst.endBlockDate) / 3_600_000
+    : (inst.pairingDetail.restPostHaulDuration ?? null);
+  return {
+    signature_id:   sigId,
+    activity_id:    String(inst.actId),
+    depart_date:    msToDateStr(inst.beginBlockDate),
+    depart_at:      new Date(inst.beginBlockDate).toISOString(),
+    arrivee_at:     new Date(inst.endBlockDate).toISOString(),
+    rest_before_h:  restBefore,
+    rest_after_h:   restAfter,
+    scheduled_begin_activity_at: beginAct > 0 ? new Date(beginAct).toISOString() : null,
+    scheduled_end_activity_at:   endAct   > 0 ? new Date(endAct).toISOString()   : null,
+  };
 }
 
 export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEvent> {
@@ -189,37 +231,54 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
     }
     const allKeys = Array.from(sigMap.keys());
 
-    // Phase 2 — diff avec ce qui est déjà en DB
-    const { existingNumbers, legacySigByActId } = await loadSnapshotDiffState(supabase, snapshotId);
+    // Phase 2 — diff à 2 niveaux (signature ET instance)
+    const { existingNumbers, sigIdByActNum, existingActIdsBySig, legacySigByActId } =
+      await loadSnapshotDiffState(supabase, snapshotId);
 
+    // partialSigs : sig déjà en DB MAIS avec des dates manquantes → on insère
+    //   uniquement les pairing_instance manquants (pas de detail fetch).
+    // missingKeys : sig pas en DB du tout → detail fetch + insert sig + instances.
+    const partialSigs: Array<{ activityNumber: string; sigDbId: string; missingInsts: PairingSummary[] }> = [];
     const missingKeys: string[] = [];
+
     for (const k of allKeys) {
-      if (existingNumbers.has(k)) continue;
+      const fetchedInsts = sigMap.get(k)!;
 
-      // Fallback héritage : un actId connu pointe sur une signature legacy.
-      const insts = sigMap.get(k)!;
-      let legacySigId: string | null = null;
-      for (const i of insts) {
-        const sigId = legacySigByActId.get(String(i.actId));
-        if (sigId) { legacySigId = sigId; break; }
-      }
-      if (legacySigId) {
-        await supabase
-          .from('pairing_signature')
-          .update({ activity_number: k })
-          .eq('id', legacySigId);
-        existingNumbers.add(k);
-        continue;
+      // Résolution sigDbId : 1) match direct par activity_number,
+      // 2) fallback héritage par activity_id → on répare activity_number au passage.
+      let sigDbId = sigIdByActNum.get(k);
+      if (!sigDbId) {
+        for (const i of fetchedInsts) {
+          const legacy = legacySigByActId.get(String(i.actId));
+          if (legacy) {
+            await supabase.from('pairing_signature').update({ activity_number: k }).eq('id', legacy);
+            sigDbId = legacy;
+            sigIdByActNum.set(k, legacy);
+            existingNumbers.add(k);
+            break;
+          }
+        }
       }
 
-      missingKeys.push(k);
+      if (sigDbId) {
+        // Sig en DB → diff au niveau instance.
+        const existingActIds = existingActIdsBySig.get(sigDbId) ?? new Set<string>();
+        const missingInsts   = fetchedInsts.filter(i => !existingActIds.has(String(i.actId)));
+        if (missingInsts.length > 0) {
+          partialSigs.push({ activityNumber: k, sigDbId, missingInsts });
+        }
+      } else {
+        missingKeys.push(k);
+      }
     }
 
-    // Cap maxRotations (cf. ScrapeParams) — coupe la liste des manquants en
-    // tête. Les rotations exclues seront récupérées au prochain run.
+    // Cap maxRotations : ne s'applique qu'aux full-fetches (lent). Les partial
+    // (sans detail fetch) sont toujours traitées d'un coup — c'est rapide.
     const cappedMissing = (params.maxRotations != null && params.maxRotations > 0)
       ? missingKeys.slice(0, params.maxRotations)
       : missingKeys;
+
+    const totalToProcess = partialSigs.length + cappedMissing.length;
 
     yield {
       type: 'start',
@@ -227,9 +286,25 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
       unique_sigs:     allKeys.length,
     };
 
-    // Phase 3 — fetch detail uniquement pour les manquantes (cappées)
     let processedSigs = 0;
 
+    // Phase 3a — partial sigs (rapide, juste insert d'instances)
+    for (const { sigDbId, missingInsts, activityNumber } of partialSigs) {
+      const repr    = missingInsts[0];
+      const rotCode = buildRotationCode(repr);
+      yield {
+        type: 'progress',
+        current:  ++processedSigs,
+        total:    totalToProcess,
+        rotation: `${rotCode} (+${missingInsts.length} date${missingInsts.length > 1 ? 's' : ''})`,
+      };
+      const rows = missingInsts.map(inst => buildInstanceRow(sigDbId, inst));
+      await supabase.from('pairing_instance').insert(rows);
+      // Pas de sleep : pas d'appel CrewBidd côté detail, juste un INSERT DB.
+      void activityNumber; // silence unused
+    }
+
+    // Phase 3b — full fetch pour les sigs vraiment manquantes
     for (const activityNumber of cappedMissing) {
       const instances = sigMap.get(activityNumber)!;
       const repr      = instances[0];
@@ -238,7 +313,7 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
       yield {
         type: 'progress',
         current: ++processedSigs,
-        total:   cappedMissing.length,
+        total:   totalToProcess,
         rotation: rotCode,
       };
 
@@ -305,28 +380,7 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
 
       if (sigErr || !sig) continue;
 
-      const rows = instances.map(inst => {
-        const beginAct = inst.scheduledBeginActivityDate;
-        const endAct   = inst.scheduledEndActivityDate;
-        const restBefore = (beginAct > 0 && inst.beginBlockDate > 0)
-          ? (inst.beginBlockDate - beginAct) / 3_600_000
-          : (inst.pairingDetail.restBeforeHaulDuration ?? null);
-        const restAfter = (endAct > 0 && inst.endBlockDate > 0)
-          ? (endAct - inst.endBlockDate) / 3_600_000
-          : (inst.pairingDetail.restPostHaulDuration ?? null);
-        return {
-          signature_id:   sig.id,
-          activity_id:    String(inst.actId),
-          depart_date:    msToDateStr(inst.beginBlockDate),
-          depart_at:      new Date(inst.beginBlockDate).toISOString(),
-          arrivee_at:     new Date(inst.endBlockDate).toISOString(),
-          rest_before_h:  restBefore,
-          rest_after_h:   restAfter,
-          scheduled_begin_activity_at: beginAct > 0 ? new Date(beginAct).toISOString() : null,
-          scheduled_end_activity_at:   endAct   > 0 ? new Date(endAct).toISOString()   : null,
-        };
-      });
-
+      const rows = instances.map(inst => buildInstanceRow(sig.id, inst));
       await supabase.from('pairing_instance').insert(rows);
 
       // Délai respectueux entre détails (0.8–1.8 s).

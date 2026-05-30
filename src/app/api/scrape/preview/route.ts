@@ -66,6 +66,7 @@ export async function POST(req: Request) {
     .maybeSingle();
 
   let inDb = 0;
+  let missingInstances = 0;        // dates manquantes pour les sigs déjà en DB
   if (snap) {
     const sigs = await fetchAllPaginated<{ id: string; activity_number: string | null }>((from, to) =>
       supabase
@@ -75,45 +76,56 @@ export async function POST(req: Request) {
         .range(from, to),
     );
 
-    const existingNumbers = new Set<string>();
+    const sigIdByActNum = new Map<string, string>();
     const legacySigIds: string[] = [];
     for (const s of sigs) {
-      if (s.activity_number) existingNumbers.add(s.activity_number);
+      if (s.activity_number) sigIdByActNum.set(s.activity_number, s.id);
       else legacySigIds.push(s.id);
     }
 
-    // Match direct par activity_number.
-    for (const k of sigMap.keys()) {
-      if (existingNumbers.has(k)) inDb++;
-    }
-
-    // Fallback héritage : on regarde si un actId du groupe existe en pairing_instance
-    // pour une signature legacy de ce snapshot. Une signature legacy ne peut matcher
-    // qu'une seule activityNumber (au plus).
-    if (legacySigIds.length > 0) {
+    // Charge tous les pairing_instance.activity_id du snapshot — sert au diff
+    // instance-level pour les sigs déjà en DB + au fallback legacy.
+    const allSigIds = sigs.map(s => s.id);
+    const existingActIdsBySig = new Map<string, Set<string>>();
+    const legacySigByActId    = new Map<string, string>();
+    if (allSigIds.length > 0) {
       const insts = await fetchAllPaginated<{ signature_id: string; activity_id: string }>((from, to) =>
         supabase
           .from('pairing_instance')
           .select('signature_id, activity_id')
-          .in('signature_id', legacySigIds)
+          .in('signature_id', allSigIds)
           .range(from, to),
       );
-
-      const legacySigByActId = new Map<string, string>();
       for (const r of insts) {
-        legacySigByActId.set(String(r.activity_id), r.signature_id);
+        let set = existingActIdsBySig.get(r.signature_id);
+        if (!set) { set = new Set(); existingActIdsBySig.set(r.signature_id, set); }
+        set.add(String(r.activity_id));
+        if (legacySigIds.includes(r.signature_id)) {
+          legacySigByActId.set(String(r.activity_id), r.signature_id);
+        }
       }
+    }
 
-      const matchedLegacySigs = new Set<string>();
-      for (const [actNum, entry] of sigMap) {
-        if (existingNumbers.has(actNum)) continue;
+    // Pour chaque activityNumber fetched, résout sigDbId (direct ou fallback
+    // legacy), compte les sigs en DB et les instances manquantes côté DB.
+    const matchedLegacySigs = new Set<string>();
+    for (const [actNum, entry] of sigMap) {
+      let sigDbId = sigIdByActNum.get(actNum);
+      if (!sigDbId) {
         for (const aid of entry.actIds) {
-          const sigId = legacySigByActId.get(aid);
-          if (sigId && !matchedLegacySigs.has(sigId)) {
-            matchedLegacySigs.add(sigId);
-            inDb++;
+          const candidate = legacySigByActId.get(aid);
+          if (candidate && !matchedLegacySigs.has(candidate)) {
+            sigDbId = candidate;
+            matchedLegacySigs.add(candidate);
             break;
           }
+        }
+      }
+      if (sigDbId) {
+        inDb++;
+        const existingActIds = existingActIdsBySig.get(sigDbId) ?? new Set<string>();
+        for (const aid of entry.actIds) {
+          if (!existingActIds.has(aid)) missingInstances++;
         }
       }
     }
@@ -122,9 +134,10 @@ export async function POST(req: Request) {
   const missing = Math.max(0, uniqueSigs - inDb);
 
   return Response.json({
-    total_instances: totalInstances,
-    unique_sigs:     uniqueSigs,
-    in_db:           inDb,
+    total_instances:   totalInstances,
+    unique_sigs:       uniqueSigs,
+    in_db:             inDb,
     missing,
+    missing_instances: missingInstances,
   });
 }
