@@ -475,14 +475,18 @@ export function NavBar() {
             <button
               onClick={() => { setSyncMenuOpen(o => !o); void ensureAvailableMonths(); }}
               title={syncMode === 'lite' ? 'Sync Lite : mois courant +3 + planning posé sur mois passés' : 'Sync Perso : mois sélectionnés'}
-              className="px-2 h-8 flex items-center text-[10px] uppercase tracking-wide font-semibold text-zinc-500 hover:text-zinc-200 rounded hover:bg-zinc-800 transition-colors"
+              className="px-2 h-6 flex items-center gap-1 text-[10px] uppercase tracking-wide font-semibold text-zinc-300 border border-zinc-600 hover:border-zinc-400 hover:text-white rounded transition-colors"
             >
               {syncMode === 'lite' ? 'Lite' : `Perso${persoMonths.length ? ` (${persoMonths.length})` : ''}`}
+              <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
             </button>
             {syncMenuOpen && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setSyncMenuOpen(false)} />
-                <div className="absolute right-0 top-full mt-1 z-50 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-lg p-3 min-w-64">
+                <div
+                  className="fixed right-2 z-50 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-lg p-3 min-w-64"
+                  style={{ top: 'calc(env(safe-area-inset-top) + 2.5rem)' }}
+                >
                   <p className="text-[11px] font-semibold text-zinc-700 dark:text-zinc-200 mb-2">Mode de synchronisation</p>
                   <label className="flex items-start gap-2 text-xs text-zinc-700 dark:text-zinc-200 mb-2 cursor-pointer">
                     <input type="radio" name="syncmode" checked={syncMode === 'lite'} onChange={() => persistMode('lite')} className="mt-0.5" />
