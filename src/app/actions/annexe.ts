@@ -1,8 +1,7 @@
 'use server';
 
 import { createClient } from '@/lib/supabase/server';
-import { computeFullProfile, type AnnexeData, type AnnexeRow } from '@/lib/annexe';
-import { REGIME_NB30E } from '@/lib/finance';
+import type { AnnexeData, AnnexeRow } from '@/lib/annexe';
 import type { Json } from '@/types/supabase';
 
 /**
@@ -82,73 +81,6 @@ export async function loadAllAnnexeRows(): Promise<AnnexeRow[]> {
     .from('annexe_table')
     .select('slug, valid_from, data');
   return (data ?? []) as AnnexeRow[];
-}
-
-/**
- * Charge les éléments de paie (pvei, fixe, primes…) pour le mois cible.
- * Utilisé par le calendrier lors d'un changeMonth client-side : permet de
- * récupérer les valeurs versionnées de l'annexe sans refresh page.
- * Retourne null si profil/annexe incomplet (le client garde alors les valeurs courantes).
- */
-export type FinBaseForMonth = {
-  pvei: number;
-  ksp: number;
-  fixe: number;        // proratisé selon nb30e du régime
-  fixeTP: number;      // fixe TP (nb30e=30)
-  primeIncitationUnit: number;
-  primeA330: number;
-  primeInstruction: number;
-};
-
-export async function loadFinBaseForMonth(month: string): Promise<FinBaseForMonth | null> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
-
-  const { data: profile } = await supabase
-    .from('user_profile')
-    .select('fonction, classe, echelon, categorie, regime, aircraft_principal, bonus_atpl, tri_niveau, prime_330_count')
-    .eq('user_id', user.id)
-    .single();
-  if (!profile?.fonction || !profile.classe || !profile.echelon || !profile.categorie) return null;
-
-  const annexe = await loadAnnexeForMonth(month);
-  const hasAnnexe = !!(
-    annexe.cat_anciennete?.length &&
-    annexe.coef_classe?.length &&
-    annexe.taux_avion?.length &&
-    annexe.traitement_base
-  );
-  if (!hasAnnexe) return null;
-
-  const isTri = profile.fonction === 'TRI_OPL' || profile.fonction === 'TRI_CDB';
-  const primeInstFonction = profile.fonction === 'TRI_OPL' ? 'TRI_OPL'
-    : profile.fonction === 'TRI_CDB' ? 'ICPL'
-    : null;
-  const nb30e = REGIME_NB30E[profile.regime] ?? 30;
-  const c = computeFullProfile(
-    profile.aircraft_principal ?? 'A335',
-    profile.fonction,
-    profile.classe,
-    profile.categorie,
-    profile.echelon,
-    profile.bonus_atpl ?? false,
-    nb30e,
-    'LC',
-    primeInstFonction,
-    isTri ? profile.tri_niveau : null,
-    profile.prime_330_count ?? null,
-    annexe as AnnexeData,
-  );
-  return {
-    pvei: c.pvei,
-    ksp: c.ksp,
-    fixe: c.fixe,
-    fixeTP: c.fixeTP,
-    primeIncitationUnit: c.primeIncitation,
-    primeA330: c.primeA330,
-    primeInstruction: c.primeInstruction,
-  };
 }
 
 export async function saveAnnexeTable(slug: string, data: Json, validFrom?: string) {

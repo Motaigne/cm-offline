@@ -1,26 +1,45 @@
 'use client';
 
 import { useState, useTransition, type ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
 import { saveAnnexeTable } from '@/app/actions/annexe';
 import { computePrimeInstructionMontant, type PrimeInstruction } from '@/lib/annexe';
 import type { Json } from '@/types/supabase';
 
-type AnnexeRow = { slug: string; name: string; description: string | null; data: Json; updated_at: string; };
+type AnnexeRow = {
+  slug: string;
+  valid_from: string;
+  name: string;
+  description: string | null;
+  data: Json;
+  updated_at: string;
+};
 
-// ── Shared card shell ──────────────────────────────────────────────────────────
+const MONTH_NAMES_FR = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+function fmtDateApp(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d) return iso;
+  const day = d === 1 ? '1er' : String(d);
+  return `${day} ${MONTH_NAMES_FR[m - 1]} ${y}`;
+}
+
+// ── Shared card shell (non versionné) ──────────────────────────────────────────
 function Card({
-  title, children, table, canEdit,
+  title, children, table, canEdit, extraHeader,
 }: {
   title: string;
   children: ReactNode;
   table: AnnexeRow;
   canEdit: boolean;
+  /** UI optionnelle insérée dans le header (ex: dropdown de version). */
+  extraHeader?: ReactNode;
 }) {
   const [editing, setEditing]   = useState(false);
   const [jsonText, setJsonText] = useState('');
   const [err, setErr]           = useState('');
   const [saved, setSaved]       = useState(false);
   const [isPending, start]      = useTransition();
+  const router = useRouter();
 
   function startEdit() { setJsonText(JSON.stringify(table.data, null, 2)); setErr(''); setEditing(true); }
 
@@ -29,17 +48,22 @@ function Card({
     let parsed: Json;
     try { parsed = JSON.parse(jsonText); } catch { setErr('JSON invalide'); return; }
     start(async () => {
-      const res = await saveAnnexeTable(table.slug, parsed);
+      const res = await saveAnnexeTable(table.slug, parsed, table.valid_from);
       if (res.error) setErr(res.error);
-      else { setSaved(true); setEditing(false); setTimeout(() => setSaved(false), 3000); }
+      else {
+        setSaved(true); setEditing(false);
+        setTimeout(() => setSaved(false), 3000);
+        router.refresh();
+      }
     });
   }
 
   return (
     <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-100 dark:border-zinc-800">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-100 dark:border-zinc-800 gap-2">
         <p className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">{title}</p>
         <div className="flex items-center gap-2">
+          {extraHeader}
           {saved && <span className="text-[10px] text-green-500 font-medium">✓</span>}
           {canEdit && !editing && (
             <button onClick={startEdit} className="text-[10px] px-2 py-0.5 rounded border border-zinc-200 dark:border-zinc-700 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors">
@@ -75,6 +99,104 @@ function Card({
   );
 }
 
+// ── Versioned card shell ───────────────────────────────────────────────────────
+// Pour les slugs versionnés (taux_avion, prime_incitation, traitement_base,
+// prime_instruction). Affiche un dropdown de date d'application + bouton admin
+// "+ Nouvelle version" qui crée une row (slug, valid_from) en copiant la data
+// de la version sélectionnée comme template.
+function VersionedCard({
+  title, versions, canEdit, renderContent,
+}: {
+  title: string;
+  versions: AnnexeRow[];                 // déjà triées (plus récente d'abord)
+  canEdit: boolean;
+  renderContent: (row: AnnexeRow) => ReactNode;
+}) {
+  const [selectedValidFrom, setSelectedValidFrom] = useState(versions[0]?.valid_from ?? '');
+  const [showNewForm, setShowNewForm] = useState(false);
+  const [newDate, setNewDate] = useState('');
+  const [newErr, setNewErr] = useState('');
+  const [isCreating, startCreate] = useTransition();
+  const router = useRouter();
+
+  const selected = versions.find(v => v.valid_from === selectedValidFrom) ?? versions[0];
+  if (!selected) return null;
+
+  function handleCreateVersion() {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) { setNewErr('Format YYYY-MM-DD requis'); return; }
+    if (versions.some(v => v.valid_from === newDate)) { setNewErr('Cette date existe déjà'); return; }
+    setNewErr('');
+    startCreate(async () => {
+      const res = await saveAnnexeTable(selected.slug, selected.data, newDate);
+      if (res.error) setNewErr(res.error);
+      else {
+        setShowNewForm(false); setNewDate('');
+        setSelectedValidFrom(newDate);
+        router.refresh();
+      }
+    });
+  }
+
+  const dropdown = (
+    <>
+      <select
+        value={selected.valid_from}
+        onChange={e => setSelectedValidFrom(e.target.value)}
+        className="text-[10px] px-2 py-0.5 rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-300"
+        title="Date d'application (visualisation — n'affecte pas les calculs)"
+      >
+        {versions.map(v => (
+          <option key={v.valid_from} value={v.valid_from}>Date d&apos;application : {fmtDateApp(v.valid_from)}</option>
+        ))}
+      </select>
+      {canEdit && (
+        <button
+          onClick={() => { setShowNewForm(s => !s); setNewErr(''); setNewDate(''); }}
+          className="text-[10px] px-2 py-0.5 rounded border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30"
+        >
+          + Nouvelle version
+        </button>
+      )}
+    </>
+  );
+
+  return (
+    <div>
+      <Card title={title} table={selected} canEdit={canEdit} extraHeader={dropdown}>
+        {renderContent(selected)}
+      </Card>
+      {showNewForm && (
+        <div className="mt-1 mx-1 px-3 py-2 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900 flex flex-wrap items-center gap-2 text-[11px]">
+          <span className="text-blue-700 dark:text-blue-300">Nouvelle date d&apos;application :</span>
+          <input
+            type="date"
+            value={newDate}
+            onChange={e => setNewDate(e.target.value)}
+            className="px-2 py-1 rounded border border-blue-200 dark:border-blue-800 bg-white dark:bg-zinc-900 font-mono"
+          />
+          <span className="text-blue-600 dark:text-blue-400 italic">
+            (les valeurs de la version &laquo;&nbsp;{fmtDateApp(selected.valid_from)}&nbsp;&raquo; seront dupliquées comme point de départ)
+          </span>
+          <button
+            onClick={handleCreateVersion}
+            disabled={isCreating || !newDate}
+            className="px-3 py-1 rounded bg-blue-600 text-white font-semibold disabled:opacity-40"
+          >
+            {isCreating ? '…' : 'Créer'}
+          </button>
+          <button
+            onClick={() => { setShowNewForm(false); setNewErr(''); setNewDate(''); }}
+            className="text-zinc-500 hover:text-zinc-700"
+          >
+            Annuler
+          </button>
+          {newErr && <span className="text-red-500">{newErr}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Mini table ─────────────────────────────────────────────────────────────────
 function MiniTable({ headers, rows }: { headers: string[]; rows: (string | number)[][] }) {
   return (
@@ -99,7 +221,7 @@ function MiniTable({ headers, rows }: { headers: string[]; rows: (string | numbe
   );
 }
 
-// ── Section 1 cards ────────────────────────────────────────────────────────────
+// ── Section 1 cards (non versionnés) ───────────────────────────────────────────
 function CatAncienneteCard({ table, canEdit }: { table: AnnexeRow; canEdit: boolean }) {
   const rows = table.data as { echelon: number; categorie: string; coefficient: number }[];
   return (
@@ -118,25 +240,26 @@ function CoefClasseCard({ table, canEdit }: { table: AnnexeRow; canEdit: boolean
   );
 }
 
-// ── Section 2 cards ────────────────────────────────────────────────────────────
-function TauxAvionCard({ table, canEdit }: { table: AnnexeRow; canEdit: boolean }) {
-  const rows = (table.data as { avion: string; taux: number }[]).filter(r => r.avion !== 'Groupe');
+// ── Section 2 cards (versionnés) ───────────────────────────────────────────────
+function TauxAvionCard({ versions, canEdit }: { versions: AnnexeRow[]; canEdit: boolean }) {
   return (
-    <Card title="Taux horaire (€/h)" table={table} canEdit={canEdit}>
-      <MiniTable headers={['Avion', 'Taux']} rows={rows.map(r => [r.avion, r.taux])} />
-    </Card>
+    <VersionedCard title="Taux horaire (€/h)" versions={versions} canEdit={canEdit} renderContent={(table) => {
+      const rows = (table.data as { avion: string; taux: number }[]).filter(r => r.avion !== 'Groupe');
+      return <MiniTable headers={['Avion', 'Taux']} rows={rows.map(r => [r.avion, r.taux])} />;
+    }} />
   );
 }
 
-function PrimeIncitationCard({ table, canEdit }: { table: AnnexeRow; canEdit: boolean }) {
-  const rows = table.data as { role: string; type: string; montant: number }[];
+function PrimeIncitationCard({ versions, canEdit }: { versions: AnnexeRow[]; canEdit: boolean }) {
   return (
-    <Card title="Prime d'incitation" table={table} canEdit={canEdit}>
-      <MiniTable headers={['', '€']} rows={rows.map(r => [`${r.role} ${r.type}`, r.montant])} />
-    </Card>
+    <VersionedCard title="Prime d'incitation" versions={versions} canEdit={canEdit} renderContent={(table) => {
+      const rows = table.data as { role: string; type: string; montant: number }[];
+      return <MiniTable headers={['', '€']} rows={rows.map(r => [`${r.role} ${r.type}`, r.montant])} />;
+    }} />
   );
 }
 
+// Prime A330 — non versionnée.
 function PrimeIncitation330Card({ table, canEdit }: { table: AnnexeRow; canEdit: boolean }) {
   const all = table.data as { seuil: string; mois_max?: number; avions_max?: number; valeur_pvei: number }[];
   // Tri par valeur_pvei descendante (tier le plus généreux en haut).
@@ -151,23 +274,25 @@ function PrimeIncitation330Card({ table, canEdit }: { table: AnnexeRow; canEdit:
   );
 }
 
-// ── Section 3: traitement_base ─────────────────────────────────────────────────
-function TraitementBaseCard({ table, canEdit }: { table: AnnexeRow; canEdit: boolean }) {
-  const d = table.data as { note?: string; coef_opl: number; base_cdb_a1: number };
-  const label = d.note ?? 'CDB A1';
+// ── Section 3: traitement_base (versionné) ─────────────────────────────────────
+function TraitementBaseCard({ versions, canEdit }: { versions: AnnexeRow[]; canEdit: boolean }) {
   return (
-    <Card title="Traitement mensuel fixe de référence" table={table} canEdit={canEdit}>
-      <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
-        <div className="flex items-center justify-between px-3 py-2">
-          <span className="text-xs text-zinc-500">{label}</span>
-          <span className="text-xs font-mono font-semibold text-zinc-800 dark:text-zinc-100">{d.base_cdb_a1} €</span>
+    <VersionedCard title="Traitement mensuel fixe de référence" versions={versions} canEdit={canEdit} renderContent={(table) => {
+      const d = table.data as { note?: string; coef_opl: number; base_cdb_a1: number };
+      const label = d.note ?? 'CDB A1';
+      return (
+        <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
+          <div className="flex items-center justify-between px-3 py-2">
+            <span className="text-xs text-zinc-500">{label}</span>
+            <span className="text-xs font-mono font-semibold text-zinc-800 dark:text-zinc-100">{d.base_cdb_a1} €</span>
+          </div>
+          <div className="flex items-center justify-between px-3 py-2">
+            <span className="text-xs text-zinc-500">Coefficient OPL</span>
+            <span className="text-xs font-mono font-semibold text-zinc-800 dark:text-zinc-100">{d.coef_opl}</span>
+          </div>
         </div>
-        <div className="flex items-center justify-between px-3 py-2">
-          <span className="text-xs text-zinc-500">Coefficient OPL</span>
-          <span className="text-xs font-mono font-semibold text-zinc-800 dark:text-zinc-100">{d.coef_opl}</span>
-        </div>
-      </div>
-    </Card>
+      );
+    }} />
   );
 }
 
@@ -222,45 +347,49 @@ function ProrataCard({ table, canEdit }: { table: AnnexeRow; canEdit: boolean })
   );
 }
 
-// ── Section 5: prime_instruction ──────────────────────────────────────────────
+// ── Section 5: prime_instruction (versionné) ──────────────────────────────────
 // Stockage : { icpl_a1, tri_opl_b1, multiplier, max_annee }
 // Le tableau affiché est dérivé (compound depuis valeur arrondie).
-function PrimeInstructionCard({ table, canEdit }: { table: AnnexeRow; canEdit: boolean }) {
-  const cfg = table.data as unknown as PrimeInstruction;
-  const years = Array.from({ length: cfg.max_annee }, (_, i) => i + 1);
-  const fonctions: { key: string; label: string }[] = [
-    { key: 'ICPL',    label: 'ICPL' },
-    { key: 'TRI_OPL', label: 'TRI OPL' },
-  ];
-  const yearLabel = (y: number) => (y === cfg.max_annee ? `${y} ou plus` : String(y));
+function PrimeInstructionCard({ versions, canEdit }: { versions: AnnexeRow[]; canEdit: boolean }) {
   return (
-    <Card title="Prime mensuelle d'instruction" table={table} canEdit={canEdit}>
-      <table className="w-full">
-        <thead>
-          <tr className="bg-zinc-50 dark:bg-zinc-800/60">
-            <th className="px-2.5 py-1.5 text-left text-[10px] font-medium text-zinc-400 uppercase tracking-wide whitespace-nowrap">Année</th>
-            {years.map(y => (
-              <th key={y} className="px-2.5 py-1.5 text-center text-[10px] font-medium text-zinc-400 uppercase tracking-wide">{yearLabel(y)}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-          {fonctions.map((fn, i) => (
-            <tr key={fn.key} className={i % 2 ? 'bg-zinc-50/50 dark:bg-zinc-800/20' : ''}>
-              <td className="px-2.5 py-1 text-xs font-medium text-zinc-500 whitespace-nowrap">{fn.label}</td>
-              {years.map(y => (
-                <td key={y} className="px-2.5 py-1 text-center text-xs font-mono text-zinc-700 dark:text-zinc-300">
-                  {computePrimeInstructionMontant(cfg, fn.key, y).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </td>
+    <VersionedCard title="Prime mensuelle d'instruction" versions={versions} canEdit={canEdit} renderContent={(table) => {
+      const cfg = table.data as unknown as PrimeInstruction;
+      const years = Array.from({ length: cfg.max_annee }, (_, i) => i + 1);
+      const fonctions: { key: string; label: string }[] = [
+        { key: 'ICPL',    label: 'ICPL' },
+        { key: 'TRI_OPL', label: 'TRI OPL' },
+      ];
+      const yearLabel = (y: number) => (y === cfg.max_annee ? `${y} ou plus` : String(y));
+      return (
+        <>
+          <table className="w-full">
+            <thead>
+              <tr className="bg-zinc-50 dark:bg-zinc-800/60">
+                <th className="px-2.5 py-1.5 text-left text-[10px] font-medium text-zinc-400 uppercase tracking-wide whitespace-nowrap">Année</th>
+                {years.map(y => (
+                  <th key={y} className="px-2.5 py-1.5 text-center text-[10px] font-medium text-zinc-400 uppercase tracking-wide">{yearLabel(y)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+              {fonctions.map((fn, i) => (
+                <tr key={fn.key} className={i % 2 ? 'bg-zinc-50/50 dark:bg-zinc-800/20' : ''}>
+                  <td className="px-2.5 py-1 text-xs font-medium text-zinc-500 whitespace-nowrap">{fn.label}</td>
+                  {years.map(y => (
+                    <td key={y} className="px-2.5 py-1 text-center text-xs font-mono text-zinc-700 dark:text-zinc-300">
+                      {computePrimeInstructionMontant(cfg, fn.key, y).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                  ))}
+                </tr>
               ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="px-3 py-2 text-[10px] text-zinc-400 dark:text-zinc-500 border-t border-zinc-100 dark:border-zinc-800">
-        Valeurs calculées : année N = round(année N−1 × {cfg.multiplier}, 2). Seuls a1 (ICPL) et b1 (TRI OPL) sont stockés ; éditer via &laquo;&nbsp;Modifier&nbsp;&raquo;.
-      </p>
-    </Card>
+            </tbody>
+          </table>
+          <p className="px-3 py-2 text-[10px] text-zinc-400 dark:text-zinc-500 border-t border-zinc-100 dark:border-zinc-800">
+            Valeurs calculées : année N = round(année N−1 × {cfg.multiplier}, 2). Seuls a1 (ICPL) et b1 (TRI OPL) sont stockés ; éditer via &laquo;&nbsp;Modifier&nbsp;&raquo;.
+          </p>
+        </>
+      );
+    }} />
   );
 }
 
@@ -443,6 +572,7 @@ function IrMfRatesCard({ table, canEdit }: { table: AnnexeRow; canEdit: boolean 
   const [err, setErr]               = useState('');
   const [saved, setSaved]           = useState('');
   const [isPending, start]          = useTransition();
+  const router = useRouter();
 
   const rates = (table.data as IrMfRate[]).slice().sort((a, b) => a.escale.localeCompare(b.escale));
   const filtered = filter
@@ -453,9 +583,13 @@ function IrMfRatesCard({ table, canEdit }: { table: AnnexeRow; canEdit: boolean 
     setErr('');
     start(async () => {
       const sorted = newData.slice().sort((a, b) => a.escale.localeCompare(b.escale));
-      const res = await saveAnnexeTable(table.slug, sorted as unknown as Json);
+      const res = await saveAnnexeTable(table.slug, sorted as unknown as Json, table.valid_from);
       if (res.error) { setErr(res.error); }
-      else { setSaved(msg); setShowAdd(false); setShowCsv(false); setTimeout(() => setSaved(''), 3000); }
+      else {
+        setSaved(msg); setShowAdd(false); setShowCsv(false);
+        setTimeout(() => setSaved(''), 3000);
+        router.refresh();
+      }
     });
   }
 
@@ -714,9 +848,36 @@ function DdaRulesCard({ table, canEdit }: { table: AnnexeRow; canEdit: boolean }
 // ── Main ───────────────────────────────────────────────────────────────────────
 const KNOWN = ['cat_anciennete', 'coef_classe', 'taux_avion', 'prime_incitation', 'prime_incitation_330', 'traitement_base', 'prorata', 'prime_instruction', 'article_81', 'definitions', 'ir_mf_rates', 'dda_rules', 'vol_p_rules'];
 
-export function AnnexeClient({ tables, canEdit }: { tables: AnnexeRow[]; canEdit: boolean }) {
-  const by = Object.fromEntries(tables.map(t => [t.slug, t]));
-  const others = tables.filter(t => !KNOWN.includes(t.slug));
+const VERSIONED_SLUGS = new Set(['taux_avion', 'prime_incitation', 'traitement_base', 'prime_instruction']);
+
+export function AnnexeClient({ rows, canEdit }: { rows: AnnexeRow[]; canEdit: boolean }) {
+  // Groupe par slug, trie par valid_from desc (plus récent d'abord).
+  const bySlug = new Map<string, AnnexeRow[]>();
+  for (const row of rows) {
+    if (!bySlug.has(row.slug)) bySlug.set(row.slug, []);
+    bySlug.get(row.slug)!.push(row);
+  }
+  for (const list of bySlug.values()) list.sort((a, b) => b.valid_from.localeCompare(a.valid_from));
+
+  // Pour les slugs non-versionnés : on prend la plus récente. Pour les
+  // versionnés : on passe toute la liste à VersionedCard via le wrapper.
+  const latest = (slug: string) => bySlug.get(slug)?.[0];
+  const versions = (slug: string) => bySlug.get(slug) ?? [];
+
+  const others = rows.filter(r => !KNOWN.includes(r.slug));
+  // Pour les non-versionnés inconnus → on prend juste la plus récente par slug
+  const othersLatest = new Map<string, AnnexeRow>();
+  for (const r of others) if (!othersLatest.has(r.slug)) othersLatest.set(r.slug, r);
+
+  const catAnc      = latest('cat_anciennete');
+  const coefCl      = latest('coef_classe');
+  const prime330    = latest('prime_incitation_330');
+  const prorata     = latest('prorata');
+  const a81         = latest('article_81');
+  const ddaRules    = latest('dda_rules');
+  const volPRules   = latest('vol_p_rules');
+  const definitions = latest('definitions');
+  const irMfLatest  = latest('ir_mf_rates');
 
   return (
     <div className="max-w-5xl mx-auto p-4 space-y-4">
@@ -731,44 +892,52 @@ export function AnnexeClient({ tables, canEdit }: { tables: AnnexeRow[]; canEdit
 
       {/* 1. Ancienneté + Classe */}
       <div className="grid grid-cols-2 gap-4">
-        {by.cat_anciennete && <CatAncienneteCard table={by.cat_anciennete} canEdit={canEdit} />}
-        {by.coef_classe    && <CoefClasseCard    table={by.coef_classe}    canEdit={canEdit} />}
+        {catAnc && <CatAncienneteCard table={catAnc} canEdit={canEdit} />}
+        {coefCl && <CoefClasseCard    table={coefCl} canEdit={canEdit} />}
       </div>
 
       {/* 2. Taux avion + Primes d'incitation */}
       <div className="grid grid-cols-3 gap-4">
-        {by.taux_avion          && <TauxAvionCard          table={by.taux_avion}          canEdit={canEdit} />}
-        {by.prime_incitation    && <PrimeIncitationCard    table={by.prime_incitation}    canEdit={canEdit} />}
-        {by.prime_incitation_330 && <PrimeIncitation330Card table={by.prime_incitation_330} canEdit={canEdit} />}
+        {VERSIONED_SLUGS.has('taux_avion') && versions('taux_avion').length > 0 && (
+          <TauxAvionCard versions={versions('taux_avion')} canEdit={canEdit} />
+        )}
+        {versions('prime_incitation').length > 0 && (
+          <PrimeIncitationCard versions={versions('prime_incitation')} canEdit={canEdit} />
+        )}
+        {prime330 && <PrimeIncitation330Card table={prime330} canEdit={canEdit} />}
       </div>
 
-      {/* 3. Traitement fixe */}
-      {by.traitement_base && <TraitementBaseCard table={by.traitement_base} canEdit={canEdit} />}
+      {/* 3. Traitement fixe (versionné) */}
+      {versions('traitement_base').length > 0 && (
+        <TraitementBaseCard versions={versions('traitement_base')} canEdit={canEdit} />
+      )}
 
       {/* 4. Prorata */}
-      {by.prorata && <ProrataCard table={by.prorata} canEdit={canEdit} />}
+      {prorata && <ProrataCard table={prorata} canEdit={canEdit} />}
 
-      {/* 5. Prime d'instruction */}
-      {by.prime_instruction && <PrimeInstructionCard table={by.prime_instruction} canEdit={canEdit} />}
+      {/* 5. Prime d'instruction (versionné) */}
+      {versions('prime_instruction').length > 0 && (
+        <PrimeInstructionCard versions={versions('prime_instruction')} canEdit={canEdit} />
+      )}
 
       {/* 6. Article 81 */}
-      {by.article_81 && <Article81Card table={by.article_81} canEdit={canEdit} />}
+      {a81 && <Article81Card table={a81} canEdit={canEdit} />}
 
       {/* 7. IR / MF — toujours visible (même si la ligne DB manque) */}
       <IrMfRatesCard
-        table={by.ir_mf_rates ?? { slug: 'ir_mf_rates', name: 'IR + MF', description: null, data: [], updated_at: '' }}
+        table={irMfLatest ?? { slug: 'ir_mf_rates', valid_from: '2025-04-01', name: 'IR + MF', description: null, data: [], updated_at: '' }}
         canEdit={canEdit}
       />
 
       {/* 8. Règles DDA / VOL P */}
-      {by.dda_rules   && <DdaRulesCard table={by.dda_rules}   canEdit={canEdit} />}
-      {by.vol_p_rules && <DdaRulesCard table={by.vol_p_rules} canEdit={canEdit} />}
+      {ddaRules  && <DdaRulesCard table={ddaRules}  canEdit={canEdit} />}
+      {volPRules && <DdaRulesCard table={volPRules} canEdit={canEdit} />}
 
       {/* 9. Définitions */}
-      {by.definitions && <DefinitionsCard table={by.definitions} canEdit={canEdit} />}
+      {definitions && <DefinitionsCard table={definitions} canEdit={canEdit} />}
 
       {/* Autres */}
-      {others.map(t => <GenericCard key={t.slug} table={t} canEdit={canEdit} />)}
+      {[...othersLatest.values()].map(t => <GenericCard key={t.slug} table={t} canEdit={canEdit} />)}
     </div>
   );
 }
