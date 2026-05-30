@@ -90,8 +90,11 @@ function keyFromRotation(rot: ParsedRotation): string {
 }
 
 function keyFromExtract(ex: ExtractRow): string {
+  // CleanEp4.ROT = layovers seuls ("SJO", "LAX PPT LAX") ; extract.stopovers
+  // inclut le CDG final ("SJO-CDG", "LAX-PPT-LAX-CDG"). On strip pour aligner.
+  const stopovers = ex.stopovers.replace(/-CDG$/, '');
   return matchKey({
-    stopovers:         ex.stopovers,
+    stopovers,
     nbOnDays:          ex.nbOnDays,
     hc:                ex.hc,
     hcrCrew:           ex.hc,            // on n'utilise pas hcrCrew côté sig (proxy → cohérence ici aussi)
