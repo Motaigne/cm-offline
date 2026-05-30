@@ -13,21 +13,25 @@ const FIVE_MIN_MS  = 5  * 60 * 1000;
 const TEN_MIN_MS   = 10 * 60 * 1000;
 
 export interface A81Row {
-  /** Identifiant unique = pairing_instance.id (sert aux overrides futurs). */
+  /** Identifiant unique = pairing_instance.id (sert aux overrides). */
   instance_id: string;
   /** Date de début de rotation (premier block-off) — ISO date 'YYYY-MM-DD'. */
   debut_rotation: string;
-  /** Datetime ISO du début de séjour (atterrissage première escale moins 5min). */
+  /** Datetime ISO du début de séjour effectif (= override si défini, sinon raw_detail). */
   debut_sejour_at: string;
+  /** Datetime ISO du début de séjour d'origine (toujours = raw_detail). */
+  debut_sejour_at_origin: string;
   /** Code IATA escale de séjour début. */
   escale_debut: string;
-  /** Datetime ISO de la fin de séjour (décollage dernière escale plus 10min). */
+  /** Datetime ISO de la fin de séjour effective. */
   fin_sejour_at: string;
+  /** Datetime ISO de la fin de séjour d'origine. */
+  fin_sejour_at_origin: string;
   /** Code IATA escale de séjour fin. */
   escale_fin: string;
-  /** Temps de séjour en heures décimales. */
+  /** Temps de séjour en heures décimales (effectif). */
   temps_sej_h: number;
-  /** Nb jours (tSej24) — 0 = sous le seuil ; -1 = au-delà du plafond annuel (PLAF). */
+  /** Nb jours (tSej24) — 0 = sous le seuil. */
   nb_jours: number;
   /** True si la rotation a dépassé le plafond annuel cumulé (montant=0). */
   plafond: boolean;
@@ -39,6 +43,10 @@ export interface A81Row {
   valeur_jour: number;
   /** Montant prime séjour = valeur_jour × taux × nb_jours (0 si plafond). */
   montant: number;
+  /** True si l'utilisateur a modifié debut_sejour_at. */
+  debut_sejour_overridden: boolean;
+  /** True si l'utilisateur a modifié fin_sejour_at. */
+  fin_sejour_overridden: boolean;
 }
 
 export interface A81YearData {
@@ -165,11 +173,22 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
     .in('id', sigIds);
   const sigById = new Map((sigs ?? []).map(s => [s.id, s]));
 
+  // 5bis. Overrides utilisateur (édits + suppressions)
+  const { data: overrides } = await supabase
+    .from('user_a81_override')
+    .select('pairing_instance_id, deleted, debut_sejour_at, fin_sejour_at')
+    .eq('user_id', user.id)
+    .in('pairing_instance_id', instIds);
+  const overrideById = new Map((overrides ?? []).map(o => [o.pairing_instance_id, o]));
+
   // 6. Construit les rows
   const rows: A81Row[] = [];
   for (const it of items) {
     const inst = instById.get(it.pairing_instance_id as string);
     if (!inst) continue;
+    const ov = overrideById.get(inst.id);
+    if (ov?.deleted) continue; // ligne supprimée par l'utilisateur
+
     const sig = sigById.get(inst.signature_id);
     if (!sig) continue;
     const detail = sig.raw_detail as unknown as PairingDetail | null;
@@ -177,8 +196,12 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
 
     const firstDuty = detail.flightDuty[0];
     const lastDuty  = detail.flightDuty[detail.flightDuty.length - 1];
-    const debutSejourMs = firstDuty.schEndDate - FIVE_MIN_MS;
-    const finSejourMs   = lastDuty.schBeginDate + TEN_MIN_MS;
+    const debutSejourOriginMs = firstDuty.schEndDate - FIVE_MIN_MS;
+    const finSejourOriginMs   = lastDuty.schBeginDate + TEN_MIN_MS;
+
+    // Application des overrides (timestamp ISO en DB)
+    const debutSejourMs = ov?.debut_sejour_at ? new Date(ov.debut_sejour_at).getTime() : debutSejourOriginMs;
+    const finSejourMs   = ov?.fin_sejour_at   ? new Date(ov.fin_sejour_at).getTime()   : finSejourOriginMs;
     if (finSejourMs <= debutSejourMs) continue;
 
     // Escales depuis legs (fallback signature.first_layover si pb)
@@ -198,8 +221,10 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
       instance_id: inst.id,
       debut_rotation: typeof inst.depart_at === 'string' ? inst.depart_at.slice(0, 10) : '',
       debut_sejour_at: new Date(debutSejourMs).toISOString(),
+      debut_sejour_at_origin: new Date(debutSejourOriginMs).toISOString(),
       escale_debut: escaleDebut,
       fin_sejour_at: new Date(finSejourMs).toISOString(),
+      fin_sejour_at_origin: new Date(finSejourOriginMs).toISOString(),
       escale_fin: escaleFin,
       temps_sej_h: tempsSejH,
       nb_jours: tSej24,
@@ -208,6 +233,8 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
       taux: taux,
       valeur_jour: valeurJour,
       montant: 0, // calculé ci-dessous après application du plafond
+      debut_sejour_overridden: !!ov?.debut_sejour_at,
+      fin_sejour_overridden:   !!ov?.fin_sejour_at,
     });
   }
 
@@ -250,6 +277,80 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
     montant_total: montantTotal,
     regime_used: regime,
   };
+}
+
+/** Upsert un override sur une ligne A81 (édit Début/Fin Séjour). Passe null
+ *  pour remettre la valeur d'origine sur un champ. */
+export async function upsertA81Override(
+  instanceId: string,
+  fields: { debut_sejour_at?: string | null; fin_sejour_at?: string | null },
+): Promise<{ ok: true } | { error: string }> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Non authentifié' };
+
+  // Upsert : on essaie update, sinon insert
+  const { data: existing } = await supabase
+    .from('user_a81_override')
+    .select('user_id')
+    .eq('user_id', user.id)
+    .eq('pairing_instance_id', instanceId)
+    .maybeSingle();
+  if (existing) {
+    const { error } = await supabase
+      .from('user_a81_override')
+      .update(fields)
+      .eq('user_id', user.id)
+      .eq('pairing_instance_id', instanceId);
+    if (error) return { error: error.message };
+  } else {
+    const { error } = await supabase
+      .from('user_a81_override')
+      .insert({ user_id: user.id, pairing_instance_id: instanceId, ...fields });
+    if (error) return { error: error.message };
+  }
+  return { ok: true };
+}
+
+/** Supprime (soft) une ligne A81 du tableau. */
+export async function deleteA81Row(instanceId: string): Promise<{ ok: true } | { error: string }> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Non authentifié' };
+  const { data: existing } = await supabase
+    .from('user_a81_override')
+    .select('user_id')
+    .eq('user_id', user.id)
+    .eq('pairing_instance_id', instanceId)
+    .maybeSingle();
+  if (existing) {
+    const { error } = await supabase
+      .from('user_a81_override')
+      .update({ deleted: true })
+      .eq('user_id', user.id)
+      .eq('pairing_instance_id', instanceId);
+    if (error) return { error: error.message };
+  } else {
+    const { error } = await supabase
+      .from('user_a81_override')
+      .insert({ user_id: user.id, pairing_instance_id: instanceId, deleted: true });
+    if (error) return { error: error.message };
+  }
+  return { ok: true };
+}
+
+/** Restaure une ligne supprimée (unset deleted). */
+export async function restoreA81Row(instanceId: string): Promise<{ ok: true } | { error: string }> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Non authentifié' };
+  const { error } = await supabase
+    .from('user_a81_override')
+    .update({ deleted: false })
+    .eq('user_id', user.id)
+    .eq('pairing_instance_id', instanceId);
+  if (error) return { error: error.message };
+  return { ok: true };
 }
 
 /** Liste les années qui ont au moins 1 draft A non vide pour l'utilisateur. */
