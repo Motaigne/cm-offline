@@ -6,6 +6,7 @@ import { computeIRandMF } from '@/lib/ep4';
 import type { PairingDetail } from '@/lib/scraper/types';
 import type { IrMfRate } from '@/lib/ir-rates';
 import { getPlanPrestation } from '@/lib/plan-prestation';
+import { loadAnnexeRowForMonth } from '@/app/actions/annexe';
 
 export interface MonthlyIrMfTotal {
   ir: number;       // compte
@@ -112,13 +113,9 @@ export async function getMonthlyIrMfEuros(month: string): Promise<MonthlyIrMfRes
     .in('id', sigIds);
   const sigById = new Map((sigs ?? []).map(s => [s.id, s]));
 
-  // 4. ir_mf_rates depuis annexe
-  const { data: irRow } = await supabase
-    .from('annexe_table')
-    .select('data')
-    .eq('slug', 'ir_mf_rates')
-    .single();
-  const irRates = (irRow?.data ?? []) as unknown as IrMfRate[];
+  // 4. ir_mf_rates depuis annexe (version applicable au mois M)
+  const irRowData = await loadAnnexeRowForMonth('ir_mf_rates', month);
+  const irRates = (irRowData ?? []) as unknown as IrMfRate[];
 
   // 5. Agrégat par scénario
   const result: MonthlyIrMfResponse = {

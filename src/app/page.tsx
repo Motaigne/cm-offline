@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { getScenariosWithItems } from '@/app/actions/planning';
 import { listNotesForMonth } from '@/app/actions/notes';
-import { loadAnnexe } from '@/app/actions/annexe';
+import { loadAnnexeForMonth, loadAnnexeRowForMonth } from '@/app/actions/annexe';
 import { getYearA81CumulBefore } from '@/app/actions/article81';
 import { getMonthlyIrMfEuros } from '@/app/actions/ir-mf';
 import { GanttView } from '@/app/components/gantt/gantt-view';
@@ -53,23 +53,23 @@ export default async function Home({
   if (!profile) redirect('/profil');
 
   const [y, mo] = month.split('-').map(Number);
-  const [scenarios, notes, annexe, { data: a81Row }, a81Cumul, irMfMonth, { data: prorataRow }, { data: ddaRulesRow }, { data: volPRulesRow }] = await Promise.all([
+  const [scenarios, notes, annexe, a81RowData, a81Cumul, irMfMonth, prorataRowData, ddaRulesRowData, volPRulesRowData] = await Promise.all([
     getScenariosWithItems(month),
     listNotesForMonth(month),
-    loadAnnexe(),
-    supabase.from('annexe_table').select('data').eq('slug', 'article_81').single(),
+    loadAnnexeForMonth(month),
+    loadAnnexeRowForMonth('article_81', month),
     getYearA81CumulBefore(y, mo),
     getMonthlyIrMfEuros(month),
-    supabase.from('annexe_table').select('data').eq('slug', 'prorata').single(),
-    supabase.from('annexe_table').select('data').eq('slug', 'dda_rules').single(),
-    supabase.from('annexe_table').select('data').eq('slug', 'vol_p_rules').single(),
+    loadAnnexeRowForMonth('prorata', month),
+    loadAnnexeRowForMonth('dda_rules', month),
+    loadAnnexeRowForMonth('vol_p_rules', month),
   ]);
-  const ddaRulesData   = (ddaRulesRow?.data   as { rules: unknown[] } | null) ?? null;
-  const volPRulesData  = (volPRulesRow?.data  as { rules: unknown[] } | null) ?? null;
+  const ddaRulesData   = (ddaRulesRowData  as { rules: unknown[] } | null) ?? null;
+  const volPRulesData  = (volPRulesRowData as { rules: unknown[] } | null) ?? null;
   type ProrataThreshold = { range: string; ji_restants: number; duree_min: number; duree_min_opt6: number };
   const prorataThresholds: ProrataThreshold[] =
-    (prorataRow?.data as { thresholds: ProrataThreshold[] } | null)?.thresholds ?? [];
-  const article81Data: Article81Data | null = (a81Row?.data as Article81Data | null) ?? null;
+    (prorataRowData as { thresholds: ProrataThreshold[] } | null)?.thresholds ?? [];
+  const article81Data: Article81Data | null = (a81RowData as Article81Data | null) ?? null;
   const valeurJour = Number(profile.valeur_jour ?? 600);
 
   // Calcul des primes mensuelles fixes (incitation + A330 + instruction).

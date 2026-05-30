@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
-import { loadAnnexe } from '@/app/actions/annexe';
+import { loadAnnexeForMonth } from '@/app/actions/annexe';
 import { NavBar } from '@/app/components/nav';
 import { ProfilForm } from './profil-form';
 
@@ -15,7 +15,9 @@ export default async function ProfilPage() {
     .eq('user_id', user.id)
     .single();
 
-  const annexe = await loadAnnexe();
+  // Profil = vue d'édition courante → on prend les valeurs annexes du mois en cours.
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const annexe = await loadAnnexeForMonth(currentMonth);
 
   return (
     <div className="flex flex-col h-screen bg-zinc-50 dark:bg-zinc-950 overflow-hidden">

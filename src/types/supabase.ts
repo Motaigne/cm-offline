@@ -52,12 +52,13 @@ export type Database = {
       annexe_table: {
         Row: {
           slug: string;
+          valid_from: string;
           name: string;
           description: string | null;
           data: import('@/types/supabase').Json;
           updated_at: string;
         };
-        Insert: { slug: string; name: string; description?: string | null; data: import('@/types/supabase').Json };
+        Insert: { slug: string; valid_from?: string; name: string; description?: string | null; data: import('@/types/supabase').Json };
         Update: Partial<Database['public']['Tables']['annexe_table']['Row']>;
         Relationships: [];
       };

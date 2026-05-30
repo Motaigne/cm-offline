@@ -7,6 +7,7 @@ import { computeIRandMF, type IrMfResult } from '@/lib/ep4/ir';
 import type { IrMfRate } from '@/lib/ir-rates';
 import type { PairingDetail } from '@/lib/scraper/types';
 import { getPlanPrestation } from '@/lib/plan-prestation';
+import { loadAnnexeRowForMonth } from '@/app/actions/annexe';
 
 export type RotationInstance = {
   id: string;
@@ -98,9 +99,8 @@ export async function getRotationsForMonth(month: string): Promise<RotationSigna
   if (!sigs?.length) return [];
 
   // Pré-calcul IR/MF par signature (besoin pour l'agrégation offline côté client).
-  const { data: irRow } = await supabase
-    .from('annexe_table').select('data').eq('slug', 'ir_mf_rates').single();
-  const irRates = (irRow?.data ?? []) as unknown as IrMfRate[];
+  const irRowData = await loadAnnexeRowForMonth('ir_mf_rates', month);
+  const irRates = (irRowData ?? []) as unknown as IrMfRate[];
   const irMfBySig = new Map<string, IrMfResult>();
   for (const s of sigs) {
     if (!s.raw_detail) continue;

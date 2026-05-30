@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { NavBar } from '@/app/components/nav';
 import { CatalogueTable } from './catalogue-table';
+import { loadAnnexeRowForMonth } from '@/app/actions/annexe';
 import type { Article81Data } from '@/lib/article81';
 
 export default async function CataloguePage({
@@ -26,10 +27,8 @@ export default async function CataloguePage({
   const isAdmin = profile?.is_admin === true;
   const valeurJour = Number(profile?.valeur_jour ?? 600);
 
-  const { data: a81Row } = await supabase
-    .from('annexe_table')
-    .select('data').eq('slug', 'article_81').single();
-  const article81Data: Article81Data | null = (a81Row?.data as Article81Data | null) ?? null;
+  const a81RowData = await loadAnnexeRowForMonth('article_81', month);
+  const article81Data: Article81Data | null = (a81RowData as Article81Data | null) ?? null;
 
   // Load available months from snapshots
   const { data: snapshots } = await supabase

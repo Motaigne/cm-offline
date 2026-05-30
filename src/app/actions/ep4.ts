@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import type { PairingDetail } from '@/lib/scraper/types';
 import type { Ep4Rotation, TauxAppRow } from '@/lib/ep4';
 import { buildEp4Rotation } from '@/lib/ep4';
+import { loadAnnexeRowForMonth } from '@/app/actions/annexe';
 import type { IrMfRate } from '@/lib/ir-rates';
 
 export type Ep4DetailResponse =
@@ -18,6 +19,7 @@ export async function getEp4Detail(sigId: string): Promise<Ep4DetailResponse> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Non authentifié' };
 
+  // ir_mf_rates : on prend la version la plus récente (pas de contexte mois ici).
   const [
     { data: sig, error: sigErr },
     { data: taux, error: tauxErr },
@@ -25,7 +27,8 @@ export async function getEp4Detail(sigId: string): Promise<Ep4DetailResponse> {
   ] = await Promise.all([
     supabase.from('pairing_signature').select('raw_detail').eq('id', sigId).single(),
     supabase.from('taux_app').select('rot_code, duree_min_h, duree_max_h, taux'),
-    supabase.from('annexe_table').select('data').eq('slug', 'ir_mf_rates').single(),
+    supabase.from('annexe_table').select('data').eq('slug', 'ir_mf_rates')
+      .order('valid_from', { ascending: false }).limit(1).maybeSingle(),
   ]);
 
   if (sigErr || !sig)         return { error: sigErr?.message ?? 'Signature introuvable' };
@@ -122,13 +125,13 @@ export async function getEp4ForMonth(month: string): Promise<Ep4MonthResponse | 
     .in('id', sigIds);
   const sigById = new Map((sigs ?? []).map(s => [s.id, s]));
 
-  // 5. Charge taux_app + ir_mf_rates
-  const [{ data: taux }, { data: irRow }] = await Promise.all([
+  // 5. Charge taux_app + ir_mf_rates (version applicable au mois M)
+  const [{ data: taux }, irRowData] = await Promise.all([
     supabase.from('taux_app').select('rot_code, duree_min_h, duree_max_h, taux'),
-    supabase.from('annexe_table').select('data').eq('slug', 'ir_mf_rates').single(),
+    loadAnnexeRowForMonth('ir_mf_rates', month),
   ]);
   const tauxRows = (taux ?? []) as TauxAppRow[];
-  const irRates  = ((irRow?.data ?? []) as unknown as IrMfRate[]);
+  const irRates  = ((irRowData ?? []) as unknown as IrMfRate[]);
 
   // 6. Construit la réponse — un Ep4Rotation par flight item
   const result: Ep4MonthResponse = {
