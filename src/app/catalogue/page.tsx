@@ -2,8 +2,8 @@ import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { NavBar } from '@/app/components/nav';
 import { CatalogueTable } from './catalogue-table';
-import { loadAnnexeRowForMonth } from '@/app/actions/annexe';
-import { loadProfileForMonth } from '@/app/actions/profile-version';
+import { loadAnnexeRowForMonth, loadAllAnnexeRows } from '@/app/actions/annexe';
+import { loadProfileForMonth, loadAllProfileVersions } from '@/app/actions/profile-version';
 import type { Article81Data } from '@/lib/article81';
 
 export default async function CataloguePage({
@@ -20,15 +20,16 @@ export default async function CataloguePage({
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  const [{ data: profile }, profileForMonth] = await Promise.all([
+  const [{ data: profile }, profileForMonth, profileVersions, annexeRows, a81RowData] = await Promise.all([
     supabase.from('user_profile').select('is_admin, valeur_jour').eq('user_id', user.id).single(),
     loadProfileForMonth(month, user.id),
+    loadAllProfileVersions(user.id),
+    loadAllAnnexeRows(),
+    loadAnnexeRowForMonth('article_81', month),
   ]);
   const isAdmin = profile?.is_admin === true;
   // valeur_jour : version du mois si dispo, sinon user_profile (compat).
   const valeurJour = Number(profileForMonth?.valeur_jour ?? profile?.valeur_jour ?? 600);
-
-  const a81RowData = await loadAnnexeRowForMonth('article_81', month);
   const article81Data: Article81Data | null = (a81RowData as Article81Data | null) ?? null;
 
   // Load available months from snapshots
@@ -85,6 +86,8 @@ export default async function CataloguePage({
           isAdmin={isAdmin}
           article81Data={article81Data}
           valeurJour={valeurJour}
+          profileVersions={profileVersions}
+          annexeRows={annexeRows}
         />
       </div>
     </div>

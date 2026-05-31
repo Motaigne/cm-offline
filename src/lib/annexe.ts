@@ -110,6 +110,50 @@ export function computeFixe(
   return a.traitement_base.base_cdb_a1 * coefF * coefEch * (nb30e / 30);
 }
 
+/**
+ * Profil minimal nécessaire pour dériver PVEI à partir des rows annexe.
+ * Champs alignés sur `user_profile_version` (Row['public']['Tables'][...]).
+ */
+export interface FinanceProfileLite {
+  aircraft_principal: string | null;
+  fonction: string | null;
+  classe: number | null;
+  categorie: string | null;
+  bonus_atpl: boolean | null;
+}
+
+/**
+ * Calcule (PVEI, KSP) pour le profil utilisateur applicable à un mois donné, à
+ * partir des rows annexe versionnées + la liste des versions de profil. Utilisé
+ * par catalogue / comparatif pour que la colonne Total € reflète le profil de
+ * l'utilisateur connecté (et pas les constantes par défaut OPL A335 Cl.2/C/4).
+ *
+ * Renvoie null si annexe ou profil incomplet → le caller doit fallback aux
+ * constantes legacy.
+ */
+export function getPveiKspForMonth<T extends FinanceProfileLite & { valid_from: string }>(
+  profileVersions: T[],
+  annexeRows: AnnexeRow[],
+  month: string,
+): { pvei: number; ksp: number } | null {
+  const cutoff = /^\d{4}-\d{2}$/.test(month) ? `${month}-01` : month;
+  const prof = [...profileVersions]
+    .sort((a, b) => b.valid_from.localeCompare(a.valid_from))
+    .find(v => v.valid_from <= cutoff);
+  if (!prof?.fonction || !prof.classe || !prof.categorie) return null;
+  const annexe = getAnnexeDataFromRows(annexeRows, month);
+  if (!annexe.taux_avion?.length || !annexe.coef_classe?.length) return null;
+  const pvei = computePVEI(
+    prof.aircraft_principal ?? 'A335',
+    prof.fonction,
+    prof.classe,
+    prof.categorie,
+    prof.bonus_atpl ?? false,
+    annexe as AnnexeData,
+  );
+  return { pvei, ksp: KSP };
+}
+
 export function computeFullProfile(
   aircraft: string,
   fonction: string,

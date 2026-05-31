@@ -3,8 +3,8 @@ import { fetchAllPaginated } from '@/lib/supabase/paginate';
 import { redirect } from 'next/navigation';
 import { NavBar } from '@/app/components/nav';
 import { ComparatifClient } from './comparatif-client';
-import { loadAnnexeRowForMonth } from '@/app/actions/annexe';
-import { loadProfileForMonth } from '@/app/actions/profile-version';
+import { loadAnnexeRowForMonth, loadAllAnnexeRows } from '@/app/actions/annexe';
+import { loadProfileForMonth, loadAllProfileVersions } from '@/app/actions/profile-version';
 import type { Article81Data } from '@/lib/article81';
 
 export default async function ComparatifPage({
@@ -22,9 +22,13 @@ export default async function ComparatifPage({
   if (!user) redirect('/login');
 
   // Article 81 : matrice annexe + valeur_jour profil applicable au mois M.
-  const [a81RowData, profileForMonth] = await Promise.all([
+  // + versions complètes (profil + annexe) pour permettre au client de
+  // dériver PVEI/KSP du profil utilisateur quand il navigue entre mois.
+  const [a81RowData, profileForMonth, profileVersions, annexeRows] = await Promise.all([
     loadAnnexeRowForMonth('article_81', month),
     loadProfileForMonth(month, user.id),
+    loadAllProfileVersions(user.id),
+    loadAllAnnexeRows(),
   ]);
   const article81Data: Article81Data | null = (a81RowData as Article81Data | null) ?? null;
   let valeurJour = Number(profileForMonth?.valeur_jour ?? NaN);
@@ -121,6 +125,8 @@ export default async function ComparatifPage({
           currentMonth={month}
           article81Data={article81Data}
           valeurJour={valeurJour}
+          profileVersions={profileVersions}
+          annexeRows={annexeRows}
         />
       </div>
     </div>

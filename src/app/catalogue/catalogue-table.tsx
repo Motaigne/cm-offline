@@ -1,12 +1,14 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { PVEI, KSP } from '@/lib/finance';
+import { PVEI as PVEI_DEFAULT, KSP as KSP_DEFAULT } from '@/lib/finance';
 import { getRotationsForMonth } from '@/app/actions/search';
 import { cacheRotations, loadRotationsFromDB, getCachedMonths } from '@/lib/local-db';
 import { ReleasePublisher } from './release-publisher';
 import { computeArticle81 } from '@/lib/article81';
 import type { Article81Data } from '@/lib/article81';
+import { getPveiKspForMonth, type AnnexeRow } from '@/lib/annexe';
+import type { ProfileVersion } from '@/app/actions/profile-version';
 
 type Sig = {
   id: string;
@@ -78,6 +80,7 @@ function Col({
 export function CatalogueTable({
   signatures: initialSigs, months: initialMonths, currentMonth: initialMonth, isAdmin,
   article81Data, valeurJour,
+  profileVersions = [], annexeRows = [],
 }: {
   signatures: Sig[];
   months: string[];
@@ -85,6 +88,10 @@ export function CatalogueTable({
   isAdmin: boolean;
   article81Data: Article81Data | null;
   valeurJour: number;
+  /** Versions du profil utilisateur — pour dériver PVEI applicable au mois. */
+  profileVersions?: ProfileVersion[];
+  /** Rows annexe versionnées — pour `getPveiKspForMonth`. */
+  annexeRows?: AnnexeRow[];
 }) {
   const [sigs, setSigs]             = useState<Sig[]>(initialSigs);
   const [months, setMonths]         = useState<string[]>(initialMonths);
@@ -135,6 +142,13 @@ export function CatalogueTable({
     else { setSortKey(key); setSortDir('desc'); }
   }
 
+  // PVEI/KSP dérivés du profil utilisateur applicable au mois courant.
+  // Fallback aux constantes par défaut si profil incomplet ou annexe non chargée.
+  const { pvei, ksp } = useMemo(() => {
+    const r = getPveiKspForMonth(profileVersions, annexeRows, currentMonth);
+    return r ?? { pvei: PVEI_DEFAULT, ksp: KSP_DEFAULT };
+  }, [profileVersions, annexeRows, currentMonth]);
+
   const rows = useMemo(() => {
     const q = filter.toLowerCase();
     return sigs
@@ -142,8 +156,8 @@ export function CatalogueTable({
         const tsvNuit  = s.tsv_nuit ?? 0;
         const prime    = s.prime ?? 0;
         const pvH      = s.hcr_crew + tsvNuit / 2;
-        const montantPv = pvH * PVEI * KSP;
-        const primeBT  = prime * 2.5 * PVEI;
+        const montantPv = pvH * pvei * ksp;
+        const primeBT  = prime * 2.5 * pvei;
         const totalEur = montantPv + primeBT;
         // Article 81 — montant prime séjour + montant/jour, lookup zone × tSej en annexe
         const a81 = (s.temps_sej != null && s.zone)
@@ -166,7 +180,7 @@ export function CatalogueTable({
         if (va > vb) return sortDir === 'asc' ? 1 : -1;
         return 0;
       });
-  }, [sigs, sortKey, sortDir, filter]);
+  }, [sigs, sortKey, sortDir, filter, pvei, ksp, valeurJour, article81Data]);
 
   function monthLabel(m: string) {
     const [y, mo] = m.split('-').map(Number);

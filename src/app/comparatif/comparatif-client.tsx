@@ -1,13 +1,15 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { PVEI, KSP } from '@/lib/finance';
+import { PVEI as PVEI_DEFAULT, KSP as KSP_DEFAULT } from '@/lib/finance';
 import { getRotationsForMonth } from '@/app/actions/search';
 import { cacheRotations, loadRotationsFromDB, getCachedMonths } from '@/lib/local-db';
 import type { RotationSignature } from '@/app/actions/search';
 import { Ep4Detail } from './ep4-detail';
 import { computeArticle81 } from '@/lib/article81';
 import type { Article81Data } from '@/lib/article81';
+import { getPveiKspForMonth, type AnnexeRow } from '@/lib/annexe';
+import type { ProfileVersion } from '@/app/actions/profile-version';
 
 type SigInstance = {
   id: string;
@@ -69,9 +71,9 @@ function fmtDatePair(inst: SigInstance): string {
   return `${dep}-${arr}`;
 }
 
-function rotationMontant(sig: Sig): number {
-  const pv    = (sig.hcr_crew + (sig.tsv_nuit ?? 0) / 2) * PVEI * KSP;
-  const prime = (sig.prime ?? 0) * 2.5 * PVEI;
+function rotationMontant(sig: Sig, pvei: number, ksp: number): number {
+  const pv    = (sig.hcr_crew + (sig.tsv_nuit ?? 0) / 2) * pvei * ksp;
+  const prime = (sig.prime ?? 0) * 2.5 * pvei;
   return Math.round(pv + prime);
 }
 
@@ -108,12 +110,15 @@ function rotToSig(s: RotationSignature): Sig {
 export function ComparatifClient({
   signatures: initialSigs, months: initialMonths, currentMonth: initialMonth,
   article81Data, valeurJour,
+  profileVersions = [], annexeRows = [],
 }: {
   signatures: Sig[];
   months: string[];
   currentMonth: string;
   article81Data: Article81Data | null;
   valeurJour: number;
+  profileVersions?: ProfileVersion[];
+  annexeRows?: AnnexeRow[];
 }) {
   const [sigs, setSigs]           = useState<Sig[]>(initialSigs);
   const [months, setMonths]       = useState<string[]>(initialMonths);
@@ -175,17 +180,24 @@ export function ComparatifClient({
 
   const sig = useMemo(() => sigs.find(s => s.id === selected), [sigs, selected]);
 
+  // PVEI/KSP dérivés du profil utilisateur applicable au mois courant.
+  // Fallback aux constantes par défaut si profil incomplet ou annexe absente.
+  const { pvei, ksp } = useMemo(() => {
+    const r = getPveiKspForMonth(profileVersions, annexeRows, currentMonth);
+    return r ?? { pvei: PVEI_DEFAULT, ksp: KSP_DEFAULT };
+  }, [profileVersions, annexeRows, currentMonth]);
+
   const computed = useMemo(() => {
     if (!sig) return null;
     const tsvNuit   = sig.tsv_nuit ?? 0;
     const prime     = sig.prime ?? 0;
     const pvNuit    = tsvNuit / 2;
     const pvTotal   = sig.hcr_crew + pvNuit;
-    const montantPv = pvTotal * PVEI * KSP;
-    const primeBT   = prime * 2.5 * PVEI;
+    const montantPv = pvTotal * pvei * ksp;
+    const primeBT   = prime * 2.5 * pvei;
     const pvPrime   = montantPv + primeBT;
     return { tsvNuit, pvNuit, pvTotal, montantPv, primeBT, pvPrime };
-  }, [sig]);
+  }, [sig, pvei, ksp]);
 
   const a81 = useMemo(() => {
     if (!sig?.temps_sej || !sig.zone) return null;
@@ -245,7 +257,7 @@ export function ComparatifClient({
           {filtered.slice(0, 50).map(s => {
             const first = s.instances[0] ?? null;
             const datePairs = s.instances.map(fmtDatePair).join(' · ');
-            const montant = rotationMontant(s);
+            const montant = rotationMontant(s, pvei, ksp);
             return (
               <button
                 key={s.id}
@@ -339,8 +351,8 @@ export function ComparatifClient({
                   {sig.instances.map(inst => {
                     const hcrMois = prorateForMonth(sig.hcr_crew, inst.depart_at, inst.arrivee_at, year, mo);
                     const tsvMois = prorateForMonth(sig.tsv_nuit ?? 0, inst.depart_at, inst.arrivee_at, year, mo);
-                    const pvMois  = (hcrMois + tsvMois / 2) * PVEI * KSP;
-                    const eurMois = Math.round(pvMois + (sig.prime ?? 0) * 2.5 * PVEI);
+                    const pvMois  = (hcrMois + tsvMois / 2) * pvei * ksp;
+                    const eurMois = Math.round(pvMois + (sig.prime ?? 0) * 2.5 * pvei);
                     const isProrated = hcrMois < sig.hcr_crew - 0.01;
                     return (
                       <tr key={inst.id}>
@@ -432,8 +444,8 @@ export function ComparatifClient({
           </div>
 
           <div className="text-xs text-zinc-400 bg-zinc-100 dark:bg-zinc-800/50 rounded-lg px-4 py-2.5">
-            Calculs avec PVEI&nbsp;=&nbsp;{PVEI}&nbsp;€/h · KSP&nbsp;=&nbsp;{KSP} · Prime bi-tronçon&nbsp;=&nbsp;{(2.5 * PVEI).toFixed(2)}&nbsp;€
-            <span className="ml-2 text-zinc-300 dark:text-zinc-500">(modifiables dans /profil)</span>
+            Calculs avec PVEI&nbsp;=&nbsp;{pvei.toFixed(2)}&nbsp;€/h · KSP&nbsp;=&nbsp;{ksp} · Prime bi-tronçon&nbsp;=&nbsp;{(2.5 * pvei).toFixed(2)}&nbsp;€
+            <span className="ml-2 text-zinc-300 dark:text-zinc-500">(profil applicable au mois)</span>
           </div>
 
           {/* Article 81 — défiscalisation par rotation */}
