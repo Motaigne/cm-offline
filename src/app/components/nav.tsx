@@ -14,6 +14,8 @@ import {
   downloadPlanning, downloadDatabase,
   parseBackupFile, importPlanning, importDatabase, importLegacyBackup,
 } from '@/lib/backup';
+import { useLocalStorageState } from '@/hooks/use-local-storage-state';
+import { useOnlineStatus } from '@/hooks/use-online';
 
 const TABS: { label: string; href: string; offlineDisabled?: boolean }[] = [
   { label: 'Profil',      href: '/profil'     },
@@ -163,23 +165,20 @@ export function NavBar() {
   const [pendingCount, setPendingCount] = useState(0);
   const [backupMenuOpen, setBackupMenuOpen] = useState(false);
   const [backupStatus, setBackupStatus] = useState('');
-  // Toujours `true` au 1er render (SSR + client) pour éviter un mismatch
-  // d'hydration sur les onglets offlineDisabled. La vraie valeur est lue au
-  // mount + via les events online/offline.
-  const [online, setOnline] = useState<boolean>(true);
+  // Statut réseau via useSyncExternalStore (hook dédié) : pas de
+  // set-state-in-effect et pas de mismatch d'hydration (SSR snapshot = true).
+  const online = useOnlineStatus();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Sync mode (Lite / Perso) + sélection Perso (mois cochés)
   const [syncMenuOpen, setSyncMenuOpen] = useState(false);
-  const [syncMode, setSyncMode]   = useState<SyncMode>(DEFAULT_SYNC_MODE);
-  const [persoMonths, setPersoMonths] = useState<string[]>([]);
+  const [syncMode, setSyncMode] = useLocalStorageState<SyncMode>(
+    SYNC_MODE_KEY, DEFAULT_SYNC_MODE,
+    raw => (raw === 'lite' || raw === 'perso') ? raw : DEFAULT_SYNC_MODE,
+    v => v,
+  );
+  const [persoMonths, setPersoMonths] = useLocalStorageState<string[]>(SYNC_PERSO_KEY, []);
   const [availableMonths, setAvailableMonths] = useState<string[]>([]);
-  useEffect(() => {
-    const m = (localStorage.getItem(SYNC_MODE_KEY) as SyncMode | null) ?? DEFAULT_SYNC_MODE;
-    setSyncMode(m);
-    const raw = localStorage.getItem(SYNC_PERSO_KEY);
-    try { setPersoMonths(JSON.parse(raw ?? '[]') as string[]); } catch { setPersoMonths([]); }
-  }, []);
   async function ensureAvailableMonths() {
     if (availableMonths.length > 0 || !navigator.onLine) return;
     const months = await withTimeout(getAvailableMonths(), 5000, [] as string[]);
@@ -187,14 +186,9 @@ export function NavBar() {
   }
   function persistMode(m: SyncMode) {
     setSyncMode(m);
-    localStorage.setItem(SYNC_MODE_KEY, m);
   }
   function togglePersoMonth(m: string) {
-    setPersoMonths(prev => {
-      const next = prev.includes(m) ? prev.filter(x => x !== m) : [...prev, m].sort().reverse();
-      localStorage.setItem(SYNC_PERSO_KEY, JSON.stringify(next));
-      return next;
-    });
+    setPersoMonths(prev => prev.includes(m) ? prev.filter(x => x !== m) : [...prev, m].sort().reverse());
   }
 
   useEffect(() => {
@@ -219,21 +213,6 @@ export function NavBar() {
       void loadAllA81Overrides().then(o => cacheA81Overrides(o)).catch(() => {});
       void loadAllA81YearData().then(y => cacheA81YearData(y)).catch(() => {});
     }
-  }, []);
-
-  // Suit l'état réseau pour griser les onglets offlineDisabled (EP4).
-  // Sync la valeur réelle au mount (l'état initial est forcé à `true` côté
-  // client pour matcher le SSR — voir useState plus haut).
-  useEffect(() => {
-    if (!navigator.onLine) setOnline(false);
-    const up = () => setOnline(true);
-    const down = () => setOnline(false);
-    window.addEventListener('online', up);
-    window.addEventListener('offline', down);
-    return () => {
-      window.removeEventListener('online', up);
-      window.removeEventListener('offline', down);
-    };
   }, []);
 
   // Refresh badge quand une op est enqueued ou syncée.

@@ -3,6 +3,7 @@
 import { useState, useTransition, useEffect } from 'react';
 import { addAllowedEmail, removeAllowedEmail, setUserScraperRole, backfillTsvNuit } from '@/app/actions/admin';
 import type { Database } from '@/types/supabase';
+import { useLocalStorageState } from '@/hooks/use-local-storage-state';
 
 type AllowedEmail = Pick<Database['public']['Tables']['allowed_email']['Row'], 'email' | 'added_at' | 'note'>;
 type AuthLog      = Pick<Database['public']['Tables']['auth_log']['Row'], 'id' | 'email' | 'kind' | 'created_at' | 'meta'>;
@@ -44,23 +45,19 @@ export function WhitelistClient({ emails, logs, profiles }: { emails: AllowedEma
   const [showRpcForm, setShowRpcForm]   = useState(false);
   const [rpcMonth,  setRpcMonth]        = useState('');
   const [rpcCookie, setRpcCookie]       = useState('');
-  const [rpcSn,     setRpcSn]           = useState('');
-  const [rpcUserId, setRpcUserId]       = useState('');
+  const [rpcSn,     setRpcSn]           = useLocalStorageState<string>('af_sn',     '', r => r, v => v);
+  const [rpcUserId, setRpcUserId]       = useLocalStorageState<string>('af_userid', '', r => r, v => v);
   const [rpcStatus, setRpcStatus]       = useState('');
   const [rpcBusy,   setRpcBusy]         = useState(false);
 
   useEffect(() => {
-    setRpcSn(localStorage.getItem('af_sn') ?? '');
-    setRpcUserId(localStorage.getItem('af_userid') ?? '');
-    // Mois courant par défaut
+    // Mois courant par défaut.
     const now = new Date();
     setRpcMonth(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
   }, []);
 
   async function handleBackfillRpc() {
     if (!rpcCookie || !rpcSn || !rpcUserId) return;
-    localStorage.setItem('af_sn', rpcSn);
-    localStorage.setItem('af_userid', rpcUserId);
     setRpcBusy(true);
     setRpcStatus('1 requête pairingsearch en cours…');
     try {

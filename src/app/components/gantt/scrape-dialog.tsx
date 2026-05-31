@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import type { ScrapeEvent } from '@/lib/scraper/types';
 import { getCurrentUserScrapeRights } from '@/app/actions/auth';
+import { useLocalStorageState } from '@/hooks/use-local-storage-state';
 
 const NON_ADMIN_CAP = 50;
 
@@ -26,8 +27,8 @@ export function ScrapeDialog({
 }) {
   const [month,  setMonth]  = useState(currentMonth);
   const [cookie, setCookie] = useState('');
-  const [sn,     setSn]     = useState('');
-  const [userId, setUserId] = useState('');
+  const [sn,     setSn]     = useLocalStorageState<string>('af_sn',     '', r => r, v => v);
+  const [userId, setUserId] = useLocalStorageState<string>('af_userid', '', r => r, v => v);
   const [phase,  setPhase]  = useState<Phase>({ name: 'idle' });
   const [maxRotations, setMaxRotations] = useState<string>(''); // vide = tout (cappé serveur)
   const [isAdmin, setIsAdmin] = useState(false);
@@ -35,8 +36,6 @@ export function ScrapeDialog({
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    setSn(localStorage.getItem('af_sn') ?? '');
-    setUserId(localStorage.getItem('af_userid') ?? '');
     void getCurrentUserScrapeRights().then(r => setIsAdmin(r.is_admin)).catch(() => {});
   }, []);
 
@@ -58,8 +57,6 @@ export function ScrapeDialog({
 
   async function analyze() {
     if (!canAnalyze) return;
-    localStorage.setItem('af_sn', sn);
-    localStorage.setItem('af_userid', userId);
     setPhase({ name: 'analyzing' });
 
     try {

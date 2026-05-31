@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useTransition, useRef, useMemo } from 'react';
+import { useState, useEffect, useTransition, useRef, useMemo, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -45,6 +45,7 @@ import { NavBar } from '@/app/components/nav';
 import { EmptyCacheBanner } from '@/app/components/empty-cache-banner';
 import { MonthReleaseIcon } from '@/app/components/month-release-icon';
 import { usePushSubscription } from '@/hooks/use-push-subscription';
+import { useLocalStorageState } from '@/hooks/use-local-storage-state';
 
 type RegimeEnum = Database['public']['Enums']['regime_enum'];
 
@@ -764,16 +765,13 @@ export function GanttView({
   //   congés/TAF qui le coupent. 1 segment, déplacé.
   // ON : le RPC se met en pause pendant les congés/TAF, puis reprend après.
   //   N+1 segments séparés de N pauses.
-  const [rpcChevauchement, setRpcChevauchement] = useState(false);
-  useEffect(() => {
-    setRpcChevauchement(localStorage.getItem(`cm-rpc-chevauchement:${currentMonth}`) === '1');
-  }, [currentMonth]);
+  const [rpcChevauchement, setRpcChevauchement] = useLocalStorageState<boolean>(
+    `cm-rpc-chevauchement:${currentMonth}`, false,
+    raw => raw === '1',
+    v => v ? '1' : '0',
+  );
   function toggleRpcChevauchement() {
-    setRpcChevauchement(prev => {
-      const next = !prev;
-      localStorage.setItem(`cm-rpc-chevauchement:${currentMonth}`, next ? '1' : '0');
-      return next;
-    });
+    setRpcChevauchement(prev => !prev);
   }
 
   // IR/MF + A81 cumul : props serveur figées au render initial, on copie en
@@ -1016,7 +1014,11 @@ export function GanttView({
   const [detailPanel, setDetailPanel] = useState<DetailPanel | null>(null);
 
   // Compteur prime d'incitation (0-5), persistance localStorage par mois.
-  const [incitCount, setIncitCount] = useState(0);
+  const [incitCount, setIncitCount] = useLocalStorageState<number>(
+    `cm-incit-${currentMonth}`, 0,
+    raw => Math.max(0, Math.min(5, parseInt(raw) || 0)),
+    String,
+  );
 
   // Reset menu + confirmation modale
   const [resetMenuOpen, setResetMenuOpen] = useState(false);
@@ -1036,17 +1038,8 @@ export function GanttView({
       .catch(() => { setIsAdmin(false); setCanScrape(false); });
   }, []);
 
-  // Charge le compteur incitation pour le mois courant. Indexé sur currentMonth
-  // (et pas la prop `month` initiale) sinon naviguer ‹/› dans la même session
-  // garde la valeur du 1er mois et écrase celle des mois suivants.
-  useEffect(() => {
-    const stored = localStorage.getItem(`cm-incit-${currentMonth}`);
-    setIncitCount(stored ? Math.max(0, Math.min(5, parseInt(stored) || 0)) : 0);
-  }, [currentMonth]);
-
   function changeIncit(n: number) {
     setIncitCount(n);
-    localStorage.setItem(`cm-incit-${currentMonth}`, String(n));
   }
 
   async function handleReset() {
@@ -1172,8 +1165,16 @@ export function GanttView({
 
   const [year, mo] = currentMonth.split('-').map(Number);
   const dim   = daysInMonth(year, mo);
-  const [today, setToday] = useState('');
-  useEffect(() => { setToday(localStr(new Date())); }, []);
+  // Date du jour via useSyncExternalStore : pas de setState-in-effect.
+  // SSR snapshot = '' (= comportement avant l'hydration). Client snapshot
+  // = date locale. La fonction `subscribe` ne re-subscribe jamais (today
+  // ne change pas pendant la session pour l'usage qu'on en fait : highlight
+  // de la colonne du jour).
+  const today = useSyncExternalStore(
+    () => () => {},
+    () => localStr(new Date()),
+    () => '',
+  );
   const tafDur = getTafDuration(effRegime);
   const tafOk  = isTafAvailable(effRegime, currentMonth);
   const days   = Array.from({ length: dim }, (_, i) => i + 1);
