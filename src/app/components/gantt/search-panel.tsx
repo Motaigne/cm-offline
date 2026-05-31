@@ -5,9 +5,9 @@ import { type RotationSignature, type RotationInstance } from '@/app/actions/sea
 import type { Scenario, CalendarItem } from '@/app/page';
 import type { ScenarioName } from '@/app/actions/planning';
 import { loadRotationsFromDB } from '@/lib/local-db';
-import { enqueueAdd } from '@/lib/sync-service';
+import { enqueueAdd, enqueueDelete } from '@/lib/sync-service';
 import { rotationValue } from '@/lib/finance';
-import type { BidCategory } from '@/lib/activity-meta';
+import { ACTIVITY_META, type BidCategory } from '@/lib/activity-meta';
 
 const BID_LABEL: Record<BidCategory, string> = {
   dda_vol:     'DDA',
@@ -78,26 +78,27 @@ function _hasOverlap(items: CalendarItem[], start: string, end: string) {
   return items.some(i => i.start_date <= end && i.end_date >= start);
 }
 
-/** Vrai si le candidat (vol) ne peut pas être posé en raison d'un
- *  chevauchement avec un item existant :
+/** Items en conflit avec le candidat (vol) :
  *    1. Dates calendaires qui se chevauchent (toujours bloquant).
  *    2. RPC qui chevauche un autre VOL → bloquant (RPC mutuels).
  *    3. RPC qui chevauche un HARD blocker (sol/sim/medical/instr/autre) →
  *       bloquant (ces activités ne peuvent jamais être chevauchées par le RPC).
  *  Le RPC qui chevauche un congé/TAF est AUTORISÉ (juste signalé par le
  *  flag visuel sur la barre de vol).  */
-function hasOverlapWithRpc(
+function getConflictingItems(
   items: CalendarItem[],
   candDepartAt: string,
   candArriveeAt: string,
   candRestAfterH: number | null | undefined,
-): boolean {
+): CalendarItem[] {
   const candStart = candDepartAt.slice(0, 10);
   const candEnd   = candArriveeAt.slice(0, 10);
   const candStartMs = new Date(candDepartAt).getTime();
   const candArriveeMs = new Date(candArriveeAt).getTime();
   const candRpcEndMs = candArriveeMs + Math.max(0, candRestAfterH ?? 0) * 3_600_000;
-  return items.some(i => {
+  return items.filter(i => {
+    // Spillovers (vols à cheval issus du mois précédent) : non supprimables ici.
+    if (i._isSpillover) return false;
     // 1. Date overlap → toujours bloquant.
     if (i.start_date <= candEnd && i.end_date >= candStart) return true;
     // 2. RPC overlap → bloquant uniquement vs vol ou hard blocker.
@@ -106,6 +107,28 @@ function hasOverlapWithRpc(
     const [iStart, iEnd] = rawRangeMs(i);
     return iStart < candRpcEndMs && candStartMs < iEnd;
   });
+}
+
+function hasOverlapWithRpc(
+  items: CalendarItem[],
+  candDepartAt: string,
+  candArriveeAt: string,
+  candRestAfterH: number | null | undefined,
+): boolean {
+  return getConflictingItems(items, candDepartAt, candArriveeAt, candRestAfterH).length > 0;
+}
+
+/** Libellé court d'un item pour affichage dans le confirm de remplacement. */
+function describeItem(item: CalendarItem): string {
+  const meta = ACTIVITY_META[item.kind];
+  const m = (item.meta && typeof item.meta === 'object' && !Array.isArray(item.meta))
+    ? item.meta as Record<string, unknown> : null;
+  const label = item.kind === 'flight' && typeof m?.destination === 'string'
+    ? String(m.destination)
+    : meta.label;
+  const startD = new Date(item.start_date + 'T00:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  const endD   = new Date(item.end_date   + 'T00:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  return item.start_date === item.end_date ? `${label} (${startD})` : `${label} (${startD} → ${endD})`;
 }
 
 function matchesFamily(aircraftCode: string, families: string[]): boolean {
@@ -125,6 +148,7 @@ function RotationCard({
   preselectedCategory,
   onPlaced,
   onItemAdded,
+  onItemsRemoved,
 }: {
   sig: RotationSignature;
   scenarios: Scenario[];
@@ -132,10 +156,19 @@ function RotationCard({
   preselectedCategory?: BidCategory;
   onPlaced: () => void;
   onItemAdded?: (item: CalendarItem, draftId: string) => void;
+  /** Notifie le parent qu'on a supprimé des items (cas remplacement). */
+  onItemsRemoved?: (ids: string[]) => void;
 }) {
   const [selectedInst, setSelectedInst] = useState<RotationInstance | null>(null);
   const [overlapErr, setOverlapErr]     = useState<string | null>(null);
   const [isPending, startTransition]    = useTransition();
+  // Demande de remplacement : chip conflit cliquée en mode 1-clic. On affiche
+  // un confirm inline listant les items à remplacer avant d'agir.
+  const [pendingReplace, setPendingReplace] = useState<{
+    inst: RotationInstance;
+    scenario: Scenario;
+    conflicts: CalendarItem[];
+  } | null>(null);
   // Fallback si pas de category présélectionnée (mode legacy : panneau ouvert
   // depuis un endroit qui ne l'a pas spécifiée — actuellement aucun, mais on
   // garde la prop optionnelle pour ne pas casser d'éventuels futurs callers).
@@ -144,14 +177,9 @@ function RotationCard({
 
   const pvPrimeEur = Math.round(rotationValue(sig.hcr_crew, sig.prime, sig.tsv_nuit));
 
-  function place(inst: RotationInstance, scenario: Scenario) {
+  /** Construit l'item planning_item à partir de l'instance + signature. */
+  function buildNewItem(inst: RotationInstance): CalendarItem {
     const endDate = endDateFromArrivee(inst.arrivee_at);
-    const restH   = inst.rest_after_h ?? sig.rest_after_h;
-    if (hasOverlapWithRpc(scenario.items, inst.depart_at, inst.arrivee_at, restH)) {
-      setOverlapErr(`Chevauchement (vol ou RPC) dans le scénario ${scenario.name}`);
-      return;
-    }
-    const id = crypto.randomUUID();
     const meta = {
       destination:   sig.rotation_code,
       zone:          sig.zone,
@@ -173,17 +201,44 @@ function RotationCard({
       scheduled_begin_activity_at: inst.scheduled_begin_activity_at,
       scheduled_end_activity_at:   inst.scheduled_end_activity_at,
     };
-    const newItem: CalendarItem = {
-      id, kind: 'flight',
+    return {
+      id: crypto.randomUUID(),
+      kind: 'flight',
       start_date: inst.depart_date, end_date: endDate,
       bid_category: bidCat,
       pairing_instance_id: inst.id,
       meta,
     };
+  }
+
+  function place(inst: RotationInstance, scenario: Scenario) {
+    const restH = inst.rest_after_h ?? sig.rest_after_h;
+    if (hasOverlapWithRpc(scenario.items, inst.depart_at, inst.arrivee_at, restH)) {
+      setOverlapErr(`Chevauchement (vol ou RPC) dans le scénario ${scenario.name}`);
+      return;
+    }
+    const newItem = buildNewItem(inst);
     onItemAdded?.(newItem, scenario.id);
     startTransition(async () => {
       await enqueueAdd(newItem, scenario.id);
       setSelectedInst(null);
+      onPlaced();
+    });
+  }
+
+  /** Supprime les conflits puis pose le nouveau vol. Compatible offline
+   *  (passe par enqueueDelete/enqueueAdd → rejoués au prochain Sync). */
+  function placeWithReplacement(inst: RotationInstance, scenario: Scenario, conflicts: CalendarItem[]) {
+    const newItem = buildNewItem(inst);
+    const removedIds = conflicts.map(c => c.id);
+    // Optimistic UI : on retire les conflits + ajoute le nouveau d'un coup.
+    onItemsRemoved?.(removedIds);
+    onItemAdded?.(newItem, scenario.id);
+    startTransition(async () => {
+      for (const id of removedIds) await enqueueDelete(id);
+      await enqueueAdd(newItem, scenario.id);
+      setSelectedInst(null);
+      setPendingReplace(null);
       onPlaced();
     });
   }
@@ -259,28 +314,33 @@ function RotationCard({
         {sig.instances.map(inst => {
           const isSelected = selectedInst?.id === inst.id;
           const endDate = endDateFromArrivee(inst.arrivee_at);
-          // En mode 1-clic (cat + scn présélectionnés) : grise les chips qui
-          // chevauchent un item existant OU le RPC d'un vol voisin (post-courrier
-          // côté existant, ou pré-courrier côté nouveau vol) pour éviter le clic
-          // mort. Comparaison en ms via timestamps (precision heure).
-          const conflictsHere = preselectedScenario && preselectedCategory
-            ? (() => {
-                const sc = scenarios.find(s => s.name === preselectedScenario);
-                if (!sc) return false;
-                const restH = inst.rest_after_h ?? sig.rest_after_h;
-                return hasOverlapWithRpc(sc.items, inst.depart_at, inst.arrivee_at, restH);
-              })()
-            : false;
+          // En mode 1-clic (cat + scn présélectionnés) : un chip en conflit reste
+          // cliquable ; le clic ouvre un confirm de remplacement. Hors 1-clic,
+          // on garde la sélection normale (l'utilisateur choisira ensuite le
+          // scénario via les boutons en bas).
+          const sc = preselectedScenario ? scenarios.find(s => s.name === preselectedScenario) : null;
+          const restH = inst.rest_after_h ?? sig.rest_after_h;
+          const conflictItems = (preselectedScenario && preselectedCategory && sc)
+            ? getConflictingItems(sc.items, inst.depart_at, inst.arrivee_at, restH)
+            : [];
+          const conflictsHere = conflictItems.length > 0;
           return (
             <button
               key={inst.id}
-              onClick={() => selectInst(inst)}
-              disabled={isPending || conflictsHere}
-              title={conflictsHere ? `Chevauchement dans le scénario ${preselectedScenario}` : undefined}
+              onClick={() => {
+                if (conflictsHere && sc && preselectedCategory) {
+                  setPendingReplace({ inst, scenario: sc, conflicts: conflictItems });
+                  setOverlapErr(null);
+                  return;
+                }
+                selectInst(inst);
+              }}
+              disabled={isPending}
+              title={conflictsHere ? `Cliquer pour remplacer dans le scénario ${preselectedScenario}` : undefined}
               className={[
                 'text-xs px-3 py-2 rounded-xl border transition-all min-h-[44px] flex items-center',
                 conflictsHere
-                  ? 'border-red-300 dark:border-red-800/50 text-red-400 dark:text-red-500 bg-red-50/40 dark:bg-red-950/20 cursor-not-allowed opacity-60'
+                  ? 'border-red-300 dark:border-red-800/50 text-red-500 dark:text-red-400 bg-red-50/60 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-950/50'
                   : isSelected
                   ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 font-semibold'
                   : 'border-zinc-200 dark:border-zinc-700 hover:border-zinc-400 active:bg-zinc-100 dark:active:bg-zinc-800 text-zinc-600 dark:text-zinc-300',
@@ -291,6 +351,39 @@ function RotationCard({
           );
         })}
       </div>
+
+      {/* Confirm de remplacement (chip rouge cliquée en 1-clic) */}
+      {pendingReplace && (
+        <div className="rounded-xl border border-red-300 dark:border-red-800/50 bg-red-50/50 dark:bg-red-950/20 p-3 space-y-2">
+          <p className="text-xs font-semibold text-red-700 dark:text-red-300">
+            Remplacer dans {pendingReplace.scenario.name} ?
+          </p>
+          <ul className="text-xs text-zinc-600 dark:text-zinc-300 space-y-0.5">
+            {pendingReplace.conflicts.map(c => (
+              <li key={c.id} className="font-mono">− {describeItem(c)}</li>
+            ))}
+            <li className="font-mono text-emerald-700 dark:text-emerald-400">
+              + {sig.rotation_code} ({fmtDate(pendingReplace.inst.depart_date)} → {fmtDate(endDateFromArrivee(pendingReplace.inst.arrivee_at))})
+            </li>
+          </ul>
+          <div className="flex gap-2">
+            <button
+              onClick={() => placeWithReplacement(pendingReplace.inst, pendingReplace.scenario, pendingReplace.conflicts)}
+              disabled={isPending}
+              className="flex-1 px-3 py-2 rounded-lg bg-red-600 text-white text-xs font-bold hover:bg-red-700 disabled:opacity-40 min-h-[40px]"
+            >
+              Remplacer
+            </button>
+            <button
+              onClick={() => setPendingReplace(null)}
+              disabled={isPending}
+              className="px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-600 text-xs text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 min-h-[40px]"
+            >
+              Annuler
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Erreur overlap éventuelle (cas marginal du mode 1-clic) */}
       {preselectedScenario && preselectedCategory && overlapErr && (
@@ -372,6 +465,7 @@ export function SearchPanel({
   panelTop,
   onClose,
   onItemAdded,
+  onItemsRemoved,
 }: {
   month: string;
   scenarios: Scenario[];
@@ -380,6 +474,7 @@ export function SearchPanel({
   panelTop?: number;
   onClose: () => void;
   onItemAdded?: (item: CalendarItem, draftId: string) => void;
+  onItemsRemoved?: (ids: string[]) => void;
 }) {
   const [data, setData]               = useState<RotationSignature[] | null>(null);
   const [loading, setLoading]         = useState(true);
@@ -545,6 +640,7 @@ export function SearchPanel({
                 preselectedCategory={preselectedCategory}
                 onPlaced={() => setPlacedCount(c => c + 1)}
                 onItemAdded={onItemAdded}
+                onItemsRemoved={onItemsRemoved}
               />
             ))
           )}

@@ -2431,6 +2431,10 @@ export function GanttView({
             applyAdd(item, draftId);
             setPendingCount(c => c + 1);
           }}
+          onItemsRemoved={(ids) => {
+            for (const id of ids) applyDelete(id);
+            setPendingCount(c => c + ids.length);
+          }}
         />
       )}
 
