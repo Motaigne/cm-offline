@@ -23,7 +23,9 @@ import { rotationValue, monthlyFinancialsP, PVEI, KSP, FIXE_MENSUEL, NB_30E, REG
 import { computeArticle81, computeTSej24, getPlafondJours } from '@/lib/article81';
 import type { Article81Data } from '@/lib/article81';
 import { createClient } from '@/lib/supabase/client';
-import { hydrateDB, loadFromDB, hasPendingOps, loadScenariosForMonth, cacheRotations, purgeScenarios, hydrateNotes, loadNotesForMonth } from '@/lib/local-db';
+import { hydrateDB, loadFromDB, hasPendingOps, loadScenariosForMonth, cacheRotations, purgeScenarios, hydrateNotes, loadNotesForMonth, loadRotationsFromDB } from '@/lib/local-db';
+import { computePrimeNoel } from '@/lib/prime-mai-noel';
+import type { RotationInstance } from '@/app/actions/search';
 import { enqueueAdd, enqueueDelete, enqueueUpdate, enqueueBidCategoryUpdate, enqueueMetaUpdate, pendingOpsCount } from '@/lib/sync-service';
 import {
   validateScenario, mergeRules,
@@ -739,6 +741,10 @@ export function GanttView({
   const [pendingCount, setPendingCount]     = useState(0);
   const [localNotes, setLocalNotes]         = useState<UserNote[]>(notes);
 
+  // Map d'instances horaires du mois courant (depart_at / arrivee_at) pour
+  // primes Mai/Noël qui ont besoin du timing intra-rotation. Vide → primes = 0.
+  const [instancesById, setInstancesById] = useState<Map<string, RotationInstance>>(new Map());
+
   // Sheet pour ajouter/éditer une note (sépare des items planning pour
   // éviter de mixer 2 logiques différentes — note vit dans table user_note,
   // pas planning_item, et est cross-scénario).
@@ -1127,6 +1133,19 @@ export function GanttView({
     maybeRefresh();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scenarios]);
+
+  // ── Charge la map d'instances horaires du mois courant (pour primes Mai/Noël)
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const sigs = await loadRotationsFromDB(currentMonth);
+      if (cancelled) return;
+      const m = new Map<string, RotationInstance>();
+      for (const sig of sigs) for (const inst of sig.instances) m.set(inst.id, inst);
+      setInstancesById(m);
+    })();
+    return () => { cancelled = true; };
+  }, [currentMonth]);
 
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
@@ -1611,9 +1630,14 @@ export function GanttView({
           {/* Planning rows */}
           <div className="flex-1 flex flex-col overflow-hidden">
             {displayScenarios.map((scenario, idx) => {
-              // Mai et Noël : placeholders à 0 — port Python à venir (instructions.md AUTRE MODIFICATION).
+              // Prime 1er mai : placeholder à 0 — port Python à venir.
               const primeMai = 0;
-              const primeNoel = 0;
+              // Prime Noël : 0,4 × taNoel × PVEI ; calcul actif en décembre
+              // uniquement, sinon 0. taNoel = chevauchement des vols (vol /
+              // dda_vol / vol_p) avec la fenêtre [24/12 18h → 26/12 00h Paris].
+              const primeNoel = computePrimeNoel(
+                scenario.items, instancesById, year, mo, finBaseState?.pvei ?? PVEI,
+              );
               // En juillet/août pour TAF*_10_12, A330 + Instruction passent à 100%
               // (× 30/nb30e pour annuler la proration appliquée en amont).
               const nb30eRegime = REGIME_NB30E[effRegime] ?? NB_30E;
@@ -1745,7 +1769,7 @@ export function GanttView({
                           incitation: incitCount * (finBaseState?.primeIncitationUnit ?? primeIncitationUnit),
                           a330: (finBaseState?.primeA330 ?? primeA330) * boost,
                           instruction: (finBaseState?.primeInstruction ?? primeInstruction) * boost,
-                          primeMai: 0, primeNoel: 0,
+                          primeMai, primeNoel,
                           primesTotal: stats.fin.primes,
                           congeDays: stats.congeDays, cngPv: effCngPv, cngHs: effCngHs, congeAmount: stats.congeAmount,
                           irEur: irMfScn?.ir_eur ?? 0,
