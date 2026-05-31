@@ -158,7 +158,7 @@ export function NavBar() {
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'' | 'push' | 'pull' | 'ok' | 'err' | 'offline'>('');
   const [dlProgress, setDlProgress] = useState('');
-  const [swReady, setSwReady] = useState(false);
+  const [_swReady, setSwReady] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [backupMenuOpen, setBackupMenuOpen] = useState(false);

@@ -74,7 +74,7 @@ function rawRangeMs(item: CalendarItem): [number, number] {
 }
 
 /** Overlap simple par dates (sans RPC), conservé pour le mode legacy. */
-function hasOverlap(items: CalendarItem[], start: string, end: string) {
+function _hasOverlap(items: CalendarItem[], start: string, end: string) {
   return items.some(i => i.start_date <= end && i.end_date >= start);
 }
 
@@ -383,7 +383,7 @@ export function SearchPanel({
 }) {
   const [data, setData]               = useState<RotationSignature[] | null>(null);
   const [loading, setLoading]         = useState(true);
-  const [fromCache, setFromCache]     = useState(false);
+  const [fromCache, _setFromCache]    = useState(false);
   const [placedCount, setPlacedCount] = useState(0);
 
   // Filtres

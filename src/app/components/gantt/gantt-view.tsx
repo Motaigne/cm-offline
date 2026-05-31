@@ -19,11 +19,11 @@ import type { ScenarioName } from '@/app/actions/planning';
 import type { Database } from '@/types/supabase';
 import { SearchPanel } from './search-panel';
 import { ScrapeDialog } from './scrape-dialog';
-import { rotationValue, monthlyFinancialsP, PRIME_BITRONCON, PVEI, KSP, FIXE_MENSUEL, NB_30E, REGIME_NB30E } from '@/lib/finance';
+import { rotationValue, monthlyFinancialsP, PVEI, KSP, FIXE_MENSUEL, NB_30E, REGIME_NB30E } from '@/lib/finance';
 import { computeArticle81, computeTSej24, getPlafondJours } from '@/lib/article81';
 import type { Article81Data } from '@/lib/article81';
 import { createClient } from '@/lib/supabase/client';
-import { db, hydrateDB, loadFromDB, hasPendingOps, loadScenariosForMonth, cacheRotations, purgeScenarios, hydrateNotes, loadNotesForMonth } from '@/lib/local-db';
+import { hydrateDB, loadFromDB, hasPendingOps, loadScenariosForMonth, cacheRotations, purgeScenarios, hydrateNotes, loadNotesForMonth } from '@/lib/local-db';
 import { enqueueAdd, enqueueDelete, enqueueUpdate, enqueueBidCategoryUpdate, enqueueMetaUpdate, pendingOpsCount } from '@/lib/sync-service';
 import {
   validateScenario, mergeRules,
@@ -52,7 +52,6 @@ const LABEL_W = 96;
 const DAY_H   = 44;
 const ROW_H   = 180;
 const BAR_H   = 52;
-const BAR_TOP = (ROW_H - BAR_H) / 2;
 
 // ─── locale / calendar helpers ───────────────────────────────────────────────
 
@@ -727,7 +726,7 @@ export function GanttView({
   notes?: UserNote[];
 }) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [isPending, _startTransition] = useTransition();
   const rowRef = useRef<HTMLDivElement>(null);
 
   // navigation mois côté client (évite router.push → serveur → page blanche hors ligne)
@@ -972,7 +971,7 @@ export function GanttView({
     });
   }, [searchOpen, searchScenario]);
   const [scrapeOpen, setScrapeOpen] = useState(false);
-  const [isAdmin,    setIsAdmin]    = useState(false);
+  const [_isAdmin,   setIsAdmin]    = useState(false);
   const [canScrape,  setCanScrape]  = useState(false);
 
   // Panneau détail paie (flyout fixe à droite du label)
