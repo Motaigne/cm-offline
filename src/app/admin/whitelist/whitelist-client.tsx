@@ -422,7 +422,7 @@ export function WhitelistClient({ emails, logs, profiles }: { emails: AllowedEma
         <ul className="divide-y divide-zinc-100 dark:divide-zinc-800 max-h-[60vh] overflow-y-auto">
           {emails.length === 0 && (
             <li className="px-4 py-6 text-center text-sm text-zinc-400">
-              Aucun email autorisé pour l'instant.
+              Aucun email autorisé pour l&apos;instant.
             </li>
           )}
           {emails.map(e => (
@@ -449,12 +449,12 @@ export function WhitelistClient({ emails, logs, profiles }: { emails: AllowedEma
       {/* Journal d'authentification */}
       <section className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800">
         <header className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800">
-          <h2 className="text-sm font-semibold">Journal d'authentification (100 derniers)</h2>
+          <h2 className="text-sm font-semibold">Journal d&apos;authentification (100 derniers)</h2>
         </header>
         <ul className="divide-y divide-zinc-100 dark:divide-zinc-800 max-h-[68vh] overflow-y-auto">
           {logs.length === 0 && (
             <li className="px-4 py-6 text-center text-sm text-zinc-400">
-              Pas encore d'événement.
+              Pas encore d&apos;événement.
             </li>
           )}
           {logs.map(l => {

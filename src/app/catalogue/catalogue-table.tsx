@@ -54,6 +54,27 @@ function fmtTime(t: string | null): string {
   return t.slice(0, 5);
 }
 
+/** Cellule d'en-tête triable. Top-level pour éviter la recréation à chaque render. */
+function Col({
+  k, children, sortKey, sortDir, onSort,
+}: {
+  k: SortKey;
+  children: React.ReactNode;
+  sortKey: SortKey;
+  sortDir: SortDir;
+  onSort: (k: SortKey) => void;
+}) {
+  const active = sortKey === k;
+  return (
+    <th
+      className="px-2 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-zinc-400 cursor-pointer select-none hover:text-zinc-200 whitespace-nowrap"
+      onClick={() => onSort(k)}
+    >
+      {children} {active ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+    </th>
+  );
+}
+
 export function CatalogueTable({
   signatures: initialSigs, months: initialMonths, currentMonth: initialMonth, isAdmin,
   article81Data, valeurJour,
@@ -152,18 +173,6 @@ export function CatalogueTable({
     return `${MONTH_FR[mo - 1]} ${y}`;
   }
 
-  function Col({ k, children }: { k: SortKey; children: React.ReactNode }) {
-    const active = sortKey === k;
-    return (
-      <th
-        className="px-2 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-zinc-400 cursor-pointer select-none hover:text-zinc-200 whitespace-nowrap"
-        onClick={() => handleSort(k)}
-      >
-        {children} {active ? (sortDir === 'asc' ? '↑' : '↓') : ''}
-      </th>
-    );
-  }
-
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Toolbar */}
@@ -219,21 +228,29 @@ export function CatalogueTable({
         <table className="w-full text-sm border-collapse">
           <thead className="sticky top-0 bg-zinc-900 text-white z-10">
             <tr>
-              <Col k="rotation_code">Rotation</Col>
-              <Col k="zone">Zone</Col>
-              <Col k="aircraft_code">Avion</Col>
-              <Col k="heure_debut">Dép</Col>
-              <Col k="heure_fin">Arr</Col>
-              <Col k="nb_on_days">ON</Col>
-              <Col k="hc">Hc</Col>
-              <Col k="hcr_crew">Hcr</Col>
-              <Col k="hc_on">HC/ON</Col>
+              {([
+                ['rotation_code', 'Rotation'],
+                ['zone',          'Zone'],
+                ['aircraft_code', 'Avion'],
+                ['heure_debut',   'Dép'],
+                ['heure_fin',     'Arr'],
+                ['nb_on_days',    'ON'],
+                ['hc',            'Hc'],
+                ['hcr_crew',      'Hcr'],
+                ['hc_on',         'HC/ON'],
+              ] as const).map(([k, label]) => (
+                <Col key={k} k={k} sortKey={sortKey} sortDir={sortDir} onSort={handleSort}>{label}</Col>
+              ))}
               <th className="px-2 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap">TSVnuit</th>
-              <Col k="pv_h">PV (h)</Col>
-              <Col k="prime">Prime</Col>
-              <Col k="total_eur">Total €</Col>
-              <Col k="a81_brut">A81 €</Col>
-              <Col k="a81_jour">A81 / j</Col>
+              {([
+                ['pv_h',      'PV (h)'],
+                ['prime',     'Prime'],
+                ['total_eur', 'Total €'],
+                ['a81_brut',  'A81 €'],
+                ['a81_jour',  'A81 / j'],
+              ] as const).map(([k, label]) => (
+                <Col key={k} k={k} sortKey={sortKey} sortDir={sortDir} onSort={handleSort}>{label}</Col>
+              ))}
               <th className="px-2 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Escale</th>
             </tr>
           </thead>

@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Generated Serwist service worker bundle — minifié, pas notre code.
+    "public/sw.js",
+    "public/sw.js.map",
+    "public/workbox-*.js",
   ]),
   {
     // Pattern courant ici : `const { foo: _foo, ...rest } = obj` pour drop

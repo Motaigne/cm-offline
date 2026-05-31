@@ -308,7 +308,7 @@ export function ScrapeDialog({
           {phase.name === 'stopped' && (
             <div className="bg-amber-50 dark:bg-amber-900/20 rounded-xl p-3 text-sm">
               <p className="text-amber-700 dark:text-amber-400">
-                Arrêté à {phase.current}/{phase.total}. Relancer l'analyse pour reprendre.
+                Arrêté à {phase.current}/{phase.total}. Relancer l&apos;analyse pour reprendre.
               </p>
             </div>
           )}

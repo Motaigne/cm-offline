@@ -1957,7 +1957,7 @@ export function GanttView({
         <div className="flex-shrink-0 flex items-center gap-2 h-14 border-t border-zinc-200 dark:border-zinc-800 px-4 bg-zinc-50 dark:bg-zinc-900 overflow-x-auto">
 
           {/* Compteur prime d'incitation 0–5 */}
-          <span className="text-xs text-zinc-400 flex-shrink-0">Prime d'incitation</span>
+          <span className="text-xs text-zinc-400 flex-shrink-0">Prime d&apos;incitation</span>
           <div className="flex-shrink-0 flex items-center gap-1">
             {[0, 1, 2, 3, 4, 5].map(n => (
               <button key={n} onClick={() => changeIncit(n)}
@@ -2191,7 +2191,7 @@ export function GanttView({
                 {/* OFF/Sol/etc: date fin libre */}
                 {addKind !== 'conge' && addKind !== 'taf' && (
                   <div className="flex items-center gap-3">
-                    <label className="text-xs text-zinc-500">Jusqu'au</label>
+                    <label className="text-xs text-zinc-500">Jusqu&apos;au</label>
                     <input type="date" value={addEnd} min={sheet.date}
                       onChange={e => { setAddEnd(e.target.value); setOverlapErr(false); }}
                       className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm" />
