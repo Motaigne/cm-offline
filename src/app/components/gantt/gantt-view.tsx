@@ -439,8 +439,8 @@ function DraggableBar({
   // Post-RPC : N segments solides + M pauses (mode chevauchement).
   // En mode OFF, 1 segment d'origine + hasRpcConflict = true si un jour
   // entier de congé/TAF est dans le RPC (déclenche le flag visuel).
-  let restAfterSegments: { left: number; width: number }[] = [];
-  let restAfterPauses:   { left: number; width: number }[] = [];
+  const restAfterSegments: { left: number; width: number }[] = [];
+  const restAfterPauses:   { left: number; width: number }[] = [];
   let hasRpcConflict = false;
 
   if (item.kind === 'flight' && departAt && arriveeAt) {

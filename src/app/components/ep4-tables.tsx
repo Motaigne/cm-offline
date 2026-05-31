@@ -360,22 +360,30 @@ export function Ep4FraisEP4Consolidee({ flights }: { flights: ConsoFlight[] }) {
   // 19 colonnes de données (format document officiel EP4)
   const NCOLS = 19;
 
-  let totIR = 0, totMF = 0, totTotalIndem = 0, totDec = 0;
-
-  const rotRows: ReactNode[][] = flights.map(({ ep4, is_spillover }) => {
-    // Dec total pour la rotation = somme des repas supprimés par leg
-    const rotDec = ep4.services.reduce((acc, svc) => {
+  // Pré-calcule les rotDec (utilisés à la fois pour le rendu et les totaux).
+  const rotDecs = flights.map(({ ep4 }) =>
+    ep4.services.reduce((acc, svc) => {
       const meal = getPlanPrestation(svc.legs[0]?.flightNumber ?? '', svc.legs[0]?.dep ?? '');
       return acc + (meal ? (meal.dej ? 1 : 0) + (meal.din ? 1 : 0) : 0);
-    }, 0);
+    }, 0),
+  );
 
-    if (!is_spillover) {
-      totIR        += ep4.IR;
-      totMF        += ep4.MF;
-      totTotalIndem += ep4.IR_eur + ep4.MF_eur;
-      totDec       += rotDec;
-    }
+  // Totaux : reduce avec accumulateur object → mutation locale, pas d'effet
+  // dans le render (= ce qu'attend react-hooks/immutability).
+  const { IR: totIR, MF: totMF, totalIndem: totTotalIndem, dec: totDec } = flights.reduce(
+    (acc, { ep4, is_spillover }, i) => {
+      if (is_spillover) return acc;
+      return {
+        IR:         acc.IR + ep4.IR,
+        MF:         acc.MF + ep4.MF,
+        totalIndem: acc.totalIndem + ep4.IR_eur + ep4.MF_eur,
+        dec:        acc.dec + rotDecs[i],
+      };
+    },
+    { IR: 0, MF: 0, totalIndem: 0, dec: 0 },
+  );
 
+  const rotRows: ReactNode[][] = flights.map(({ ep4, is_spillover }) => {
     return [
       <tr key={`sep-f-${ep4.rotation_code}-${ep4.debut_vol_ms}`}
           className="bg-zinc-100 dark:bg-zinc-800/60 border-t-2 border-zinc-300 dark:border-zinc-600">
@@ -496,16 +504,25 @@ export function Ep4FraisEP4Consolidee({ flights }: { flights: ConsoFlight[] }) {
 // ─── Frais de Déplacement consolidés ─────────────────────────────────────────
 
 export function Ep4FraisDeplacementConsolidee({ flights }: { flights: ConsoFlight[] }) {
-  let totHDV = 0, totHC = 0, totHCVm = 0, totH2HCr = 0;
-  let totPrime = 0, totIR = 0, totIREur = 0, totMF = 0, totMFEur = 0;
+  // Précompute les hcvMoisM (1 par flight) — utilisés par le rendu ET les totaux.
+  const rows = flights.map(({ ep4, is_spillover }) => ({
+    ep4, is_spillover,
+    hcvMoisM: ep4.services.flatMap(s => s.legs).reduce((s, l) => s + l.hcv_mois_m, 0),
+  }));
 
-  const rows = flights.map(({ ep4, is_spillover }) => {
-    const hcvMoisM = ep4.services.flatMap(s => s.legs).reduce((s, l) => s + l.hcv_mois_m, 0);
-    totHDV   += ep4.HDV;    totHC    += ep4.HC;     totHCVm  += hcvMoisM;
-    totH2HCr += ep4.H2HCr; totPrime += ep4.Prime;   totIR    += ep4.IR;
-    totIREur += ep4.IR_eur; totMF    += ep4.MF;      totMFEur += ep4.MF_eur;
-    return { ep4, is_spillover, hcvMoisM };
-  });
+  // Totaux en reduce : accumulateur object, pas de mutation de let externes.
+  const totals = rows.reduce(
+    (a, { ep4, hcvMoisM }) => ({
+      HDV: a.HDV + ep4.HDV, HC: a.HC + ep4.HC, HCVm: a.HCVm + hcvMoisM,
+      H2HCr: a.H2HCr + ep4.H2HCr, Prime: a.Prime + ep4.Prime,
+      IR: a.IR + ep4.IR, IREur: a.IREur + ep4.IR_eur,
+      MF: a.MF + ep4.MF, MFEur: a.MFEur + ep4.MF_eur,
+    }),
+    { HDV: 0, HC: 0, HCVm: 0, H2HCr: 0, Prime: 0, IR: 0, IREur: 0, MF: 0, MFEur: 0 },
+  );
+  const totHDV = totals.HDV, totHC = totals.HC, totHCVm = totals.HCVm;
+  const totH2HCr = totals.H2HCr, totPrime = totals.Prime, totIR = totals.IR;
+  const totIREur = totals.IREur, totMF = totals.MF, totMFEur = totals.MFEur;
 
   return (
     <Card title="Frais de déplacement EP4">
@@ -682,35 +699,68 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
 
   // 22 colonnes de données
   const NCOLS = 22;
-  let totHVReal = 0, totTME = 0, totHCV = 0, totHCT = 0, totHCA = 0;
-  let totH1 = 0, totH2HC = 0, totHCVr = 0, totH1r = 0, totH2HCr = 0;
-  let totMontantHCr = 0, totNuit = 0, totMontantNuit = 0;
-  let totHv100 = 0, totHv100r = 0;
+
+  // Totaux en reduce — accumulateur object pour respecter l'immutabilité du render.
+  const totals = flights.reduce(
+    (a, { ep4, is_spillover }) => {
+      if (is_spillover) return a;
+      const svcAgg = ep4.services.reduce(
+        (sa, svc) => {
+          const legSum = svc.legs.reduce(
+            (la, l) => ({ Hv100: la.Hv100 + l.hv100, Hv100r: la.Hv100r + l.hv100r }),
+            { Hv100: 0, Hv100r: 0 },
+          );
+          return {
+            HVReal: sa.HVReal + svc.block_block,
+            TME:    sa.TME    + (svc.TME ?? 0),
+            HCV:    sa.HCV    + svc.HCV,
+            HCT:    sa.HCT    + svc.HCT,
+            H1:     sa.H1     + svc.H1,
+            HCVr:   sa.HCVr   + svc.HCVr,
+            H1r:    sa.H1r    + svc.H1r,
+            Nuit:   sa.Nuit   + svc.tsv_nuit,
+            MontantNuit: sa.MontantNuit + svc.tsv_nuit * PVEI,
+            Hv100:  sa.Hv100  + legSum.Hv100,
+            Hv100r: sa.Hv100r + legSum.Hv100r,
+          };
+        },
+        { HVReal: 0, TME: 0, HCV: 0, HCT: 0, H1: 0, HCVr: 0, H1r: 0, Nuit: 0, MontantNuit: 0, Hv100: 0, Hv100r: 0 },
+      );
+      return {
+        HVReal: a.HVReal + svcAgg.HVReal,
+        TME:    a.TME    + svcAgg.TME,
+        HCV:    a.HCV    + svcAgg.HCV,
+        HCT:    a.HCT    + svcAgg.HCT,
+        H1:     a.H1     + svcAgg.H1,
+        HCVr:   a.HCVr   + svcAgg.HCVr,
+        H1r:    a.H1r    + svcAgg.H1r,
+        Nuit:   a.Nuit   + svcAgg.Nuit,
+        MontantNuit: a.MontantNuit + svcAgg.MontantNuit,
+        Hv100:  a.Hv100  + svcAgg.Hv100,
+        Hv100r: a.Hv100r + svcAgg.Hv100r,
+        HCA:    a.HCA    + ep4.HCA,
+        H2HC:   a.H2HC   + ep4.H2HC,
+        H2HCr:  a.H2HCr  + ep4.H2HCr,
+        MontantHCr: a.MontantHCr + ep4.H2HCr * PVEI * KSP,
+      };
+    },
+    {
+      HVReal: 0, TME: 0, HCV: 0, HCT: 0, H1: 0, HCVr: 0, H1r: 0, Nuit: 0,
+      MontantNuit: 0, Hv100: 0, Hv100r: 0, HCA: 0, H2HC: 0, H2HCr: 0, MontantHCr: 0,
+    },
+  );
+  const totHVReal = totals.HVReal, totTME = totals.TME, totHCV = totals.HCV;
+  const totHCT = totals.HCT, totHCA = totals.HCA;
+  const totH1 = totals.H1, totH2HC = totals.H2HC, totHCVr = totals.HCVr;
+  const totH1r = totals.H1r, totH2HCr = totals.H2HCr;
+  const totMontantHCr = totals.MontantHCr, totNuit = totals.Nuit, totMontantNuit = totals.MontantNuit;
+  const totHv100 = totals.Hv100, totHv100r = totals.Hv100r;
 
   const rotRows: ReactNode[][] = flights.map(({ ep4, is_spillover }) => {
     const allLegs = ep4.services.flatMap((svc, si) =>
       svc.legs.map((leg, li) => ({ leg, svc, si, li }))
     );
     const isSpilloverRot = is_spillover;
-
-    if (!isSpilloverRot) {
-      ep4.services.forEach(svc => {
-        totHVReal += svc.block_block;
-        totTME    += svc.TME ?? 0;
-        totHCV    += svc.HCV;
-        totHCT    += svc.HCT;
-        totH1     += svc.H1;
-        totHCVr   += svc.HCVr;
-        totH1r    += svc.H1r;
-        totNuit   += svc.tsv_nuit;
-        totMontantNuit += svc.tsv_nuit * PVEI;
-        svc.legs.forEach(l => { totHv100 += l.hv100; totHv100r += l.hv100r; });
-      });
-      totHCA        += ep4.HCA;
-      totH2HC       += ep4.H2HC;
-      totH2HCr      += ep4.H2HCr;
-      totMontantHCr += ep4.H2HCr * PVEI * KSP;
-    }
 
     return [
       <tr key={`sep-d-${ep4.rotation_code}-${ep4.debut_vol_ms}`}

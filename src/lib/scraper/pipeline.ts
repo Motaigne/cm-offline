@@ -451,7 +451,7 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
           rest_before_h:       restBeforeH,
           rest_after_h:        restAfterH,
           tsv_nuit:            tsvNuit,
-          raw_detail:          detail as any ?? null,
+          raw_detail:          (detail as unknown as Json) ?? null,
           debut_sejour_at:     a81Meta.debut_sejour_at,
           fin_sejour_at:       a81Meta.fin_sejour_at,
           escale_debut:        a81Meta.escale_debut,

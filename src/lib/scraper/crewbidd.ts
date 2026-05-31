@@ -92,10 +92,33 @@ export async function fetchAllPairings(
     const res = await fetch(SEARCH_URL, { method: 'POST', headers: hdrs, body: JSON.stringify(body) });
     if (!res.ok) throw new Error(`pairingsearch HTTP ${res.status}`);
 
-    const data: any[] = await res.json();
+    const data = await res.json() as Array<Record<string, unknown>>;
     if (!data?.length) break;
 
-    for (const r of data) {
+    type PairingDetailRaw = Record<string, number | undefined>;
+    type RawPairing = {
+      actId: number;
+      activityNumber?: string;
+      activityKey?: string;
+      deadHead?: number;
+      legsNumber?: number;
+      stationCode?: string;
+      stopovers?: string;
+      layovers?: string;
+      firstLayover?: string;
+      firstFlightNumber?: string;
+      aircraftSubtypeCode?: string;
+      beginBlockDate?: number; scheduledBeginBlockDate?: number;
+      endBlockDate?: number;   scheduledEndBlockDate?: number;
+      beginDutyDate?: number;  scheduledBeginDutyDate?: number;
+      endDutyDate?: number;    scheduledEndDutyDate?: number;
+      scheduledBeginActivityDate?: number; beginActivityDate?: number;
+      scheduledEndActivityDate?: number;   endActivityDate?: number;
+      pairingDetail?: PairingDetailRaw;
+    };
+
+    for (const raw of data) {
+      const r = raw as RawPairing;
       // activityNumber is a direct field; fall back to deriving from activityKey
       const actNum: string = r.activityNumber ?? (typeof r.activityKey === 'string' ? r.activityKey.slice(8) : String(r.actId));
       results.push({

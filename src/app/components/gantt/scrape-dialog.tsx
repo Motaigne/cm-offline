@@ -154,8 +154,9 @@ export function ScrapeDialog({
         ? { name: 'stopped', current: lastProgress.current, total: lastProgress.total }
         : prev);
 
-    } catch (err: any) {
-      if (err?.name === 'AbortError') {
+    } catch (err: unknown) {
+      const name = err instanceof Error ? err.name : undefined;
+      if (name === 'AbortError') {
         setPhase(prev => prev.name === 'scraping'
           ? { name: 'stopped', current: prev.current, total: prev.total }
           : { name: 'stopped', current: 0, total: 0 });
