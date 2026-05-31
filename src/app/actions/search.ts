@@ -232,24 +232,50 @@ export async function getRotationsForMonth(
     });
   }
 
-  // Recompute nb_on_days + rotation_code depuis les dates de la 1ère instance
-  // (= source de vérité, vs CrewBidd qui peut renvoyer des valeurs incohérentes
-  // entre instances — corrige aussi les sigs scrapées avant le commit 40cf3e1).
-  for (const sig of sigMap.values()) {
-    const repr = sig.instances[0];
-    if (!repr) continue;
-    const beginMs = new Date(repr.depart_at).getTime();
-    const endMs   = new Date(repr.arrivee_at).getTime();
-    if (!Number.isFinite(beginMs) || !Number.isFinite(endMs) || endMs < beginMs) continue;
+  // Split par durée + recompute nb_on_days/rotation_code.
+  //
+  // CrewBidd peut regrouper sous un même activity_number des instances de
+  // durées calendaires différentes (vérifié sur JFK : un sig contient à la fois
+  // des 4ON, 5ON et 6ON). Le scraper, qui prend instance[0] pour fixer le
+  // nb_on_days du sig, n'en voit qu'une — d'où des cartes "4ON JFK" qui mêlent
+  // des chips de 4/5/6 jours. On scinde donc ici par durée réelle d'instance
+  // (= la seule à laquelle on puisse se fier), une signature d'affichage par
+  // groupe. Id synthétique `${sig.id}_${dur}` pour la PK Dexie après cache.
+  function instanceDuration(depart_at: string, arrivee_at: string): number {
+    const beginMs = new Date(depart_at).getTime();
+    const endMs   = new Date(arrivee_at).getTime();
+    if (!Number.isFinite(beginMs) || !Number.isFinite(endMs) || endMs < beginMs) return 0;
     const begin = new Date(beginMs);
     const end   = new Date(endMs);
     const beginDay = Date.UTC(begin.getUTCFullYear(), begin.getUTCMonth(), begin.getUTCDate());
     const endDay   = Date.UTC(end.getUTCFullYear(),   end.getUTCMonth(),   end.getUTCDate());
-    const corrected = Math.round((endDay - beginDay) / 86_400_000) + 1;
-    if (corrected !== sig.nb_on_days) {
-      sig.nb_on_days = corrected;
-      const m = sig.rotation_code.match(/^\d+ON\s+(.*)$/);
-      if (m) sig.rotation_code = `${corrected}ON ${m[1]}`;
+    return Math.round((endDay - beginDay) / 86_400_000) + 1;
+  }
+
+  const splitSigs: RotationSignature[] = [];
+  for (const sig of sigMap.values()) {
+    if (sig.instances.length === 0) continue;
+    const byDur = new Map<number, RotationInstance[]>();
+    for (const inst of sig.instances) {
+      const dur = instanceDuration(inst.depart_at, inst.arrivee_at);
+      if (dur <= 0) continue;
+      let arr = byDur.get(dur);
+      if (!arr) { arr = []; byDur.set(dur, arr); }
+      arr.push(inst);
+    }
+    if (byDur.size === 0) continue;
+    for (const [dur, insts] of byDur) {
+      // Regex insensible à la casse : rattrape d'éventuels rotation_code
+      // historiques en minuscules ("4on JFK") qu'on réémet en majuscules.
+      const m = sig.rotation_code.match(/^\d+ON\s+(.*)$/i);
+      const newRot = m ? `${dur}ON ${m[1]}` : sig.rotation_code;
+      splitSigs.push({
+        ...sig,
+        id:            byDur.size === 1 ? sig.id : `${sig.id}_${dur}`,
+        rotation_code: newRot,
+        nb_on_days:    dur,
+        instances:     insts,
+      });
     }
   }
 
@@ -269,7 +295,7 @@ export async function getRotationsForMonth(
   }
 
   const deduped = new Map<string, RotationSignature>();
-  for (const sig of sigMap.values()) {
+  for (const sig of splitSigs) {
     if (sig.instances.length === 0) continue;
     const key = dedupKey(sig);
     if (!deduped.has(key)) {
