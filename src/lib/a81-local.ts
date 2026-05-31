@@ -28,6 +28,7 @@ import {
 } from '@/lib/article81';
 import {
   computeFullProfile,
+  computePrimeInstructionMontant,
   getAnnexeDataFromRows,
   type AnnexeData,
   type AnnexeRow,
@@ -110,15 +111,21 @@ export async function computeA81ForYearLocal(
   // 5. Overrides indexés
   const ovByInstId = new Map(overrides.map(o => [o.pairing_instance_id, o]));
 
-  // 6. Helper valeur_jour par mois (cache local)
-  const valeurJourCache = new Map<string, number>();
-  function computeValeurJourForMonth(month: string): number {
+  // 6. Helper valeur_jour par mois (cache local). Retourne aussi le breakdown
+  //    des composantes pour affichage formule détaillée dans le footer fiscal.
+  type ValeurJourResult = {
+    value: number;
+    breakdown?: NonNullable<A81Row['valeur_jour_breakdown']>;
+  };
+  const valeurJourCache = new Map<string, ValeurJourResult>();
+  function computeValeurJourForMonth(month: string): ValeurJourResult {
     const cached = valeurJourCache.get(month);
     if (cached != null) return cached;
     const prof = pickProfileForMonth(profileVersions, month);
     if (!prof?.fonction || !prof.classe || !prof.echelon || !prof.categorie) {
-      valeurJourCache.set(month, 600);
-      return 600;
+      const r: ValeurJourResult = { value: 600 };
+      valeurJourCache.set(month, r);
+      return r;
     }
     const annexe = getAnnexeDataFromRows(annexeRows, month);
     const hasAnnexe = !!(
@@ -128,9 +135,9 @@ export async function computeA81ForYearLocal(
       annexe.traitement_base
     );
     if (!hasAnnexe) {
-      const v = Number(prof.valeur_jour ?? 600);
-      valeurJourCache.set(month, v);
-      return v;
+      const r: ValeurJourResult = { value: Number(prof.valeur_jour ?? 600) };
+      valeurJourCache.set(month, r);
+      return r;
     }
     const isTri = prof.fonction === 'TRI_OPL' || prof.fonction === 'TRI_CDB';
     const primeInstFonction = prof.fonction === 'TRI_OPL' ? 'TRI_OPL'
@@ -151,11 +158,32 @@ export async function computeA81ForYearLocal(
       prof.prime_330_count ?? null,
       annexe as AnnexeData,
     );
-    const v = computeValeurJour({
-      fixe: c.fixe, pvei: c.pvei, ksp: c.ksp, primeInstruction: c.primeInstruction, isTri,
+    // Valeur Jour utilise le FIXE TEMPS PLEIN (non proratisé par régime) et
+    // la prime instruction NON proratisée — la formule s'applique au pilote
+    // « théorique 100% » pour calculer la valeur d'une journée d'absence,
+    // indépendamment du régime de travail réel.
+    const fixeForVj = c.fixeTP;
+    let primeInstForVj = 0;
+    if (primeInstFonction && isTri && prof.tri_niveau && annexe.prime_instruction) {
+      primeInstForVj = computePrimeInstructionMontant(
+        annexe.prime_instruction, primeInstFonction, prof.tri_niveau,
+      );
+    }
+    const value = computeValeurJour({
+      fixe: fixeForVj, pvei: c.pvei, ksp: c.ksp, primeInstruction: primeInstForVj, isTri,
     });
-    valeurJourCache.set(month, v);
-    return v;
+    const r: ValeurJourResult = {
+      value,
+      breakdown: {
+        fixe:             fixeForVj,
+        pvei:             c.pvei,
+        ksp:              c.ksp,
+        primeInstruction: primeInstForVj,
+        isTri,
+      },
+    };
+    valeurJourCache.set(month, r);
+    return r;
   }
 
   // 7. Construit les rows
@@ -193,7 +221,7 @@ export async function computeA81ForYearLocal(
     const tSej24    = computeTSej24(tempsSejH);
     const taux      = lookupTauxSej(article81Data, sig.zone, tempsSejH);
     const monthOfDepart = new Date(debutMs).toISOString().slice(0, 7);
-    const valeurJour = computeValeurJourForMonth(monthOfDepart);
+    const vjResult = computeValeurJourForMonth(monthOfDepart);
 
     rows.push({
       instance_id: instId,
@@ -209,7 +237,8 @@ export async function computeA81ForYearLocal(
       plafond: false,
       zone: sig.zone,
       taux,
-      valeur_jour: valeurJour,
+      valeur_jour: vjResult.value,
+      valeur_jour_breakdown: vjResult.breakdown,
       montant: 0,
       debut_sejour_overridden: !!ov?.debut_sejour_at,
       fin_sejour_overridden:   !!ov?.fin_sejour_at,
@@ -232,14 +261,15 @@ export async function computeA81ForYearLocal(
     const m0FinAt   = new Date(split.m0.finMs).toISOString();
     const m1DebutAt = new Date(split.m1.debutMs).toISOString();
     const m1FinAt   = new Date(split.m1.finMs).toISOString();
-    const m0ValeurJour = computeValeurJourForMonth(m0DebutAt.slice(0, 7));
-    const m1ValeurJour = computeValeurJourForMonth(m1DebutAt.slice(0, 7));
+    const m0Result = computeValeurJourForMonth(m0DebutAt.slice(0, 7));
+    const m1Result = computeValeurJourForMonth(m1DebutAt.slice(0, 7));
     expanded.push({
       ...r,
       debut_sejour_at: m0DebutAt,
       fin_sejour_at:   m0FinAt,
       nb_jours:        split.m0.nbJours,
-      valeur_jour:     m0ValeurJour,
+      valeur_jour:           m0Result.value,
+      valeur_jour_breakdown: m0Result.breakdown,
       montant:         0,
       fin_sejour_overridden: false,
       split_part: 'm0',
@@ -249,7 +279,8 @@ export async function computeA81ForYearLocal(
       debut_sejour_at: m1DebutAt,
       fin_sejour_at:   m1FinAt,
       nb_jours:        split.m1.nbJours,
-      valeur_jour:     m1ValeurJour,
+      valeur_jour:           m1Result.value,
+      valeur_jour_breakdown: m1Result.breakdown,
       montant:         0,
       debut_sejour_overridden: false,
       split_part: 'm1',

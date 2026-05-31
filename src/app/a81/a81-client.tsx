@@ -456,6 +456,45 @@ export function A81Client({
 
       {/* Footer fiscal */}
       <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 space-y-2 text-sm">
+        {data.rows.length > 0 && (() => {
+          const firstRow = data.rows[0];                          // chronologiquement la 1ère
+          const lastRow  = data.rows[data.rows.length - 1];       // chronologiquement la dernière
+          const sameValue = Math.abs(firstRow.valeur_jour - lastRow.valeur_jour) < 0.005;
+          const fmtBreakdown = (b: NonNullable<A81Row['valeur_jour_breakdown']>): string => {
+            const coef = b.isTri ? 96 : 76;
+            const parts = b.isTri
+              ? `tFixeTp=${fmtEur(b.fixe)} + Prime Instr.=${fmtEur(b.primeInstruction)} + ${coef}×PVEI(${b.pvei.toFixed(2)})×KSP(${b.ksp.toFixed(2)})`
+              : `tFixeTp=${fmtEur(b.fixe)} + ${coef}×PVEI(${b.pvei.toFixed(2)})×KSP(${b.ksp.toFixed(2)})`;
+            return `(${parts}) × 13/12 / 18`;
+          };
+          return (
+            <div className="flex items-baseline justify-between gap-4 flex-wrap border-b border-zinc-100 dark:border-zinc-800 pb-2">
+              <span className="text-zinc-600 dark:text-zinc-300">
+                <strong>Valeur Jour :</strong>
+                <span className="block text-[10px] italic text-zinc-400">
+                  (tFixeTp + 76×PVEI×KSP) × 13/12 / 18 — 100% ·
+                  {' '}(tFixeTp + Prime Instr. + 96×PVEI×KSP) × 13/12 / 18 — instructeurs
+                  {' '}· tFixeTp = fixe × coefFonction × coefEchelon
+                </span>
+                {firstRow.valeur_jour_breakdown && (
+                  <span className="block text-[10px] font-mono text-zinc-500 mt-1">
+                    1ʳᵉ ({firstRow.debut_rotation.slice(0, 7)}) : {fmtBreakdown(firstRow.valeur_jour_breakdown)} = {fmtEur(firstRow.valeur_jour)} €
+                  </span>
+                )}
+                {!sameValue && lastRow.valeur_jour_breakdown && (
+                  <span className="block text-[10px] font-mono text-zinc-500">
+                    Der. ({lastRow.debut_rotation.slice(0, 7)}) : {fmtBreakdown(lastRow.valeur_jour_breakdown)} = {fmtEur(lastRow.valeur_jour)} €
+                  </span>
+                )}
+              </span>
+              <span className="font-mono text-zinc-800 dark:text-zinc-100">
+                {sameValue
+                  ? `${fmtEur(firstRow.valeur_jour)} €`
+                  : `${fmtEur(firstRow.valeur_jour)} / ${fmtEur(lastRow.valeur_jour)} €`}
+              </span>
+            </div>
+          );
+        })()}
         <div className="flex items-baseline justify-between gap-4 flex-wrap">
           <span className="text-zinc-600 dark:text-zinc-300">
             <strong>Nombre total de jours de missions hors de France :</strong>

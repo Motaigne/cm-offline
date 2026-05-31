@@ -39,6 +39,15 @@ export interface A81Row {
   taux: number | null;
   /** Valeur jour utilisée pour le calcul (depuis profil applicable au mois). */
   valeur_jour: number;
+  /** Composantes de valeur_jour pour affichage formule détaillée dans le
+   *  footer fiscal (optionnel — peuplé par le compute local uniquement). */
+  valeur_jour_breakdown?: {
+    fixe: number;
+    pvei: number;
+    ksp: number;
+    primeInstruction: number;   // 0 si non-instructeur
+    isTri: boolean;
+  };
   /** Montant prime séjour = valeur_jour × taux × nb_jours (0 si plafond). */
   montant: number;
   /** True si l'utilisateur a modifié debut_sejour_at. */
