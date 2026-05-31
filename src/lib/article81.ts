@@ -61,8 +61,13 @@ function parseDuree(s: string): number {
   return parseFloat(s.replace(/[h ]/gi, '').replace(',', '.')) || 0;
 }
 
-/** Lookup tauxSej dans la matrice : trouve la plus petite ligne dont
- *  la durée seuil ≥ (tSej + 15/60). Renvoie null si tSej < seuil minimum. */
+/** Lookup tauxSej dans la matrice. La grille est une fonction étagée : la
+ *  tranche `duree=X` s'applique pour `adjusted ∈ [X, next_X)`. On retourne
+ *  donc la plus GRANDE tranche dont `seuil ≤ adjusted` (= la marche à laquelle
+ *  on appartient), pas la plus petite ≥ adjusted (l'ancienne logique tombait
+ *  systématiquement sur la tranche d'au-dessus — ex : 63h Afrique sortait
+ *  160% (72h tier) au lieu de 140% (48h tier)).
+ *  Renvoie null si tSej < seuil minimum (= durée non éligible à A81). */
 export function lookupTauxSej(
   data: Article81Data | null | undefined,
   zone: string | null,
@@ -72,21 +77,19 @@ export function lookupTauxSej(
   const adjusted = tSej + QUART_HEURE;
   if (adjusted < (data.duree_min_h ?? 24)) return null;
 
-  // Tri par seuil croissant pour trouver le premier qui couvre adjusted
   const sorted = [...data.rates]
     .map(r => ({ ...r, seuil: parseDuree(r.duree) }))
     .filter(r => r.seuil > 0)
     .sort((a, b) => a.seuil - b.seuil);
 
+  // Plus grande tranche dont seuil ≤ adjusted. Si adjusted dépasse tous les
+  // seuils, on retombe naturellement sur le dernier (chosen reste défini).
+  let chosen: typeof sorted[number] | null = null;
   for (const r of sorted) {
-    if (adjusted <= r.seuil) {
-      const taux = r.taux[zone];
-      return taux ?? null;
-    }
+    if (r.seuil <= adjusted) chosen = r;
+    else break;
   }
-  // Dépasse le seuil max → utiliser la dernière ligne
-  const last = sorted[sorted.length - 1];
-  return last?.taux[zone] ?? null;
+  return chosen?.taux[zone] ?? null;
 }
 
 /**
