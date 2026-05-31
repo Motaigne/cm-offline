@@ -145,11 +145,16 @@ async function getOrCreateMonthSnapshot(
   return snap ?? null;
 }
 
+/** Clé d'index (sig + dedup) : `${activity_number}|${nb_on_days}`. */
+function sigKey(activityNumber: string, nbOnDays: number): string {
+  return `${activityNumber}|${nbOnDays}`;
+}
+
 /**
  * Charge l'état du snapshot pour calculer la diff (niveau signature ET niveau
  * instance, pour détecter les sigs déjà en DB qui ont des dates manquantes) :
- *  - existingNumbers : activity_number déjà en DB.
- *  - sigIdByActNum  : signature_id (DB) indexé par activity_number.
+ *  - existingKeys : clés `${activity_number}|${nb_on_days}` déjà en DB.
+ *  - sigIdByKey  : signature_id (DB) indexé par cette même clé.
  *  - existingActIdsBySig : pour chaque signature_id en DB, l'ensemble des
  *    activity_id déjà persistés en pairing_instance.
  *  - legacySigByActId : signature_id indexé par activity_id pour les lignes
@@ -157,15 +162,15 @@ async function getOrCreateMonthSnapshot(
  *    au passage.
  */
 async function loadSnapshotDiffState(supabase: SupabaseClient, snapshotId: string) {
-  const existingNumbers       = new Set<string>();
-  const sigIdByActNum         = new Map<string, string>();
+  const existingKeys          = new Set<string>();
+  const sigIdByKey            = new Map<string, string>();
   const existingActIdsBySig   = new Map<string, Set<string>>();
   const legacySigByActId      = new Map<string, string>();
 
-  const sigs = await fetchAllPaginated<{ id: string; activity_number: string | null }>((from, to) =>
+  const sigs = await fetchAllPaginated<{ id: string; activity_number: string | null; nb_on_days: number | null }>((from, to) =>
     supabase
       .from('pairing_signature')
-      .select('id, activity_number')
+      .select('id, activity_number, nb_on_days')
       .eq('snapshot_id', snapshotId)
       .range(from, to),
   );
@@ -174,9 +179,10 @@ async function loadSnapshotDiffState(supabase: SupabaseClient, snapshotId: strin
   const allSigIds:    string[] = [];
   for (const s of sigs) {
     allSigIds.push(s.id);
-    if (s.activity_number) {
-      existingNumbers.add(s.activity_number);
-      sigIdByActNum.set(s.activity_number, s.id);
+    if (s.activity_number && s.nb_on_days != null) {
+      const k = sigKey(s.activity_number, s.nb_on_days);
+      existingKeys.add(k);
+      sigIdByKey.set(k, s.id);
     } else {
       legacySigIds.push(s.id);
     }
@@ -202,7 +208,7 @@ async function loadSnapshotDiffState(supabase: SupabaseClient, snapshotId: strin
     }
   }
 
-  return { existingNumbers, sigIdByActNum, existingActIdsBySig, legacySigByActId };
+  return { existingKeys, sigIdByKey, existingActIdsBySig, legacySigByActId };
 }
 
 /** Construit une row pairing_instance à partir d'une PairingSummary. */
@@ -265,38 +271,54 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
       return d.getUTCFullYear() === paramY && d.getUTCMonth() + 1 === paramM;
     });
 
+    // sigMap keyée par `(activity_number, nb_on_days)` — sépare les rotations
+    // de durées différentes qui partagent un activity_number CrewBidd (cas JFK).
+    // Chaque clé devient une signature DB distincte, ce qui maintient
+    // l'invariant : tous les instances d'une sig ont la même durée.
     const sigMap = new Map<string, PairingSummary[]>();
     for (const p of allPairings) {
-      const key = p.activityNumber;
+      const dur = computeNbOnDays(p.beginBlockDate, p.endBlockDate);
+      if (dur <= 0) continue; // ignore les dates malformées
+      const key = sigKey(p.activityNumber, dur);
       if (!sigMap.has(key)) sigMap.set(key, []);
       sigMap.get(key)!.push(p);
     }
     const allKeys = Array.from(sigMap.keys());
 
     // Phase 2 — diff à 2 niveaux (signature ET instance)
-    const { existingNumbers, sigIdByActNum, existingActIdsBySig, legacySigByActId } =
+    const { existingKeys, sigIdByKey, existingActIdsBySig, legacySigByActId } =
       await loadSnapshotDiffState(supabase, snapshotId);
+    void existingKeys; // conservé pour debug futur, non utilisé directement
 
     // partialSigs : sig déjà en DB MAIS avec des dates manquantes → on insère
     //   uniquement les pairing_instance manquants (pas de detail fetch).
     // missingKeys : sig pas en DB du tout → detail fetch + insert sig + instances.
-    const partialSigs: Array<{ activityNumber: string; sigDbId: string; missingInsts: PairingSummary[] }> = [];
+    const partialSigs: Array<{ activityNumber: string; nbOnDays: number; sigDbId: string; missingInsts: PairingSummary[] }> = [];
     const missingKeys: string[] = [];
 
     for (const k of allKeys) {
       const fetchedInsts = sigMap.get(k)!;
+      const [actNum, durStr] = k.split('|');
+      const nbOnDays = Number(durStr);
 
-      // Résolution sigDbId : 1) match direct par activity_number,
-      // 2) fallback héritage par activity_id → on répare activity_number au passage.
-      let sigDbId = sigIdByActNum.get(k);
+      // Résolution sigDbId : 1) match direct par (activity_number, nb_on_days),
+      // 2) fallback héritage par activity_id (activity_number NULL en DB) → on
+      //    répare la ligne au passage. Le fallback ne s'applique qu'une fois
+      //    par sig legacy (la 1ère clé qui la touche), les autres durées tomberont
+      //    dans missingKeys → nouvelles insertions.
+      let sigDbId = sigIdByKey.get(k);
       if (!sigDbId) {
         for (const i of fetchedInsts) {
           const legacy = legacySigByActId.get(String(i.actId));
           if (legacy) {
-            await supabase.from('pairing_signature').update({ activity_number: k }).eq('id', legacy);
+            await supabase.from('pairing_signature')
+              .update({ activity_number: actNum, nb_on_days: nbOnDays })
+              .eq('id', legacy);
             sigDbId = legacy;
-            sigIdByActNum.set(k, legacy);
-            existingNumbers.add(k);
+            sigIdByKey.set(k, legacy);
+            // Ne pas réutiliser ce legacy sigId pour les autres clés
+            // (autres durées du même activity_number).
+            legacySigByActId.delete(String(i.actId));
             break;
           }
         }
@@ -307,7 +329,7 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
         const existingActIds = existingActIdsBySig.get(sigDbId) ?? new Set<string>();
         const missingInsts   = fetchedInsts.filter(i => !existingActIds.has(String(i.actId)));
         if (missingInsts.length > 0) {
-          partialSigs.push({ activityNumber: k, sigDbId, missingInsts });
+          partialSigs.push({ activityNumber: actNum, nbOnDays, sigDbId, missingInsts });
         }
       } else {
         missingKeys.push(k);
@@ -330,14 +352,13 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
 
     let processedSigs = 0;
 
-    // Phase 3a — partial sigs (rapide, juste insert d'instances). On en
-    // profite pour ré-aligner nb_on_days + rotation_code sur le calcul depuis
-    // les dates (CrewBidd peut renvoyer des valeurs incohérentes entre
-    // instances de la même rotation — cf. cas 7ON DFW ZKA4F0158 août 2026).
-    for (const { sigDbId, missingInsts, activityNumber } of partialSigs) {
-      const repr      = missingInsts[0];
-      const nbOnDays  = computeNbOnDays(repr.beginBlockDate, repr.endBlockDate);
-      const rotCode   = buildRotationCode(repr, nbOnDays);
+    // Phase 3a — partial sigs (rapide, juste insert d'instances).
+    // nb_on_days est déjà fixé par la clé sigMap (toutes les instances
+    // partagent la même durée). On réécrit rotation_code pour rattraper
+    // d'éventuelles valeurs historiques incohérentes.
+    for (const { sigDbId, missingInsts, nbOnDays, activityNumber } of partialSigs) {
+      const repr     = missingInsts[0];
+      const rotCode  = buildRotationCode(repr, nbOnDays);
       yield {
         type: 'progress',
         current:  ++processedSigs,
@@ -354,10 +375,11 @@ export async function* runScrape(params: ScrapeParams): AsyncGenerator<ScrapeEve
     }
 
     // Phase 3b — full fetch pour les sigs vraiment manquantes
-    for (const activityNumber of cappedMissing) {
-      const instances = sigMap.get(activityNumber)!;
+    for (const k of cappedMissing) {
+      const instances = sigMap.get(k)!;
       const repr      = instances[0];
-      const nbOnDays  = computeNbOnDays(repr.beginBlockDate, repr.endBlockDate);
+      const [activityNumber, durStr] = k.split('|');
+      const nbOnDays  = Number(durStr);
       const rotCode   = buildRotationCode(repr, nbOnDays);
 
       yield {
