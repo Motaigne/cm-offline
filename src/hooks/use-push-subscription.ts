@@ -29,16 +29,25 @@ export type PushStatus =
   | 'default'            // permission default — bouton à afficher pour demander
   | 'subscribed';
 
+/** Détection synchrone du statut initial — `null` si une lookup async via le
+ *  service worker est nécessaire (cas typique). SSR → 'unsupported' (pas de
+ *  navigator), cohérent avec le client lors de l'hydration. */
+function detectInitialStatus(): PushStatus | null {
+  if (typeof window === 'undefined') return 'unsupported';
+  const ok = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  if (!ok) return 'unsupported';
+  if (isIOS() && !isStandalone()) return 'ios-not-installed';
+  return null;
+}
+
 export function usePushSubscription(): { status: PushStatus; subscribe: () => Promise<void> } {
-  const [status, setStatus] = useState<PushStatus>('unsupported');
+  // Init lazy : si on peut décider en synchrone, on évite le 1er render dans un
+  // état faux. Sinon on rend 'unsupported' provisoire puis le useEffect cale.
+  const [status, setStatus] = useState<PushStatus>(() => detectInitialStatus() ?? 'unsupported');
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const ok = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
-    if (!ok) { setStatus('unsupported'); return; }
-
-    if (isIOS() && !isStandalone()) { setStatus('ios-not-installed'); return; }
+    // Statut déjà fixé en synchrone via l'initializer → rien à faire.
+    if (detectInitialStatus() !== null) return;
 
     void (async () => {
       const reg = await navigator.serviceWorker.ready;

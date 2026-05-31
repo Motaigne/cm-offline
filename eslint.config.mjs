@@ -28,6 +28,14 @@ const eslintConfig = defineConfig([
         caughtErrorsIgnorePattern: "^_",
         destructuredArrayIgnorePattern: "^_",
       }],
+      // Downgrade en warning : l'app a beaucoup de patterns "sync prop→state"
+      // et "init depuis localStorage en evitant le hydration mismatch" qui
+      // necessitent legitimement un setState dans un effect. Les refactos
+      // proposes par React (useSyncExternalStore, deriver pendant render avec
+      // ref pour detecter le changement, etc.) sont disproportionnes vs le
+      // cout reel (cascades de renders minimes). On garde le signal en warning
+      // pour ne pas masquer les vrais cas problematiques.
+      "react-hooks/set-state-in-effect": "warn",
     },
   },
 ]);
