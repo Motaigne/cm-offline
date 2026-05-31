@@ -40,6 +40,7 @@ import { computeEffectiveRpc } from '@/lib/rpc';
 import { enqueueAddNote, enqueueUpdateNote, enqueueDeleteNote } from '@/lib/sync-service';
 import { listNotesForMonth, type UserNote } from '@/app/actions/notes';
 import { NavBar } from '@/app/components/nav';
+import { EmptyCacheBanner } from '@/app/components/empty-cache-banner';
 import { MonthReleaseIcon } from '@/app/components/month-release-icon';
 import { usePushSubscription } from '@/hooks/use-push-subscription';
 
@@ -1451,10 +1452,11 @@ export function GanttView({
   // ── render ──────────────────────────────────────────────────────────────────
 
   return (
-    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+    <DndContext id="cm-gantt" sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <div className="flex flex-col h-screen bg-white dark:bg-zinc-950 overflow-hidden select-none">
 
         <NavBar />
+        <EmptyCacheBanner />
 
         {/* Portrait warning */}
         <div className="portrait:flex landscape:hidden fixed inset-0 z-50 bg-zinc-950 text-white flex-col items-center justify-center gap-3 text-sm font-medium">

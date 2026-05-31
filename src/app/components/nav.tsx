@@ -10,7 +10,10 @@ import { loadAllAnnexeRows } from '@/app/actions/annexe';
 import { loadAllA81Overrides, loadAllA81YearData } from '@/app/actions/a81';
 import { cacheRotations, hydrateDB, cacheProfileVersions, cacheAnnexeRows, cacheA81Overrides, cacheA81YearData } from '@/lib/local-db';
 import { syncNow, pendingOpsCount, PENDING_CHANGED_EVENT } from '@/lib/sync-service';
-import { downloadBackup, parseBackup, importBackup } from '@/lib/backup';
+import {
+  downloadPlanning, downloadDatabase,
+  parseBackupFile, importPlanning, importDatabase, importLegacyBackup,
+} from '@/lib/backup';
 
 const TABS: { label: string; href: string; offlineDisabled?: boolean }[] = [
   { label: 'Profil',      href: '/profil'     },
@@ -160,9 +163,10 @@ export function NavBar() {
   const [pendingCount, setPendingCount] = useState(0);
   const [backupMenuOpen, setBackupMenuOpen] = useState(false);
   const [backupStatus, setBackupStatus] = useState('');
-  const [online, setOnline] = useState<boolean>(
-    typeof navigator !== 'undefined' ? navigator.onLine : true,
-  );
+  // Toujours `true` au 1er render (SSR + client) pour éviter un mismatch
+  // d'hydration sur les onglets offlineDisabled. La vraie valeur est lue au
+  // mount + via les events online/offline.
+  const [online, setOnline] = useState<boolean>(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Sync mode (Lite / Perso) + sélection Perso (mois cochés)
@@ -218,7 +222,10 @@ export function NavBar() {
   }, []);
 
   // Suit l'état réseau pour griser les onglets offlineDisabled (EP4).
+  // Sync la valeur réelle au mount (l'état initial est forcé à `true` côté
+  // client pour matcher le SSR — voir useState plus haut).
   useEffect(() => {
+    if (!navigator.onLine) setOnline(false);
     const up = () => setOnline(true);
     const down = () => setOnline(false);
     window.addEventListener('online', up);
@@ -335,11 +342,23 @@ export function NavBar() {
     }
   }
 
-  async function handleExportBackup() {
+  async function handleExportPlanning() {
     setBackupMenuOpen(false);
     try {
-      await downloadBackup();
-      setBackupStatus('✓ exporté');
+      await downloadPlanning();
+      setBackupStatus('✓ planning exporté');
+    } catch (e) {
+      setBackupStatus(`! ${String(e)}`);
+    } finally {
+      setTimeout(() => setBackupStatus(''), 3000);
+    }
+  }
+
+  async function handleExportDatabase() {
+    setBackupMenuOpen(false);
+    try {
+      await downloadDatabase();
+      setBackupStatus('✓ DB exportée');
     } catch (e) {
       setBackupStatus(`! ${String(e)}`);
     } finally {
@@ -350,12 +369,52 @@ export function NavBar() {
   async function handleImportBackupFile(file: File) {
     try {
       const text = await file.text();
-      const backup = parseBackup(text);
-      const months = Array.from(new Set(backup.drafts.map(d => d.target_month))).sort().join(', ');
-      if (!confirm(`Restaurer le backup ?\n\nMois remplacés : ${months || '(aucun)'}\nItems : ${backup.items.length}\nOps en queue : ${backup.sync_queue.length}\n\nLes autres mois resteront intacts.`)) return;
-      const summary = await importBackup(backup);
-      setBackupStatus(`✓ ${summary.itemsImported} items restaurés`);
-      router.refresh();
+      const backup = parseBackupFile(text);
+
+      // Format legacy v1 (drafts/items/sync_queue uniquement, sans kind).
+      if (!('kind' in backup)) {
+        const months = Array.from(new Set(backup.drafts.map(d => d.target_month))).sort().join(', ');
+        if (!confirm(`Restaurer le backup legacy ?\n\nMois remplacés : ${months || '(aucun)'}\nItems : ${backup.items.length}\nOps en queue : ${backup.sync_queue.length}\n\nLes autres mois resteront intacts.`)) return;
+        const s = await importLegacyBackup(backup);
+        setBackupStatus(`✓ ${s.itemsImported} items restaurés`);
+        router.refresh();
+        return;
+      }
+
+      if (backup.kind === 'planning') {
+        const months = Array.from(new Set(backup.drafts.map(d => d.target_month))).sort().join(', ');
+        const ok = confirm(
+          `Restaurer le PLANNING (remplace tout) ?\n\n` +
+          `Mois : ${months || '(aucun)'}\n` +
+          `Items : ${backup.items.length}\n` +
+          `Notes : ${backup.notes.length}\n` +
+          `Ops en queue : ${backup.sync_queue.length}\n` +
+          `Profil (versions) : ${backup.profile_versions.length}\n` +
+          `A81 overrides : ${backup.a81_overrides.length}\n` +
+          `A81 années : ${backup.a81_year_data.length}\n\n` +
+          `⚠ Toutes les données perso actuelles seront écrasées.`,
+        );
+        if (!ok) return;
+        const s = await importPlanning(backup);
+        setBackupStatus(`✓ planning restauré (${s.items} items, ${s.notes} notes)`);
+        router.refresh();
+        return;
+      }
+
+      if (backup.kind === 'database') {
+        const ok = confirm(
+          `Restaurer la DATABASE (remplace tout) ?\n\n` +
+          `Rotations : ${backup.rotations.length}\n` +
+          `Releases chiffrées : ${backup.releases.length}\n` +
+          `Annexe (rows versionnées) : ${backup.annexe_rows.length}\n\n` +
+          `⚠ Tout le cache catalogue actuel sera écrasé.`,
+        );
+        if (!ok) return;
+        const s = await importDatabase(backup);
+        setBackupStatus(`✓ DB restaurée (${s.rotations} rotations, ${s.months.length} mois)`);
+        router.refresh();
+        return;
+      }
     } catch (e) {
       setBackupStatus(`! ${String(e)}`);
     } finally {
@@ -543,21 +602,35 @@ export function NavBar() {
             {backupMenuOpen && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setBackupMenuOpen(false)} />
-                <div className="absolute right-0 top-full mt-1 z-50 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-lg py-1 min-w-56">
+                <div
+                  className="fixed right-2 z-50 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-lg py-1 min-w-72"
+                  style={{ top: 'calc(env(safe-area-inset-top) + 2.5rem)' }}
+                >
+                  <p className="px-4 pt-1.5 pb-0.5 text-[10px] uppercase tracking-wide font-semibold text-zinc-500">Planning (perso)</p>
                   <button
-                    onClick={handleExportBackup}
+                    onClick={handleExportPlanning}
                     className="block w-full text-left px-4 py-2 text-sm text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-700"
                   >
-                    Sauvegarder sur l&apos;iPad (.json)
+                    Sauvegarder le planning (.json)
                   </button>
+                  <p className="px-4 pt-2 pb-0.5 text-[10px] uppercase tracking-wide font-semibold text-zinc-500 border-t border-zinc-100 dark:border-zinc-700">Database (catalogue)</p>
                   <button
-                    onClick={() => { setBackupMenuOpen(false); fileInputRef.current?.click(); }}
+                    onClick={handleExportDatabase}
                     className="block w-full text-left px-4 py-2 text-sm text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-700"
                   >
-                    Restaurer depuis un fichier…
+                    Sauvegarder la DB (.json)
                   </button>
+                  <div className="border-t border-zinc-100 dark:border-zinc-700 mt-1">
+                    <button
+                      onClick={() => { setBackupMenuOpen(false); fileInputRef.current?.click(); }}
+                      className="block w-full text-left px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-700"
+                    >
+                      Restaurer depuis un fichier…
+                    </button>
+                  </div>
                   <p className="px-4 py-1.5 text-[10px] text-zinc-400 border-t border-zinc-100 dark:border-zinc-700">
-                    Remplace uniquement les mois présents dans le fichier.
+                    Restaure planning OU database selon le fichier. Une restauration
+                    écrase intégralement la catégorie correspondante.
                   </p>
                 </div>
               </>
