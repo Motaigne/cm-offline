@@ -162,24 +162,11 @@ export function A81Client({
       }
       // Toujours lire Dexie : = état mergé (serveur + pending optimistic).
       const overrides = await loadA81OverridesLocal();
-      const local = await computeA81ForYearLocal(currentYear, overrides);
-      // Si Dexie n'a pas les rotations cachées (1ère visite, jamais Sync, etc.)
-      // mais le serveur a renvoyé des rows : merge fallback. On garde les
-      // rotations serveur pour le tableau + total, et on applique le plafond
-      // local au footer fiscal pour que l'édit hors-ligne soit visible.
-      if (local.rows.length === 0 && initialData.rows.length > 0) {
-        local.rows           = initialData.rows;
-        local.deleted_rows   = initialData.deleted_rows;
-        local.nb_total_jours = initialData.nb_total_jours;
-        local.cumul_jours    = initialData.cumul_jours;
-        local.plafond_jours  = initialData.plafond_jours;
-        local.montant_total  = initialData.montant_total;
-        local.regime_used    = initialData.regime_used;
-        // Recompute exo avec le plafond local + montant_total serveur
-        const pe = local.plafond_exo_brut;
-        local.montant_exo     = pe != null && pe > 0 ? Math.min(0.4 * pe, local.montant_total) : 0;
-        local.montant_net_exo = 0.818 * local.montant_exo;
-      }
+      // Passe initialData en fallback : si Dexie n'a pas les rotations cachées
+      // (mois jamais sync'd) on hérite des rows serveur ET on y applique les
+      // overrides locaux, pour que les édits (debut/fin séjour) re-calculent
+      // taux + nb_jours + montant immédiatement, sans attendre router.refresh.
+      const local = await computeA81ForYearLocal(currentYear, overrides, initialData);
       a81LocalCache.set(currentYear, local);
       setLocalData(local);
     } catch {

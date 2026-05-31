@@ -121,6 +121,12 @@ function pickProfileForMonth(versions: ProfileVersion[], month: string): Profile
 export async function computeA81ForYearLocal(
   year: number,
   overrides: A81OverrideLocal[] = [],
+  /** Fallback : si les rotations ne sont pas en cache Dexie pour ce mois
+   *  (typique pour un mois jamais sync'd), on hérite des rows initialData
+   *  serveur ET on y applique les overrides locaux pour que les édits
+   *  utilisateur (debut/fin séjour) soient visibles immédiatement sans
+   *  attendre le round-trip serveur. */
+  initialDataFallback: A81YearData | null = null,
 ): Promise<A81YearData> {
   // 1. Drafts ligne A de l'année
   const allDrafts = await db.drafts.toArray();
@@ -362,21 +368,161 @@ export async function computeA81ForYearLocal(
     .filter(r => { if (seenDel.has(r.instance_id)) return false; seenDel.add(r.instance_id); return true; })
     .sort((a, b) => a.debut_rotation.localeCompare(b.debut_rotation));
 
+  // Fallback : rotations pas en cache Dexie (cas typique : mois jamais sync'd
+  // mais drafts présents). Plutôt que de retourner 0 rows et de laisser
+  // l'appelant utiliser initialDataFallback BRUT (= snapshot pré-édit côté
+  // serveur, taux figé sur la valeur d'avant l'override), on applique les
+  // overrides aux rows initialData ici pour que les édits soient visibles.
+  let finalRows = expanded;
+  let finalDeleted = uniqueDeleted;
+  let finalCumul = cumul;
+  let finalMontantTotal = montantTotal;
+
+  if (expanded.length === 0 && initialDataFallback && initialDataFallback.rows.length > 0) {
+    const fb = applyOverridesToInitialRows(
+      initialDataFallback,
+      overrides,
+      article81Data,
+      plafondJours,
+      computeValeurJourForMonth,
+    );
+    finalRows = fb.rows;
+    finalDeleted = fb.deletedRows;
+    finalCumul = fb.cumul;
+    finalMontantTotal = fb.montantTotal;
+  }
+
   const montantExo = plafondExoBrut != null && plafondExoBrut > 0
-    ? Math.min(0.4 * plafondExoBrut, montantTotal) : 0;
+    ? Math.min(0.4 * plafondExoBrut, finalMontantTotal) : 0;
   const montantNetExo = 0.818 * montantExo;
 
   return {
     year,
-    rows: expanded,
-    deleted_rows: uniqueDeleted,
-    nb_total_jours: Math.min(plafondJours, cumul),
-    cumul_jours: cumul,
+    rows: finalRows,
+    deleted_rows: finalDeleted,
+    nb_total_jours: Math.min(plafondJours, finalCumul),
+    cumul_jours: finalCumul,
     plafond_jours: plafondJours,
-    montant_total: montantTotal,
+    montant_total: finalMontantTotal,
     regime_used: regime,
     plafond_exo_brut: plafondExoBrut,
     montant_exo: montantExo,
     montant_net_exo: montantNetExo,
   };
+}
+
+/** Applique les overrides aux rows initialData (serveur) pour produire un
+ *  set de rows à jour quand on n'a pas les rotations en cache Dexie. Re-run
+ *  ensuite split + plafond pour cohérence. */
+function applyOverridesToInitialRows(
+  initialData: A81YearData,
+  overrides: A81OverrideLocal[],
+  article81Data: Article81Data | null,
+  plafondJours: number,
+  computeValeurJourForMonth: (month: string) => { value: number; breakdown?: NonNullable<A81Row['valeur_jour_breakdown']> },
+): { rows: A81Row[]; deletedRows: A81DeletedRow[]; cumul: number; montantTotal: number } {
+  const ovByInstId = new Map(overrides.map(o => [o.pairing_instance_id, o]));
+  // Les rows initialData peuvent être déjà SPLIT (m0/m1) avec instance_id
+  // dupliqué. On dédup par instance_id en gardant celui avec split_part=undefined
+  // si présent, sinon le 1er — pour repartir d'une base "non splittée".
+  const seen = new Set<string>();
+  const baseRows: A81Row[] = [];
+  for (const r of initialData.rows) {
+    if (seen.has(r.instance_id)) continue;
+    seen.add(r.instance_id);
+    baseRows.push(r);
+  }
+
+  // Reconstruit les rows en appliquant les overrides. Les supprimés
+  // partent en deletedRows.
+  const rebuilt: A81Row[] = [];
+  const deletedRows: A81DeletedRow[] = [...initialData.deleted_rows];
+  for (const r of baseRows) {
+    const ov = ovByInstId.get(r.instance_id);
+    if (ov?.deleted) {
+      deletedRows.push({
+        instance_id: r.instance_id,
+        debut_rotation: r.debut_rotation,
+        escale_debut: r.escale_debut,
+        escale_fin: r.escale_fin,
+      });
+      continue;
+    }
+    const debutMs = ov?.debut_sejour_at ? new Date(ov.debut_sejour_at).getTime() : new Date(r.debut_sejour_at_origin).getTime();
+    const finMs   = ov?.fin_sejour_at   ? new Date(ov.fin_sejour_at).getTime()   : new Date(r.fin_sejour_at_origin).getTime();
+    if (finMs <= debutMs) continue;
+    const tempsSejH = (finMs - debutMs) / 3600000;
+    const tSej24    = computeTSej24(tempsSejH);
+    const taux      = lookupTauxSej(article81Data, r.zone, tempsSejH);
+    const monthOfDepart = new Date(debutMs).toISOString().slice(0, 7);
+    const vjResult = computeValeurJourForMonth(monthOfDepart);
+    rebuilt.push({
+      ...r,
+      debut_sejour_at: new Date(debutMs).toISOString(),
+      fin_sejour_at:   new Date(finMs).toISOString(),
+      temps_sej_h: tempsSejH,
+      nb_jours: tSej24,
+      plafond: false,
+      taux,
+      valeur_jour: vjResult.value,
+      valeur_jour_breakdown: vjResult.breakdown,
+      montant: 0,
+      debut_sejour_overridden: !!ov?.debut_sejour_at,
+      fin_sejour_overridden:   !!ov?.fin_sejour_at,
+      split_part: undefined,
+    });
+  }
+
+  rebuilt.sort((a, b) => a.debut_sejour_at.localeCompare(b.debut_sejour_at));
+
+  // Expansion split (rotations à cheval).
+  const expanded: A81Row[] = [];
+  for (const r of rebuilt) {
+    const debutMs = new Date(r.debut_sejour_at).getTime();
+    const finMs   = new Date(r.fin_sejour_at).getTime();
+    const split = splitRotationAtMonth(debutMs, finMs, r.nb_jours);
+    if (!split) { expanded.push(r); continue; }
+    const m0DebutAt = new Date(split.m0.debutMs).toISOString();
+    const m0FinAt   = new Date(split.m0.finMs).toISOString();
+    const m1DebutAt = new Date(split.m1.debutMs).toISOString();
+    const m1FinAt   = new Date(split.m1.finMs).toISOString();
+    const m0Result = computeValeurJourForMonth(m0DebutAt.slice(0, 7));
+    const m1Result = computeValeurJourForMonth(m1DebutAt.slice(0, 7));
+    expanded.push({
+      ...r,
+      debut_sejour_at: m0DebutAt, fin_sejour_at: m0FinAt,
+      nb_jours: split.m0.nbJours,
+      valeur_jour: m0Result.value, valeur_jour_breakdown: m0Result.breakdown,
+      montant: 0, fin_sejour_overridden: false, split_part: 'm0',
+    });
+    expanded.push({
+      ...r,
+      debut_sejour_at: m1DebutAt, fin_sejour_at: m1FinAt,
+      nb_jours: split.m1.nbJours,
+      valeur_jour: m1Result.value, valeur_jour_breakdown: m1Result.breakdown,
+      montant: 0, debut_sejour_overridden: false, split_part: 'm1',
+    });
+  }
+  expanded.sort((a, b) => a.debut_sejour_at.localeCompare(b.debut_sejour_at));
+
+  // Plafond running.
+  let cumul = 0;
+  let montantTotal = 0;
+  for (const r of expanded) {
+    if (r.nb_jours === 0 || r.taux == null) { r.montant = 0; continue; }
+    if (cumul + r.nb_jours > plafondJours) {
+      r.plafond = true; r.montant = 0; cumul += r.nb_jours;
+    } else {
+      cumul += r.nb_jours;
+      r.montant = r.valeur_jour * r.taux * r.nb_jours;
+      montantTotal += r.montant;
+    }
+  }
+
+  const seenDel = new Set<string>();
+  const uniqueDeleted = deletedRows
+    .filter(r => { if (seenDel.has(r.instance_id)) return false; seenDel.add(r.instance_id); return true; })
+    .sort((a, b) => a.debut_rotation.localeCompare(b.debut_rotation));
+
+  return { rows: expanded, deletedRows: uniqueDeleted, cumul, montantTotal };
 }
