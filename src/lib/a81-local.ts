@@ -45,6 +45,62 @@ export interface A81OverrideLocal {
   fin_sejour_at:   string | null;
 }
 
+/**
+ * Cumul tSej24 par scénario A/B/C pour les rotations placées dans les mois
+ * Jan→month-1 de l'année donnée. Réplique `getYearA81CumulBefore` (serveur)
+ * 100% depuis Dexie, pour usage offline ou pour éviter le round-trip lors
+ * d'une navigation client-side dans le calendrier.
+ *
+ * Sources Dexie :
+ *   - db.drafts    : pour récupérer le scénario (name) de chaque draft
+ *   - db.items     : planning_items (kind=flight) avec pairing_instance_id
+ *   - db.rotations : signature → instances[] + temps_sej
+ */
+export async function computeA81CumulBeforeLocal(
+  year: number,
+  month: number,
+): Promise<{ byScenarioBefore: Record<'A' | 'B' | 'C', number> }> {
+  const result = { byScenarioBefore: { A: 0, B: 0, C: 0 } as Record<'A' | 'B' | 'C', number> };
+
+  const yearPrefix    = String(year);
+  const monthStartStr = `${year}-${String(month).padStart(2, '0')}`;
+  const allDrafts = await db.drafts.toArray();
+  // Mois Jan..month-1 de l'année : target_month commence par `year-` et est < `year-month`.
+  const eligibleDrafts = allDrafts.filter(d =>
+    d.target_month.startsWith(`${yearPrefix}-`) && d.target_month < monthStartStr,
+  );
+  if (eligibleDrafts.length === 0) return result;
+
+  const draftScenario = new Map<string, 'A' | 'B' | 'C'>();
+  for (const d of eligibleDrafts) {
+    if (d.name === 'A' || d.name === 'B' || d.name === 'C') {
+      draftScenario.set(d.id, d.name);
+    }
+  }
+  if (draftScenario.size === 0) return result;
+
+  const items = (await db.items.where('draft_id').anyOf([...draftScenario.keys()]).toArray())
+    .filter(i => i.kind === 'flight' && i.pairing_instance_id);
+  if (items.length === 0) return result;
+
+  // Mapping pairing_instance.id → rotation (qui porte temps_sej).
+  const rotations = await db.rotations.toArray();
+  const tSejByInstId = new Map<string, number>();
+  for (const r of rotations) {
+    const tSej = Number(r.temps_sej ?? 0);
+    for (const inst of r.instances) tSejByInstId.set(inst.id, tSej);
+  }
+
+  for (const it of items) {
+    const name = draftScenario.get(it.draft_id);
+    if (!name) continue;
+    const tSej = tSejByInstId.get(it.pairing_instance_id as string);
+    if (tSej == null) continue;
+    result.byScenarioBefore[name] += computeTSej24(tSej);
+  }
+  return result;
+}
+
 /** Sélectionne la version annexe applicable pour un slug donné + un mois.
  *  Renvoie la `data` brute (pas typée) ou null si pas de version. */
 function pickAnnexeRowForMonth(rows: AnnexeRow[], slug: string, month: string): unknown {

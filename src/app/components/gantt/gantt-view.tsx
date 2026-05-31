@@ -34,7 +34,7 @@ import {
 import { DdaViolationsStrip } from './dda-violations-strip';
 import { getRotationsForMonth } from '@/app/actions/search';
 import { getCurrentUserScrapeRights } from '@/app/actions/auth';
-import { getYearA81CumulBefore } from '@/app/actions/article81';
+import { computeA81CumulBeforeLocal } from '@/lib/a81-local';
 import { computeFullProfile, getAnnexeDataFromRows, type AnnexeData, type AnnexeRow } from '@/lib/annexe';
 import type { ProfileVersion } from '@/app/actions/profile-version';
 import { computeMonthlyIrMfFromLocalCache } from '@/lib/ir-mf-local';
@@ -1036,15 +1036,17 @@ export function GanttView({
       .catch(() => { setIsAdmin(false); setCanScrape(false); });
   }, []);
 
-  // Charge le compteur incitation pour le mois courant
+  // Charge le compteur incitation pour le mois courant. Indexé sur currentMonth
+  // (et pas la prop `month` initiale) sinon naviguer ‹/› dans la même session
+  // garde la valeur du 1er mois et écrase celle des mois suivants.
   useEffect(() => {
-    const stored = localStorage.getItem(`cm-incit-${month}`);
+    const stored = localStorage.getItem(`cm-incit-${currentMonth}`);
     setIncitCount(stored ? Math.max(0, Math.min(5, parseInt(stored) || 0)) : 0);
-  }, [month]);
+  }, [currentMonth]);
 
   function changeIncit(n: number) {
     setIncitCount(n);
-    localStorage.setItem(`cm-incit-${month}`, String(n));
+    localStorage.setItem(`cm-incit-${currentMonth}`, String(n));
   }
 
   async function handleReset() {
@@ -1246,11 +1248,13 @@ export function GanttView({
       // Pré-cache silencieux des mois adjacents
       void preCacheMonthBg(shiftMonth(newMonth, 1));
       void preCacheMonthBg(shiftMonth(newMonth, -1));
-      // A81 cumul : recalculé serveur (pas de version offline disponible).
+      // A81 cumul : recalculé client-side depuis Dexie — fonctionne offline
+      // et évite un round-trip serveur à chaque changeMonth. Les drafts +
+      // rotations sont déjà en cache (re-hydratés au-dessus).
       const [yy, mm] = newMonth.split('-').map(Number);
-      getYearA81CumulBefore(yy, mm)
-        .then(a81 => { if (myToken === navTokenRef.current) setA81CumulBeforeState(a81.byScenarioBefore); })
-        .catch(() => { /* offline ou erreur : on garde les valeurs courantes */ });
+      void computeA81CumulBeforeLocal(yy, mm).then(a81 => {
+        if (myToken === navTokenRef.current) setA81CumulBeforeState(a81.byScenarioBefore);
+      });
       // FinBase : calculé client-side via useMemo(currentMonth) à partir de
       // annexeRows + financeProfile (passés en props). Aucun fetch ici.
       // IR/MF : recalculé client à partir du cache rotations fraîchement mis à jour.
