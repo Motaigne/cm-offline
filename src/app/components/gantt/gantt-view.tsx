@@ -24,8 +24,8 @@ import { computeArticle81, computeTSej24, getPlafondJours } from '@/lib/article8
 import type { Article81Data } from '@/lib/article81';
 import { createClient } from '@/lib/supabase/client';
 import { hydrateDB, loadFromDB, hasPendingOps, loadScenariosForMonth, cacheRotations, purgeScenarios, hydrateNotes, loadNotesForMonth, loadRotationsFromDB } from '@/lib/local-db';
-import { computePrimeNoel } from '@/lib/prime-mai-noel';
-import type { RotationInstance } from '@/app/actions/search';
+import { computePrimeNoel, computePrimeMai } from '@/lib/prime-mai-noel';
+import type { RotationInstance, RotationSignature } from '@/app/actions/search';
 import { enqueueAdd, enqueueDelete, enqueueUpdate, enqueueBidCategoryUpdate, enqueueMetaUpdate, pendingOpsCount } from '@/lib/sync-service';
 import {
   validateScenario, mergeRules,
@@ -744,6 +744,9 @@ export function GanttView({
   // Map d'instances horaires du mois courant (depart_at / arrivee_at) pour
   // primes Mai/Noël qui ont besoin du timing intra-rotation. Vide → primes = 0.
   const [instancesById, setInstancesById] = useState<Map<string, RotationInstance>>(new Map());
+  // Map signature parente par instance_id — utilisée pour récupérer hcr_crew
+  // et tsv_nuit (prime 1er mai). Construite en même temps que instancesById.
+  const [signaturesByInstId, setSignaturesByInstId] = useState<Map<string, RotationSignature>>(new Map());
 
   // Sheet pour ajouter/éditer une note (sépare des items planning pour
   // éviter de mixer 2 logiques différentes — note vit dans table user_note,
@@ -1134,15 +1137,28 @@ export function GanttView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scenarios]);
 
-  // ── Charge la map d'instances horaires du mois courant (pour primes Mai/Noël)
+  // ── Charge les maps d'instances horaires + signature parente pour le mois
+  //    courant ET le mois précédent (pour les spillovers : vol parti M-1
+  //    et atterri M garde sa signature cachée dans target_month=M-1).
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const sigs = await loadRotationsFromDB(currentMonth);
+      const prevMonth = shiftMonth(currentMonth, -1);
+      const [sigsCur, sigsPrev] = await Promise.all([
+        loadRotationsFromDB(currentMonth),
+        loadRotationsFromDB(prevMonth),
+      ]);
       if (cancelled) return;
-      const m = new Map<string, RotationInstance>();
-      for (const sig of sigs) for (const inst of sig.instances) m.set(inst.id, inst);
-      setInstancesById(m);
+      const byInst = new Map<string, RotationInstance>();
+      const sigByInst = new Map<string, RotationSignature>();
+      for (const sig of [...sigsCur, ...sigsPrev]) {
+        for (const inst of sig.instances) {
+          byInst.set(inst.id, inst);
+          sigByInst.set(inst.id, sig);
+        }
+      }
+      setInstancesById(byInst);
+      setSignaturesByInstId(sigByInst);
     })();
     return () => { cancelled = true; };
   }, [currentMonth]);
@@ -1630,8 +1646,16 @@ export function GanttView({
           {/* Planning rows */}
           <div className="flex-1 flex flex-col overflow-hidden">
             {displayScenarios.map((scenario, idx) => {
-              // Prime 1er mai : placeholder à 0 — port Python à venir.
-              const primeMai = 0;
+              // Prime 1er mai : pMai = 1/30 × fixe + pvMai × PVEI × KSP.
+              // pvMai = (hcr_crew + tsv_nuit/2) × ratio_overlap des rotations
+              // chevauchant la fenêtre [01/05 00h → 02/05 00h Paris]. Cas VOL
+              // uniquement ; mai uniquement.
+              const primeMai = computePrimeMai(
+                scenario.items, signaturesByInstId, year, mo,
+                finBaseState?.fixe ?? FIXE_MENSUEL,
+                finBaseState?.pvei ?? PVEI,
+                finBaseState?.ksp  ?? KSP,
+              );
               // Prime Noël : 0,4 × taNoel × PVEI ; calcul actif en décembre
               // uniquement, sinon 0. taNoel = chevauchement des vols (vol /
               // dda_vol / vol_p) avec la fenêtre [24/12 18h → 26/12 00h Paris].
