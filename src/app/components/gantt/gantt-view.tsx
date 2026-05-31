@@ -233,7 +233,7 @@ function computeStats(
     const clip = clipItem(item, year, mo);
     if (clip) {
       const days = clip.end - clip.start + 1;
-      if (item.kind === 'flight') onDays   += days;
+      if (item.kind === 'flight' || item.kind === 'sol' || item.kind === 'medical' || item.kind === 'sim' || item.kind === 'instr') onDays += days;
       if (item.kind === 'conge')  congeDays += days;
       if (item.kind === 'sol' || item.kind === 'medical' || item.kind === 'autre') solDays += days;
       if (item.kind === 'sim') simDays += days;
