@@ -4,6 +4,7 @@ import { fetchAllPairings, fetchPairingDetail, type CrewBiddConfig } from './cre
 import { getZone } from './zone-lookup';
 import { computeTsvNuit } from './tsv-nuit';
 import type { PairingSummary, PairingDetail, ScrapeEvent } from './types';
+import type { Json } from '@/types/supabase';
 
 function sleep(ms: number) {
   return new Promise<void>(r => setTimeout(r, ms));
@@ -211,7 +212,10 @@ async function loadSnapshotDiffState(supabase: SupabaseClient, snapshotId: strin
   return { existingKeys, sigIdByKey, existingActIdsBySig, legacySigByActId };
 }
 
-/** Construit une row pairing_instance à partir d'une PairingSummary. */
+/** Construit une row pairing_instance à partir d'une PairingSummary.
+ *  raw_summary : le payload brut tel que renvoyé par CrewBidd `pairingsearch`,
+ *  conservé pour permettre une re-dérivation hors-ligne en cas de bug
+ *  d'exploitation (cf. migration 0034). */
 function buildInstanceRow(sigId: string, inst: PairingSummary) {
   const beginAct = inst.scheduledBeginActivityDate;
   const endAct   = inst.scheduledEndActivityDate;
@@ -231,6 +235,7 @@ function buildInstanceRow(sigId: string, inst: PairingSummary) {
     rest_after_h:   restAfter,
     scheduled_begin_activity_at: beginAct > 0 ? new Date(beginAct).toISOString() : null,
     scheduled_end_activity_at:   endAct   > 0 ? new Date(endAct).toISOString()   : null,
+    raw_summary:    inst as unknown as Json,
   };
 }
 
