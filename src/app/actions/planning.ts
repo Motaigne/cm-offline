@@ -17,21 +17,40 @@ async function getOrCreateDraft(
   const supabase = await createClient();
   const monthDate = `${targetMonth}-01`;
 
-  const { data: existing } = await supabase
-    .from('planning_draft')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('target_month', monthDate)
-    .eq('name', name)
-    .single();
+  // .single() retourne data=null aussi bien sur 0 rows que >1 rows. Avant la
+  // migration 0037 (unique index), des doublons historiques pouvaient exister
+  // → .single() voyait null → INSERT créait un n+1ème doublon, et les
+  // planning_item posés référencent un draft id de plus en plus obsolète à
+  // chaque render. Fix : order+limit+maybeSingle = on prend toujours le plus
+  // ancien (= canonique) de façon déterministe.
+  async function selectCanonical(): Promise<string | null> {
+    const { data } = await supabase
+      .from('planning_draft')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('target_month', monthDate)
+      .eq('name', name)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    return data?.id ?? null;
+  }
 
-  if (existing) return existing.id;
+  const existingId = await selectCanonical();
+  if (existingId) return existingId;
 
   const { data: created, error } = await supabase
     .from('planning_draft')
     .insert({ user_id: userId, target_month: monthDate, name, is_primary: name === 'A' })
     .select('id')
     .single();
+
+  // Race : si une autre requête a créé le draft entre notre SELECT et notre
+  // INSERT, l'unique index renvoie 23505. On retombe sur le SELECT.
+  if (error && (error.code === '23505' || /duplicate key/i.test(error.message))) {
+    const retryId = await selectCanonical();
+    if (retryId) return retryId;
+  }
 
   if (error || !created) throw new Error(error?.message ?? 'Impossible de créer le scénario');
   return created.id;
