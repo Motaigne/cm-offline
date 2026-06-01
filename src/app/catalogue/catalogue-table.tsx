@@ -103,10 +103,12 @@ export function CatalogueTable({
   const [filter, setFilter]         = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // Restaure le dernier mois sélectionné dans le calendrier
+  // Restaure le dernier mois sélectionné dans le calendrier — sauf s'il
+  // pointe vers un mois fictif (projection) qui n'est pas dispo en
+  // catalogue : on reste alors sur currentMonth (= fallback SSR réel).
   useEffect(() => {
     const stored = localStorage.getItem('cm-selected-month');
-    if (stored && stored !== currentMonth) void loadMonth(stored);
+    if (stored && stored !== currentMonth && months.includes(stored)) void loadMonth(stored);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

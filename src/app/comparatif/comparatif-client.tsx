@@ -130,10 +130,12 @@ export function ComparatifClient({
 
   const [year, mo] = currentMonth.split('-').map(Number);
 
-  // Restaure le dernier mois sélectionné dans le calendrier
+  // Restaure le dernier mois sélectionné dans le calendrier — sauf s'il
+  // pointe vers un mois fictif (projection) non dispo en comparatif :
+  // on reste alors sur currentMonth (= fallback SSR réel).
   useEffect(() => {
     const stored = localStorage.getItem('cm-selected-month');
-    if (stored && stored !== currentMonth) void loadMonth(stored);
+    if (stored && stored !== currentMonth && months.includes(stored)) void loadMonth(stored);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
