@@ -658,40 +658,38 @@ export function ProfilForm({
             </span>
           </p>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {/* Row 1 : PVEI · K.S.P · Seuil HS */}
             <ValueCard label="PVEI"     value={`${computed.pvei.toFixed(2)} €/h`}  color="blue"
               formula="Avion × (ATPL + Classe) × CAT" />
             <ValueCard label="K.S.P"    value={KSP.toFixed(2)}                     color="zinc" />
             <ValueCard label="Seuil HS" value={`${computed.hsSeuil.toFixed(2)} h`} color="green"
               formula="75 − 2,5 × congés − 2,5 × (30 − 30e)" />
-            <ValueCard label="MGA"              value={`${computed.mga.toFixed(2)} €`}            color="violet"
-              formula="85 × PVEI × (30e/30)" />
-            <ValueCard label="Traitement fixe"  value={`${computed.fixe.toFixed(2)} €`}           color="zinc"
-              formula="Fixe × Coef(FO/CDB) × Echelon × 30e" />
+
+            {/* Row 2 : SMMG · T.Fixe · MGA (régime courant) */}
             <ValueCard label="SMMG"             value={`${computed.smmg.toFixed(2)} €`}           color="violet"
               formula="T.Fixe + MGA" />
-            <ValueCard label="Prime bi-tronçon" value={`${computed.primeBiTroncon.toFixed(2)} €`} color="amber"
-              formula="2,5 × PVEI (sans KSP)" />
-            <ValueCard label="MGA temps plein"     value={`${computed.mgaTP.toFixed(2)} €`}           color="violet"
-              formula="85 × PVEI" />
-            <ValueCard label="T. Fixe temps plein" value={`${computed.fixeTP.toFixed(2)} €`}          color="zinc"   />
+            <ValueCard label="Traitement fixe"  value={`${computed.fixe.toFixed(2)} €`}           color="zinc"
+              formula="Fixe × Coef(FO/CDB) × Echelon × 30e" />
+            <ValueCard label="MGA"              value={`${computed.mga.toFixed(2)} €`}            color="violet"
+              formula="85 × PVEI × (30e/30)" />
+
+            {/* Row 3 : SMMG TP · T.Fixe TP · MGA TP (temps plein théorique) */}
             <ValueCard label="SMMG temps plein"    value={`${computed.smmgTP.toFixed(2)} €`}          color="violet"
               formula="T.Fixe TP + MGA TP" />
+            <ValueCard label="T. Fixe temps plein" value={`${computed.fixeTP.toFixed(2)} €`}          color="zinc"   />
+            <ValueCard label="MGA temps plein"     value={`${computed.mgaTP.toFixed(2)} €`}           color="violet"
+              formula="85 × PVEI" />
+
+            {/* Row 4 : Prime bi-tronçon · Prime d'incitation · Valeur Jour A81 */}
+            <ValueCard label="Prime bi-tronçon" value={`${computed.primeBiTroncon.toFixed(2)} €`} color="amber"
+              formula="2,5 × PVEI (sans KSP)" />
             <ValueCard label="Prime d'incitation"  value={`${computed.primeIncitation.toFixed(2)} €`} color="amber"  />
             <ValueCard label="Valeur Jour A81"     value={`${computed.valeurJour.toFixed(2)} €`}     color="green"
               formula={isTri
                 ? '(T.Fixe TP + Prime instruc. + 96 × PVEI × KSP) × 13/12 / 18'
                 : '(T.Fixe TP + 76 × PVEI × KSP) × 13/12 / 18'} />
-            {isTri && computed.primeInstruction > 0 && (
-              <>
-                <ValueCard
-                  label={computed.juillAout ? "Prime d'instruction (jan–juin, sep–déc)" : "Prime mensuelle d'instruction"}
-                  value={`${computed.primeInstruction.toFixed(2)} €`} color="amber" />
-                {computed.juillAout && (
-                  <ValueCard label="Prime d'instruction (juil–août)"
-                    value={`${computed.juillAout.primeInstruction.toFixed(2)} €`} color="amber" />
-                )}
-              </>
-            )}
+
+            {/* Row 5 : Prime A330 jan-juin/sep-déc · Prime A330 juil-août */}
             {prime330 && computed.primeA330 > 0 && (
               <>
                 <ValueCard
@@ -700,6 +698,19 @@ export function ProfilForm({
                 {computed.juillAout && (
                   <ValueCard label="Prime A330 (juil–août)"
                     value={`${computed.juillAout.primeA330.toFixed(2)} €`} color="amber" />
+                )}
+              </>
+            )}
+
+            {/* Prime instruction (TRI uniquement) */}
+            {isTri && computed.primeInstruction > 0 && (
+              <>
+                <ValueCard
+                  label={computed.juillAout ? "Prime d'instruction (jan–juin, sep–déc)" : "Prime mensuelle d'instruction"}
+                  value={`${computed.primeInstruction.toFixed(2)} €`} color="amber" />
+                {computed.juillAout && (
+                  <ValueCard label="Prime d'instruction (juil–août)"
+                    value={`${computed.juillAout.primeInstruction.toFixed(2)} €`} color="amber" />
                 )}
               </>
             )}
