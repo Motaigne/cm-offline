@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
-import { loadAnnexeForMonth } from '@/app/actions/annexe';
+import { loadAllAnnexeRows } from '@/app/actions/annexe';
 import { loadAllProfileVersions } from '@/app/actions/profile-version';
 import { NavBar } from '@/app/components/nav';
 import { ProfilForm } from './profil-form';
@@ -10,11 +10,12 @@ export default async function ProfilPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  const [{ data: profile }, allVersions, annexe] = await Promise.all([
+  const [{ data: profile }, allVersions, annexeRows] = await Promise.all([
     supabase.from('user_profile').select('*').eq('user_id', user.id).single(),
     loadAllProfileVersions(user.id),
-    // Profil = vue d'édition → annexe du mois en cours pour les calculs live.
-    loadAnnexeForMonth(new Date().toISOString().slice(0, 7)),
+    // Toutes les rows versionnées → on slice client-side selon la version
+    // de profil sélectionnée (Jan vs Avr peut tomber sur 2 annexes différentes).
+    loadAllAnnexeRows(),
   ]);
 
   return (
@@ -34,7 +35,7 @@ export default async function ProfilPage() {
           <ProfilForm
             initialData={profile ?? undefined}
             isNew={!profile}
-            annexe={annexe}
+            annexeRows={annexeRows}
             allVersions={allVersions}
           />
         </div>

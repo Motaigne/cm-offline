@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import { saveProfile, type ProfileData } from '@/app/actions/profile';
 import { saveProfileVersion, deleteProfileVersion, type ProfileVersion } from '@/app/actions/profile-version';
 import { signOut } from '@/app/actions/auth';
-import { computeFullProfile, KSP, type AnnexeData } from '@/lib/annexe';
+import { computeFullProfile, computePrimeInstructionMontant, getAnnexeDataFromRows, KSP, type AnnexeData, type AnnexeRow } from '@/lib/annexe';
+import { computeValeurJour } from '@/lib/article81';
 import { useOnlineStatus } from '@/hooks/use-online';
 import type { Database, Tables } from '@/types/supabase';
 
@@ -87,7 +88,6 @@ function readSource(src: SourceProfile) {
     cngHs:      String(src?.cng_hs ?? 0),
     triNiveau:  src?.tri_niveau != null ? String(src.tri_niveau) : '',
     prime330Count: src?.prime_330_count ?? null,
-    valeurJour: String(src?.valeur_jour ?? 600),
     tmi:        Number(src?.tmi ?? 41),
   };
 }
@@ -95,12 +95,12 @@ function readSource(src: SourceProfile) {
 export function ProfilForm({
   initialData,
   isNew,
-  annexe,
+  annexeRows,
   allVersions,
 }: {
   initialData?: ProfileRow;
   isNew: boolean;
-  annexe: Partial<AnnexeData>;
+  annexeRows: AnnexeRow[];
   allVersions: ProfileVersion[];
 }) {
   const router = useRouter();
@@ -143,7 +143,6 @@ export function ProfilForm({
   const [cngHs,     setCngHs]     = useState(init.cngHs);
   const [triNiveau, setTriNiveau] = useState<string>(init.triNiveau);
   const [prime330Count, setPrime330Count] = useState<number | null>(init.prime330Count);
-  const [valeurJour, setValeurJour] = useState(init.valeurJour);
   const [tmi,         setTmi]         = useState<number>(init.tmi);
 
   // Quand on change de version sélectionnée → reset le form depuis la nouvelle source.
@@ -156,7 +155,7 @@ export function ProfilForm({
     setTransport(r.transport); setNavigoEur(r.navigoEur); setVoitureKmAller(r.voitureKmAller);
     setVoitureIndemniteKm(r.voitureIndemniteKm); setAircraft(r.aircraft);
     setCngPv(r.cngPv); setCngHs(r.cngHs); setTriNiveau(r.triNiveau);
-    setPrime330Count(r.prime330Count); setValeurJour(r.valeurJour); setTmi(r.tmi);
+    setPrime330Count(r.prime330Count); setTmi(r.tmi);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedValidFrom]);
 
@@ -179,6 +178,14 @@ export function ProfilForm({
   const [newErr, setNewErr] = useState('');
 
   // ── Calcul live des éléments de paie ───────────────────────────────────────
+  // L'annexe est versionnée : on slice les rows selon le mois de la version
+  // de profil sélectionnée, sinon les éléments de paie restent figés sur
+  // l'annexe du mois courant quel que soit le selectedValidFrom.
+  const annexe = useMemo<Partial<AnnexeData>>(
+    () => getAnnexeDataFromRows(annexeRows, selectedValidFrom.slice(0, 7)),
+    [annexeRows, selectedValidFrom],
+  );
+
   const computed = useMemo(() => {
     const hasAnnexe = !!(
       annexe.cat_anciennete?.length &&
@@ -207,7 +214,20 @@ export function ProfilForm({
           primeInstFonction, primeInstAnnee, prime330Count, annexe as AnnexeData)
       : null;
 
-    return { ...main, juillAout };
+    // Valeur Jour A81 : formule pilote "théorique 100%" → fixe TEMPS PLEIN
+    // (non proratisé régime) + prime instruction NON proratisée.
+    const primeInstNonProratise = (primeInstFonction && primeInstAnnee && annexe.prime_instruction)
+      ? computePrimeInstructionMontant(annexe.prime_instruction, primeInstFonction, primeInstAnnee)
+      : 0;
+    const valeurJour = computeValeurJour({
+      fixe: main.fixeTP,
+      pvei: main.pvei,
+      ksp: main.ksp,
+      primeInstruction: primeInstNonProratise,
+      isTri,
+    });
+
+    return { ...main, juillAout, valeurJour };
   }, [annexe, fonction, regime, aircraft, classe, categorie, echelon, bonusAtpl, isTri, triNiveau, prime330Count]);
 
   /** Champs à persister (commun entre saveProfile et saveProfileVersion). */
@@ -229,7 +249,7 @@ export function ProfilForm({
       cng_hs:             parseFloat(cngHs) || 0,
       tri_niveau:         isTri && triNiveau !== '' ? parseInt(triNiveau) : null,
       prime_330_count:    prime330Count,
-      valeur_jour:        parseFloat(valeurJour) || 600,
+      valeur_jour:        computed?.valeurJour ?? 600,
       tmi:                tmi,
     };
   }
@@ -604,25 +624,14 @@ export function ProfilForm({
         )}
       </Section>
 
-      {/* Article 81 — valeur jour + TMI */}
-      <Section label="Article 81 — Valeur jour">
-        <div className="flex items-center gap-3">
-          <input type="number" step="1" min={0} value={valeurJour}
-            onChange={e => setValeurJour(e.target.value)} placeholder="600"
-            className={`${input} w-28 text-center font-mono`} />
-          <span className="text-xs text-zinc-500">
-            € / jour — base de la prime de séjour défiscalisée (défaut 600).
-          </span>
-        </div>
-        <div className="mt-3">
-          <label className="block text-xs text-zinc-500 mb-1">TMI (Taux Marginal d&apos;Imposition)</label>
-          <div className="flex flex-wrap gap-2">
-            {[45, 41, 30, 11, 0].map(t => (
-              <button key={t} type="button" onClick={() => setTmi(t)} className={pill(tmi === t)}>
-                {t} %
-              </button>
-            ))}
-          </div>
+      {/* TMI (Taux Marginal d'Imposition) — utilisé pour le calcul du gain net A81 */}
+      <Section label="TMI (Taux Marginal d'Imposition)">
+        <div className="flex flex-wrap gap-2">
+          {[45, 41, 30, 11, 0].map(t => (
+            <button key={t} type="button" onClick={() => setTmi(t)} className={pill(tmi === t)}>
+              {t} %
+            </button>
+          ))}
         </div>
       </Section>
 
@@ -664,6 +673,10 @@ export function ProfilForm({
               formula="T.Fixe + 85 × PVEI" />
             <ValueCard label="T. Fixe temps plein" value={`${computed.fixeTP.toFixed(2)} €`}          color="zinc"   />
             <ValueCard label="Prime d'incitation"  value={`${computed.primeIncitation.toFixed(2)} €`} color="amber"  />
+            <ValueCard label="Valeur Jour A81"     value={`${computed.valeurJour.toFixed(2)} €`}     color="green"
+              formula={isTri
+                ? '(T.Fixe TP + Prime instruc. + 96 × PVEI × KSP) × 13/12 / 18'
+                : '(T.Fixe TP + 76 × PVEI × KSP) × 13/12 / 18'} />
             {isTri && computed.primeInstruction > 0 && (
               <>
                 <ValueCard

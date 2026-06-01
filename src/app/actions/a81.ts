@@ -6,7 +6,7 @@ import { revalidatePath } from 'next/cache';
 import { computeTSej24, lookupTauxSej, getPlafondJours, computeValeurJour, splitRotationAtMonth, computeSejourOffsetsFromDetail, type Article81Data } from '@/lib/article81';
 import { loadAnnexeRowForMonth, loadAllAnnexeRows } from '@/app/actions/annexe';
 import { loadAllProfileVersions } from '@/app/actions/profile-version';
-import { computeFullProfile, getAnnexeDataFromRows, type AnnexeData } from '@/lib/annexe';
+import { computeFullProfile, computePrimeInstructionMontant, getAnnexeDataFromRows, type AnnexeData } from '@/lib/annexe';
 import { REGIME_NB30E } from '@/lib/finance';
 import type { PairingDetail } from '@/lib/scraper/types';
 
@@ -155,11 +155,17 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
       prof.prime_330_count ?? null,
       annexe as AnnexeData,
     );
+    // Valeur Jour utilise le FIXE TEMPS PLEIN (non proratisé régime) et la
+    // prime instruction NON proratisée — formule pour le pilote « théorique
+    // 100% », indépendamment du régime réel. Aligne avec a81-local.ts.
+    const primeInstNonProratise = (primeInstFonction && isTri && prof.tri_niveau && annexe.prime_instruction)
+      ? computePrimeInstructionMontant(annexe.prime_instruction, primeInstFonction, prof.tri_niveau)
+      : 0;
     return computeValeurJour({
-      fixe: c.fixe,
+      fixe: c.fixeTP,
       pvei: c.pvei,
       ksp: c.ksp,
-      primeInstruction: c.primeInstruction,
+      primeInstruction: primeInstNonProratise,
       isTri,
     });
   }
