@@ -354,25 +354,29 @@ function computeStats(
   // en amont avec proration régime + boost 100% en juillet/août pour TAF*_10_12.
   const primesTotal = finBase.primes + monthlyFixedPrimes;
   const congeAmount = congeDays * (cngPv + cngHs);
-  // MGA est indépendant des congés (n'utilise PAS nb30eEff).
-  const mga         = fixeForFin + 85 * (nb30eBase / 30) * pvei;
-  // TOTAL = FIXE + PV + HS (hors primes et hors congés)
-  // DIFF  = TOTAL − MGA (signé, rouge si <0, vert si ≥0)
-  // BRUT : si (TOTAL + congés) ≥ MGA → on garde TOTAL + congés (et on ajoute
-  //        primes + IR/MF). Sinon MGA absorbe les congés et seuls primes + IR/MF
-  //        s'ajoutent en plus.
-  const totalNew = finBase.fixe + finBase.pv + hsNew;
-  const diffNew  = totalNew - mga;
+  // MGA = 85 × PVEI × (nb30eEff / 30) — plancher sur (PV + HS), abattu par
+  // congés (et CSS via nb30eBase). N'inclut PAS le fixe (cf optiP_DEF).
+  const mga      = 85 * (nb30eEff / 30) * pvei;
+  // DIF (top-up) = max(0, MGA − (PV + HS)). Compense la PV jusqu'au MGA, sans
+  // tenir compte du fixe ni des congés.
+  const difNew   = Math.max(0, mga - (finBase.pv + hsNew));
+  // TOTAL = FIXE + PV + HS + DIF (paie hors primes et hors congés)
+  // DIFF affichage = (PV + HS) − MGA : signé. Positif = au-dessus du MGA
+  //                  (rien à compenser) ; négatif = MGA a absorbé l'écart.
+  // BRUT : plancher MGA déjà appliqué via DIF dans totalNew → addition simple.
+  const totalNew = finBase.fixe + finBase.pv + hsNew + difNew;
+  const diffNew  = (finBase.pv + hsNew) - mga;
   // IT (Indemnité Transport) ajoutée au BRUT comme IR/MF — calculée en amont
   // par le caller selon profil.transport (Navigo = forfait mensuel ; Voiture =
   // nbActivités × 2 × km_aller × indemnité_km, vol à cheval = 0.5/mois).
-  const brut     = Math.max(mga, totalNew + congeAmount) + primesTotal + irMfEur + itEur;
+  const brut     = totalNew + congeAmount + primesTotal + irMfEur + itEur;
   const fin = {
     ...finBase,
     hs:     hsNew,
     primes: primesTotal,
     total:  totalNew,
     mga,
+    dif:    difNew,
     diff:   diffNew,
   };
   return {

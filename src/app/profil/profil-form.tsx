@@ -664,13 +664,13 @@ export function ProfilForm({
             <ValueCard label="Seuil HS" value={`${computed.hsSeuil.toFixed(2)} h`} color="green"
               formula="75 − 2,5 × congés − 2,5 × (30 − 30e)" />
             <ValueCard label="MGA"              value={`${computed.mga.toFixed(2)} €`}            color="violet"
-              formula="T.Fixe + 85 × 30e × PVEI" />
+              formula="85 × PVEI × (30e/30)" />
             <ValueCard label="Traitement fixe"  value={`${computed.fixe.toFixed(2)} €`}           color="zinc"
               formula="Fixe × Coef(FO/CDB) × Echelon × 30e" />
             <ValueCard label="Prime bi-tronçon" value={`${computed.primeBiTroncon.toFixed(2)} €`} color="amber"
               formula="2,5 × PVEI (sans KSP)" />
             <ValueCard label="MGA temps plein"     value={`${computed.mgaTP.toFixed(2)} €`}           color="violet"
-              formula="T.Fixe + 85 × PVEI" />
+              formula="85 × PVEI" />
             <ValueCard label="T. Fixe temps plein" value={`${computed.fixeTP.toFixed(2)} €`}          color="zinc"   />
             <ValueCard label="Prime d'incitation"  value={`${computed.primeIncitation.toFixed(2)} €`} color="amber"  />
             <ValueCard label="Valeur Jour A81"     value={`${computed.valeurJour.toFixed(2)} €`}     color="green"

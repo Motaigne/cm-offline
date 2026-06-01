@@ -18,8 +18,10 @@ export function monthlyFinancialsP(totalHcr: number, totalPrime: number, totalTs
   const primes  = totalPrime * 2.5 * p.pvei;
   const hsSeuil = 75 * (p.nb30e / 30);
   const hs      = Math.max(0, totalPv - hsSeuil) * p.pvei * p.ksp * 0.25;
-  const mga     = p.fixe + 85 * (p.nb30e / 30) * p.pvei;
-  const dif     = Math.max(0, mga - (p.fixe + pv));
+  // MGA = 85 × PVEI × (nb30e/30) — plancher sur (PV + HS), abattu par
+  // congés/CSS via nb30e (cf. optiP_DEF). N'inclut PAS le fixe.
+  const mga     = 85 * (p.nb30e / 30) * p.pvei;
+  const dif     = Math.max(0, mga - (pv + hs));
   return { fixe: p.fixe, pv, hs, primes, dif, total: p.fixe + pv + hs + primes + dif };
 }
 
@@ -62,14 +64,16 @@ export function monthlyHs(totalPv: number): number {
   return Math.max(0, totalPv - HS_SEUIL) * HS_RATE;
 }
 
-/** MGA mensuel */
+/** MGA mensuel — 85 × PVEI × prorata (cf. optiP_DEF). N'inclut PAS le fixe. */
 export function mga(): number {
-  return FIXE_MENSUEL + 85 * (NB_30E / 30) * PVEI;  // ≈ 9170,94 €
+  return 85 * (NB_30E / 30) * PVEI;
 }
 
-/** DIF MGA = max(0, MGA − (FIXE + PV×PVEI×KSP)) */
+/** DIF MGA = max(0, MGA − (PV + HS)). Complément jusqu'au MGA sur la
+ *  composante vol uniquement (sans fixe ni congés). */
 export function difMga(totalPv: number): number {
-  return Math.max(0, mga() - (FIXE_MENSUEL + totalPv * PVEI * KSP));
+  const pv = totalPv * PVEI * KSP;
+  return Math.max(0, mga() - (pv + monthlyHs(totalPv)));
 }
 
 /** Résumé financier mensuel */

@@ -246,8 +246,9 @@ export function computeFullProfile(
   const role  = toRole(fonction);
   const pi    = a.prime_incitation.find(r => r.role === role && r.type === primeIncitationType)?.montant ?? 0;
   const primeBiTroncon = 2.5 * pvei;
-  const mga   = fixe + 85 * (nb30e / 30) * pvei;
-  const mgaTP = fixeTP + 85 * pvei;
+  // MGA = 85 × PVEI × (nb30e/30) — plancher sur PV+HS, sans fixe (optiP_DEF).
+  const mga   = 85 * (nb30e / 30) * pvei;
+  const mgaTP = 85 * pvei;
   const hsSeuil = 75 * (nb30e / 30);
 
   // Prime instruction : proratisée par nb30e/30 comme A330 (CCT pilote).

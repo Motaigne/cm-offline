@@ -39,8 +39,8 @@
 | PV € | `pvEur` | Montant paie vol | PV × PVEI × KSP | `totalPv × PVEI × KSP` |
 | HC brut | `totalHc` | HC brut (pas HCr, pas proratisé) | — | `Σ(hc)` *(utilisé uniquement pour taux moyen HS ET pour le calcul de hsH)* |
 | FIXE | `fin.fixe` | Traitement fixe mensuel | — | `fixeForFin` |
-| MGA | `mga` | Minimum garanti d'activité | `(FIXE + 85×PVEI) × 30e` | `fixeForFin + 85 × (nb30eForFin/30) × PVEI` | *quid de la nouvelle définiton de Nombre de 30e par régime en fin de doc ?* 
-| DIF | `fin.dif` | Complément jusqu'au MGA | `max(0, MGA − (FIXE+PV€+congeAmount))` | `max(0, mga − (fixeForFin + pvEur + congeAmount))` |
+| MGA | `mga` | Minimum garanti d'activité (plancher sur PV+HS, hors fixe) | `85 × PVEI × (nb30eEff/30)` | `85 × (nb30eEff/30) × PVEI` *(abattu de 1/30 par jour de congé+CSS via nb30eEff)* |
+| DIF | `fin.dif` | Complément jusqu'au MGA (top-up sur PV+HS) | `max(0, MGA − (PV€ + HS€))` | `max(0, mga − (finBase.pv + hsNew))` |
 | Seuil HS | `hsSeuil` | Seuil déclenchement HS | 75h × 30e/30 | `75 × (nb30eForFin/30)` |
 | HS (heures) | `hsH` | Heures supplémentaires | `max(0, totalHc − seuil75)` | `max(0, totalHc − hsSeuil)` | 
 | HS.FIXE | `hsFixeRate` | Taux HS composante fixe (par heure) | — | `fixeForFin × 1,25 / 75` |
@@ -169,7 +169,7 @@
 | Prime Noël | ❌ non implémentée | Lot "AUTRE MODIFICATION" |
 | Recalcul IR/MF mensuel via EP4 | ⚠ lu en DB (`ir_mf_rates`) | Implémenté mais formule non vérifiée vs EP4 Python |
 | IT (Indemnité de vol de nuit) | ❌ non implémentée | Backlog AUTRE MODIFICATION |
-| MGA sans fullPrime (régime normal) | ⚠ à confirmer | Formule courante : `FIXE_MENSUEL + 85×(nb30e/30)×PVEI` *oui, il suffit davoir un nb30e fonction du mois et du profil*
+| MGA sans fullPrime (régime normal) | ✅ confirmé | Formule actuelle : `85×PVEI×(nb30eEff/30)` (hors fixe, abattu par congés/CSS) — cf optiP_DEF
 
 ---
 
