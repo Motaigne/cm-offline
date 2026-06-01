@@ -400,9 +400,21 @@ function PrimePicker({
   onToggle: () => void;
   onClose: () => void;
 }) {
+  const btnRef = useRef<HTMLButtonElement>(null);
+  // Position absolue (viewport) du popover, mesurée à l'ouverture. Évite le
+  // clipping par les conteneurs overflow-x-auto au-dessus de la barre.
+  const [pos, setPos] = useState<{ left: number; bottom: number } | null>(null);
+
+  useEffect(() => {
+    if (!open || !btnRef.current) { setPos(null); return; }
+    const r = btnRef.current.getBoundingClientRect();
+    setPos({ left: r.left, bottom: window.innerHeight - r.top + 4 });
+  }, [open]);
+
   return (
-    <div className="relative flex-shrink-0">
+    <div className="flex-shrink-0">
       <button
+        ref={btnRef}
         type="button"
         onClick={onToggle}
         title={title}
@@ -416,10 +428,13 @@ function PrimePicker({
         <span className="text-[10px] uppercase tracking-wide opacity-80">{label}</span>
         <span className="font-mono">{value}</span>
       </button>
-      {open && (
+      {open && pos && (
         <>
-          <div className="fixed inset-0 z-30" onClick={onClose} />
-          <div className="absolute z-40 bottom-full mb-1 left-0 p-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg">
+          <div className="fixed inset-0 z-[100]" onClick={onClose} />
+          <div
+            className="fixed z-[101] p-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg"
+            style={{ left: pos.left, bottom: pos.bottom }}
+          >
             <p className="text-[10px] text-zinc-400 uppercase tracking-wide mb-1 whitespace-nowrap">{title}</p>
             <div className="flex items-center gap-1">
               {range.map(n => (
