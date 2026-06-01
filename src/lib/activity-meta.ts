@@ -13,15 +13,16 @@ type ActivityMeta = {
 };
 
 export const ACTIVITY_META: Record<ActivityKind, ActivityMeta> = {
-  flight:  { label: 'Vol',         color: '#3B82F6', textColor: '#FFFFFF', order: 9 }, // bleu
-  conge:   { label: 'Congés',      color: '#15803D', textColor: '#FFFFFF', order: 2 }, // vert foncé
-  off:     { label: 'DDA REPOS',   color: '#4ADE80', textColor: '#052E16', order: 3 }, // vert clair
-  sol:     { label: 'Réserve',     color: '#EC4899', textColor: '#FFFFFF', order: 4 }, // rose
-  medical: { label: 'Visite méd.', color: '#BE185D', textColor: '#FFFFFF', order: 5 }, // rose foncé
-  sim:     { label: 'Simulateur',  color: '#A21CAF', textColor: '#FFFFFF', order: 6 }, // violet/magenta
-  autre:   { label: 'Autre',       color: '#F472B6', textColor: '#831843', order: 7 }, // rose pâle
-  instr:   { label: 'Instruction', color: '#FBCFE8', textColor: '#831843', order: 8 }, // rose clair
-  taf:     { label: 'TAF',         color: '#EAB308', textColor: '#422006', order: 10 }, // jaune
+  flight:   { label: 'Vol',         color: '#3B82F6', textColor: '#FFFFFF', order: 9 },  // bleu
+  conge:    { label: 'Congés',      color: '#15803D', textColor: '#FFFFFF', order: 2 },  // vert foncé
+  conge_ss: { label: 'CSS',         color: '#0F766E', textColor: '#FFFFFF', order: 2.5 }, // teal foncé — Congés Sans Solde
+  off:      { label: 'DDA REPOS',   color: '#4ADE80', textColor: '#052E16', order: 3 },  // vert clair
+  sol:      { label: 'Réserve',     color: '#EC4899', textColor: '#FFFFFF', order: 4 },  // rose
+  medical:  { label: 'Visite méd.', color: '#BE185D', textColor: '#FFFFFF', order: 5 },  // rose foncé
+  sim:      { label: 'Simulateur',  color: '#A21CAF', textColor: '#FFFFFF', order: 6 },  // violet/magenta
+  autre:    { label: 'Autre',       color: '#F472B6', textColor: '#831843', order: 7 },  // rose pâle
+  instr:    { label: 'Instruction', color: '#FBCFE8', textColor: '#831843', order: 8 },  // rose clair
+  taf:      { label: 'TAF',         color: '#EAB308', textColor: '#422006', order: 10 }, // jaune
 };
 
 export const REGIME_LABEL: Record<Regime, string> = {

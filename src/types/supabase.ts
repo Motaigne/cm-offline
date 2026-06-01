@@ -435,7 +435,7 @@ export type Database = {
       };
     };
     Enums: {
-      activity_kind: 'flight' | 'conge' | 'off' | 'sol' | 'taf' | 'medical' | 'instr' | 'sim' | 'autre';
+      activity_kind: 'flight' | 'conge' | 'conge_ss' | 'off' | 'sol' | 'taf' | 'medical' | 'instr' | 'sim' | 'autre';
       bid_category: 'dda_vol' | 'vol_p' | 'dda_off' | 'elabo_suivi';
       fonction_enum: 'CDB' | 'OPL' | 'INSTR' | 'TRI_CDB' | 'TRI_OPL';
       regime_enum:

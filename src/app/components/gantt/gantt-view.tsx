@@ -174,6 +174,19 @@ function countItActivities(items: CalendarItem[], year: number, mo: number): num
   return n;
 }
 
+/** Nombre de jours CSS (Congés Sans Solde) effectivement présents sur le mois.
+ *  Utilisé pour abater nb30e — réduit primes (A330, instruction), tFixe, MGA et
+ *  seuil HS. Différent des congés classiques qui n'affectent QUE le seuil HS. */
+function countCssDays(items: CalendarItem[], year: number, mo: number): number {
+  let n = 0;
+  for (const item of items) {
+    if (item.kind !== 'conge_ss') continue;
+    const clip = clipItem(item, year, mo);
+    if (clip) n += clip.end - clip.start + 1;
+  }
+  return n;
+}
+
 /** IT mensuelle selon le mode profil. Navigo = forfait (0 si aucune activité). */
 function computeItEur(
   transport: string | null,
@@ -219,7 +232,7 @@ function computeStats(
   fixeRegime = FIXE_MENSUEL,   // fixe proratisé selon nb30e du régime
   fixeTPArg: number | null = null,    // fixe TP (nb30e=30) ; si null → calculé via FIXE_MENSUEL * 30 / nb30eRegime
 ) {
-  let onDays = 0, congeDays = 0;
+  let onDays = 0, congeDays = 0, cssDays = 0;
   const flights = items.filter(i => i.kind === 'flight').length;
   let totalHcr = 0, totalHc = 0, totalPrime = 0, totalTsvNuit = 0;
   // HCr forfaitaires hors-vol : activités sol (réserve, visite méd., autre) =
@@ -234,7 +247,8 @@ function computeStats(
     if (clip) {
       const days = clip.end - clip.start + 1;
       if (item.kind === 'flight' || item.kind === 'sol' || item.kind === 'medical' || item.kind === 'sim' || item.kind === 'instr') onDays += days;
-      if (item.kind === 'conge')  congeDays += days;
+      if (item.kind === 'conge')    congeDays += days;
+      if (item.kind === 'conge_ss') cssDays   += days;
       if (item.kind === 'sol' || item.kind === 'medical' || item.kind === 'autre') solDays += days;
       if (item.kind === 'sim') simDays += days;
     }
@@ -305,18 +319,22 @@ function computeStats(
     totalA81 += montant;
   }
   const totalA81Net = totalA81 * 0.82;
-  // nb30e_base : régime × mois (full-prime = 30 en jul/aoû pour TAF*_10_12).
-  // nb30e_eff  : base − congés (utilisé pour HS seuil uniquement).
-  // MGA utilise nb30e_base (indépendant des congés).
+  // nb30eR    : valeur régime du mois (full-prime = 30 en jul/aoû pour TAF*_10_12).
+  // nb30eBase : nb30eR − CSS (CSS abate la base → impacte primes, fixe, MGA).
+  // nb30eEff  : nb30eBase − congés classiques (utilisé uniquement pour le seuil HS).
+  // Les congés classiques n'affectent QUE hsSeuil ; le CSS abate primes/fixe/MGA en plus.
   const nb30eRegime = REGIME_NB30E[regime] ?? NB_30E;
   const fullPrime   = isFullPrimeMonth(regime, mo);
-  const nb30eBase   = fullPrime ? 30 : nb30eRegime;
+  const nb30eR      = fullPrime ? 30 : nb30eRegime;
+  const nb30eBase   = Math.max(0, nb30eR - cssDays);
   const nb30eEff    = Math.max(0, nb30eBase - congeDays);
+  const cssScale    = nb30eR > 0 ? nb30eBase / nb30eR : 0;
   // En jul/août pour TAF*_10_12 (full-prime month) : on bascule sur le fixe TP.
   // fixeTPArg fourni par le caller (depuis l'annexe versionnée) ; sinon legacy
   // = FIXE_MENSUEL * 30 / nb30eRegime.
   const fixeTPVal   = fixeTPArg ?? (nb30eRegime > 0 ? FIXE_MENSUEL * 30 / nb30eRegime : FIXE_MENSUEL);
-  const fixeForFin  = fullPrime ? fixeTPVal : fixeRegime;
+  // Scale par CSS : (nb30eR - cssDays) / nb30eR. Sans CSS = 1 (no-op).
+  const fixeForFin  = (fullPrime ? fixeTPVal : fixeRegime) * cssScale;
   // Le nb30e passé à monthlyFinancialsP n'a pas d'effet sur les valeurs qu'on
   // garde (fixe, pv, primes) — on override hs/total/mga avec les bonnes formules.
   const finBase = monthlyFinancialsP(totalHcr, totalPrime, totalTsvNuit, { pvei, ksp, fixe: fixeForFin, nb30e: nb30eEff });
@@ -358,13 +376,73 @@ function computeStats(
     diff:   diffNew,
   };
   return {
-    flights, onDays, congeDays, totalHcr, totalHc, totalPrime, totalTsvNuit,
+    flights, onDays, congeDays, cssDays, totalHcr, totalHc, totalPrime, totalTsvNuit,
     fin, congeAmount, brut,
     totalA81, totalA81Net, cumulJoursRunning, plafondJours,
     hsH, hsFixeRate, hsVolRate, hsSeuil,
     flightBreakdown,
     solDays, simDays, solHcrEur, simHcrEur,
+    cssScale,
   };
+}
+
+// ─── PrimePicker (popover compact pour sélecteur prime d'incitation / IrgAv) ─
+
+function PrimePicker({
+  label, title, value, range, onChange, open, onToggle, onClose,
+}: {
+  label: string;
+  title: string;
+  value: number;
+  range: number[];
+  onChange: (n: number) => void;
+  open: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="relative flex-shrink-0">
+      <button
+        type="button"
+        onClick={onToggle}
+        title={title}
+        className={[
+          'h-7 px-2.5 inline-flex items-center gap-1.5 rounded-full text-xs font-semibold border-2 transition-all',
+          value > 0
+            ? 'border-zinc-800 dark:border-zinc-100 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900'
+            : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:border-zinc-400',
+        ].join(' ')}
+      >
+        <span className="text-[10px] uppercase tracking-wide opacity-80">{label}</span>
+        <span className="font-mono">{value}</span>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={onClose} />
+          <div className="absolute z-40 bottom-full mb-1 left-0 p-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg">
+            <p className="text-[10px] text-zinc-400 uppercase tracking-wide mb-1 whitespace-nowrap">{title}</p>
+            <div className="flex items-center gap-1">
+              {range.map(n => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => { onChange(n); onClose(); }}
+                  className={[
+                    'w-7 h-7 rounded-full text-xs font-semibold border-2 transition-all',
+                    value === n
+                      ? 'border-zinc-800 dark:border-zinc-100 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900'
+                      : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:border-zinc-400',
+                  ].join(' ')}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 // ─── FinRow ──────────────────────────────────────────────────────────────────
@@ -1035,6 +1113,9 @@ export function GanttView({
     String,
   );
 
+  // Popover pour les sélecteurs de primes — désencombre la barre du bas.
+  const [primeMenuOpen, setPrimeMenuOpen] = useState<'incit' | 'irgav' | null>(null);
+
   // Reset menu + confirmation modale
   const [resetMenuOpen, setResetMenuOpen] = useState(false);
   const [resetMenuPos,  setResetMenuPos]  = useState<{ left: number; bottom: number } | null>(null);
@@ -1319,7 +1400,7 @@ export function GanttView({
       const end = addDays(sheet.date, tafDur - 1);
       setAddEnd(end);
       setNbJours(String(tafDur));
-    } else if (k === 'conge') {
+    } else if (k === 'conge' || k === 'conge_ss') {
       const days = nbJours ? parseInt(nbJours) : 1;
       setAddEnd(addDays(sheet.date, days - 1));
     } else {
@@ -1335,8 +1416,7 @@ export function GanttView({
   }
 
   // computed end date for display
-  const computedEnd = addKind === 'taf'   ? addDays(sheet?.date ?? today, tafDur - 1)
-                    : addKind === 'conge' ? addEnd
+  const computedEnd = addKind === 'taf' ? addDays(sheet?.date ?? today, tafDur - 1)
                     : addEnd;
 
   // ── add / edit submit ───────────────────────────────────────────────────────
@@ -1705,9 +1785,15 @@ export function GanttView({
               // IrgAv : Y × 5 × PVEI (cf. CCT) — non proratisé régime.
               const pvForIrgav = finBaseState?.pvei ?? PVEI;
               const primeIrgav = irgavCount * 5 * pvForIrgav;
+              // CSS abate aussi A330 + Instruction (proratisés régime). On
+              // calcule cssScale ici en miroir de computeStats pour scaler les
+              // primes avant agrégation dans monthlyFixedPrimes.
+              const cssDaysScn = countCssDays(scenario.items, year, mo);
+              const nb30eR_scn = isFullPrimeMonth(effRegime, mo) ? 30 : (REGIME_NB30E[effRegime] ?? NB_30E);
+              const cssScale_scn = nb30eR_scn > 0 ? Math.max(0, nb30eR_scn - cssDaysScn) / nb30eR_scn : 0;
               const monthlyFixedPrimes =
                 pIncit * incitCount
-                + (pA330 + pInstr) * a330InstrBoost
+                + (pA330 + pInstr) * a330InstrBoost * cssScale_scn
                 + primeIrgav
                 + primeMai + primeNoel;
               const cumulBeforeForScenario = a81CumulBeforeState[scenario.name] ?? 0;
@@ -1826,8 +1912,8 @@ export function GanttView({
                           totalNew: stats.fin.total, mga: stats.fin.mga, diff: stats.fin.diff,
                           totalPrime: stats.totalPrime, bitronconEur: bitroncon,
                           incitation: incitCount * (finBaseState?.primeIncitationUnit ?? primeIncitationUnit),
-                          a330: (finBaseState?.primeA330 ?? primeA330) * boost,
-                          instruction: (finBaseState?.primeInstruction ?? primeInstruction) * boost,
+                          a330: (finBaseState?.primeA330 ?? primeA330) * boost * stats.cssScale,
+                          instruction: (finBaseState?.primeInstruction ?? primeInstruction) * boost * stats.cssScale,
                           irgav: irgavCount * 5 * (finBaseState?.pvei ?? PVEI),
                           primeMai, primeNoel,
                           primesTotal: stats.fin.primes,
@@ -1989,37 +2075,27 @@ export function GanttView({
         {/* Action bar */}
         <div className="flex-shrink-0 flex items-center gap-2 h-14 border-t border-zinc-200 dark:border-zinc-800 px-4 bg-zinc-50 dark:bg-zinc-900 overflow-x-auto">
 
-          {/* Compteur prime d'incitation 0–5 */}
-          <span className="text-xs text-zinc-400 flex-shrink-0">Prime d&apos;incitation</span>
-          <div className="flex-shrink-0 flex items-center gap-1">
-            {[0, 1, 2, 3, 4, 5].map(n => (
-              <button key={n} onClick={() => changeIncit(n)}
-                className={[
-                  'w-7 h-7 rounded-full text-xs font-semibold border-2 transition-all',
-                  incitCount === n
-                    ? 'border-zinc-800 dark:border-zinc-100 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900'
-                    : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:border-zinc-400',
-                ].join(' ')}>
-                {n}
-              </button>
-            ))}
-          </div>
-
-          {/* Compteur prime IrgAv 0–10 — montant Y × 5 × PVEI */}
-          <span className="text-xs text-zinc-400 flex-shrink-0 ml-3" title="Prime IrgAv = Y × 5 × PVEI">Prime IrgAv</span>
-          <div className="flex-shrink-0 flex items-center gap-1">
-            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
-              <button key={n} onClick={() => changeIrgav(n)}
-                className={[
-                  'w-7 h-7 rounded-full text-xs font-semibold border-2 transition-all',
-                  irgavCount === n
-                    ? 'border-zinc-800 dark:border-zinc-100 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900'
-                    : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:border-zinc-400',
-                ].join(' ')}>
-                {n}
-              </button>
-            ))}
-          </div>
+          {/* Sélecteurs primes — popovers déclenchés par boutons compacts */}
+          <PrimePicker
+            label="Incit."
+            title="Prime d'incitation"
+            value={incitCount}
+            range={[0, 1, 2, 3, 4, 5]}
+            onChange={changeIncit}
+            open={primeMenuOpen === 'incit'}
+            onToggle={() => setPrimeMenuOpen(s => s === 'incit' ? null : 'incit')}
+            onClose={() => setPrimeMenuOpen(null)}
+          />
+          <PrimePicker
+            label="IrgAv"
+            title="Prime IrgAv (Y × 5 × PVEI)"
+            value={irgavCount}
+            range={[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]}
+            onChange={changeIrgav}
+            open={primeMenuOpen === 'irgav'}
+            onToggle={() => setPrimeMenuOpen(s => s === 'irgav' ? null : 'irgav')}
+            onClose={() => setPrimeMenuOpen(null)}
+          />
 
           {/* Propagation A → B / A → C */}
           <div className="flex-shrink-0 flex items-center gap-1.5 ml-2 pl-2 border-l border-zinc-200 dark:border-zinc-700">
@@ -2206,8 +2282,8 @@ export function GanttView({
                   </div>
                 )}
 
-                {/* Congés: nb de jours */}
-                {addKind === 'conge' && (
+                {/* Congés / CSS : nb de jours */}
+                {(addKind === 'conge' || addKind === 'conge_ss') && (
                   <div className="flex items-center gap-3">
                     <label className="text-sm text-zinc-600 dark:text-zinc-300 font-medium">Nb. de jours</label>
                     <input
@@ -2238,7 +2314,7 @@ export function GanttView({
                 )}
 
                 {/* OFF/Sol/etc: date fin libre */}
-                {addKind !== 'conge' && addKind !== 'taf' && (
+                {addKind !== 'conge' && addKind !== 'conge_ss' && addKind !== 'taf' && (
                   <div className="flex items-center gap-3">
                     <label className="text-xs text-zinc-500">Jusqu&apos;au</label>
                     <input type="date" value={addEnd} min={sheet.date}
@@ -2248,7 +2324,7 @@ export function GanttView({
                 )}
 
                 {/* Edit: show current dates */}
-                {sheet.mode === 'edit' && sheet.item && addKind === 'conge' && (
+                {sheet.mode === 'edit' && sheet.item && (addKind === 'conge' || addKind === 'conge_ss') && (
                   <p className="text-xs text-zinc-400">
                     Modifiez le nombre de jours pour réduire ou agrandir le bloc (le premier jour reste fixe).
                   </p>
@@ -2287,7 +2363,7 @@ export function GanttView({
                 )}
 
                 {/* Submit */}
-                <button onClick={handleSubmit} disabled={isPending || (addKind === 'conge' && !nbJours)}
+                <button onClick={handleSubmit} disabled={isPending || ((addKind === 'conge' || addKind === 'conge_ss') && !nbJours)}
                   className="w-full rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-zinc-700 disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900">
                   {sheet.mode === 'edit' ? 'Mettre à jour' : 'Placer'}
                 </button>
