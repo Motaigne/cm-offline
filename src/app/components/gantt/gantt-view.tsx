@@ -1522,7 +1522,14 @@ export function GanttView({
           <div className="flex items-center gap-2">
             <button onClick={() => changeMonth(shiftMonth(currentMonth,-1))} disabled={monthLoading}
               className="w-10 h-10 flex items-center justify-center rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-3xl disabled:opacity-40">‹</button>
-            <span className="text-sm font-semibold w-40 text-center inline-flex items-center justify-center gap-1.5">
+            <span className={[
+              'text-sm font-semibold w-40 text-center inline-flex items-center justify-center gap-1.5 rounded-md py-0.5 px-2',
+              fictiveMonths.includes(currentMonth)
+                ? 'bg-violet-200 dark:bg-violet-900/60 text-violet-900 dark:text-violet-100'
+                : '',
+            ].join(' ')}
+              title={fictiveMonths.includes(currentMonth) ? 'Projection à titre indicatif — données fictives clonées d\'un mois réel récent' : undefined}
+            >
               {MONTH_FR[mo-1]} {year}
               <MonthReleaseIcon month={currentMonth} />
             </span>
@@ -1605,13 +1612,6 @@ export function GanttView({
             )}
           </div>
         </header>
-
-        {/* Banner Projection — mois fictif (snapshot admin) */}
-        {fictiveMonths.includes(currentMonth) && (
-          <div className="flex-shrink-0 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-violet-900 dark:text-violet-100 bg-violet-200 dark:bg-violet-900/60 border-b border-violet-300 dark:border-violet-800 text-center">
-            Projection à titre indicatif — données fictives clonées d&apos;un mois réel récent
-          </div>
-        )}
 
         {/* Gantt area */}
         <div ref={rowRef} className={`flex-1 flex flex-col overflow-hidden ${isPending || monthLoading ? 'opacity-60 pointer-events-none' : ''}`}>

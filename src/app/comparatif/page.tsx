@@ -13,23 +13,13 @@ export default async function ComparatifPage({
   searchParams: Promise<{ m?: string }>;
 }) {
   const { m } = await searchParams;
-  const month = m && /^\d{4}-\d{2}$/.test(m)
+  const requestedMonth = m && /^\d{4}-\d{2}$/.test(m)
     ? m
     : new Date().toISOString().slice(0, 7);
 
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
-
-  // Article 81 : matrice annexe + versions complètes (profil + annexe) pour
-  // permettre au client de dériver PVEI/KSP et Valeur Jour du profil
-  // utilisateur quand il navigue entre mois.
-  const [a81RowData, profileVersions, annexeRows] = await Promise.all([
-    loadAnnexeRowForMonth('article_81', month),
-    loadAllProfileVersions(user.id),
-    loadAllAnnexeRows(),
-  ]);
-  const article81Data: Article81Data | null = (a81RowData as Article81Data | null) ?? null;
 
   // Snapshots disponibles (exclu fictifs : projection seulement accessible via
   // calendrier + A81)
@@ -41,6 +31,21 @@ export default async function ComparatifPage({
     .order('target_month', { ascending: false });
 
   const months = [...new Set((snapshots ?? []).map(s => s.target_month.slice(0, 7)))];
+
+  // Si le mois demandé est fictif (ou inexistant), fallback sur le plus récent
+  // mois réel — sinon la page s'ouvre vide.
+  const month = months.includes(requestedMonth) ? requestedMonth : (months[0] ?? requestedMonth);
+
+  // Article 81 : matrice annexe + versions complètes (profil + annexe) pour
+  // permettre au client de dériver PVEI/KSP et Valeur Jour du profil
+  // utilisateur quand il navigue entre mois.
+  const [a81RowData, profileVersions, annexeRows] = await Promise.all([
+    loadAnnexeRowForMonth('article_81', month),
+    loadAllProfileVersions(user.id),
+    loadAllAnnexeRows(),
+  ]);
+  const article81Data: Article81Data | null = (a81RowData as Article81Data | null) ?? null;
+
   const snapshot = (snapshots ?? []).find(s => s.target_month.startsWith(month));
 
   // Toutes les signatures du mois

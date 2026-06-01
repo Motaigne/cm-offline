@@ -12,24 +12,13 @@ export default async function CataloguePage({
   searchParams: Promise<{ m?: string }>;
 }) {
   const { m } = await searchParams;
-  const month = m && /^\d{4}-\d{2}$/.test(m)
+  const requestedMonth = m && /^\d{4}-\d{2}$/.test(m)
     ? m
     : new Date().toISOString().slice(0, 7);
 
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
-
-  const [{ data: profile }, profileVersions, annexeRows, a81RowData] = await Promise.all([
-    supabase.from('user_profile').select('is_admin').eq('user_id', user.id).single(),
-    loadAllProfileVersions(user.id),
-    loadAllAnnexeRows(),
-    loadAnnexeRowForMonth('article_81', month),
-  ]);
-  const isAdmin = profile?.is_admin === true;
-  // valeur_jour : dérivée client-side par mois courant via getValeurJourForMonth
-  // (suit les switches de mois et les versions annexe sans round-trip serveur).
-  const article81Data: Article81Data | null = (a81RowData as Article81Data | null) ?? null;
 
   // Load available months from snapshots (exclu fictifs : projection seulement
   // accessible via calendrier + A81)
@@ -41,6 +30,21 @@ export default async function CataloguePage({
     .order('target_month', { ascending: false });
 
   const months = [...new Set((snapshots ?? []).map(s => s.target_month.slice(0, 7)))];
+
+  // Si le mois demandé est fictif (ou inexistant), fallback sur le plus récent
+  // mois réel — sinon la page s'ouvre vide et l'user croit que ça bug.
+  const month = months.includes(requestedMonth) ? requestedMonth : (months[0] ?? requestedMonth);
+
+  const [{ data: profile }, profileVersions, annexeRows, a81RowData] = await Promise.all([
+    supabase.from('user_profile').select('is_admin').eq('user_id', user.id).single(),
+    loadAllProfileVersions(user.id),
+    loadAllAnnexeRows(),
+    loadAnnexeRowForMonth('article_81', month),
+  ]);
+  const isAdmin = profile?.is_admin === true;
+  // valeur_jour : dérivée client-side par mois courant via getValeurJourForMonth
+  // (suit les switches de mois et les versions annexe sans round-trip serveur).
+  const article81Data: Article81Data | null = (a81RowData as Article81Data | null) ?? null;
 
   // Find snapshot for selected month
   const snapshot = (snapshots ?? []).find(s => s.target_month.startsWith(month));
