@@ -249,6 +249,9 @@ export function computeFullProfile(
   // MGA = 85 × PVEI × (nb30e/30) — plancher sur PV+HS, sans fixe (optiP_DEF).
   const mga   = 85 * (nb30e / 30) * pvei;
   const mgaTP = 85 * pvei;
+  // SMMG = Salaire Minimum Mensuel Garanti = fixe + MGA (cf. optiP_DEF).
+  const smmg   = fixe   + mga;
+  const smmgTP = fixeTP + mgaTP;
   const hsSeuil = 75 * (nb30e / 30);
 
   // Prime instruction : proratisée par nb30e/30 comme A330 (CCT pilote).
@@ -282,6 +285,6 @@ export function computeFullProfile(
     pvei, ksp: KSP, fixe, fixeTP,
     primeBiTroncon, primeIncitation: pi,
     primeInstruction, primeA330,
-    mga, mgaTP, hsSeuil,
+    mga, mgaTP, smmg, smmgTP, hsSeuil,
   };
 }
