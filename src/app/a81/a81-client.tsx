@@ -292,6 +292,12 @@ export function A81Client({
 
       {err && <p className="text-xs text-red-500">{err}</p>}
 
+      {data.rows.some(r => r.is_fictive) && (
+        <div className="px-3 py-2 rounded-lg bg-violet-100 dark:bg-violet-900/40 border border-violet-200 dark:border-violet-800 text-xs text-violet-800 dark:text-violet-200">
+          <span className="font-semibold uppercase tracking-wide">Projection</span> — certaines lignes (fond violet) sont basées sur des plannings fictifs des mois non encore déployés. Montants à titre indicatif uniquement.
+        </div>
+      )}
+
       {/* Tableau */}
       <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
         <div className="overflow-x-auto">
@@ -325,8 +331,11 @@ export function A81Client({
                 const anyOverride = r.debut_sejour_overridden || r.fin_sejour_overridden;
                 const isM0 = r.split_part === 'm0';
                 const isM1 = r.split_part === 'm1';
+                const rowBg = r.is_fictive
+                  ? 'bg-violet-50 dark:bg-violet-950/30'
+                  : (i % 2 ? 'bg-zinc-50/50 dark:bg-zinc-800/20' : '');
                 return (
-                  <tr key={`${r.instance_id}${r.split_part ?? ''}`} className={i % 2 ? 'bg-zinc-50/50 dark:bg-zinc-800/20' : ''}>
+                  <tr key={`${r.instance_id}${r.split_part ?? ''}`} className={rowBg}>
                     <td className="px-2 py-1.5 whitespace-nowrap text-zinc-700 dark:text-zinc-200 italic">
                       {fmtDate(r.debut_rotation)}
                       <div className="text-[9px] text-zinc-400 leading-none">{MONTHS_FR_SHORT[monthIdx]}</div>

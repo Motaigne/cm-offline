@@ -71,6 +71,8 @@ export type RotationSignature = {
   mf_eur: number;
   /** Escales pour lesquelles aucun taux n'a été trouvé. */
   missing_rate_escales: string[];
+  /** True si la signature appartient à un snapshot fictif (projection admin). */
+  is_fictive?: boolean;
 };
 
 export interface AvailableMonth { month: string; is_fictive: boolean; }
@@ -108,7 +110,7 @@ export async function getRotationsForMonth(
 
   const { data: snap } = await supabase
     .from('scrape_snapshot')
-    .select('id')
+    .select('id, is_fictive')
     .eq('target_month', `${month}-01`)
     .eq('status', 'success')
     .order('started_at', { ascending: false })
@@ -116,6 +118,7 @@ export async function getRotationsForMonth(
     .single();
 
   if (!snap) return [];
+  const isFictive = snap.is_fictive === true;
 
   // Mode planning_only : ne télécharge que les signatures référencées par
   // au moins un planning_item kind=flight du user pour ce mois (drafts
@@ -220,6 +223,7 @@ export async function getRotationsForMonth(
       ir_eur:               irMf?.ir_eur ?? 0,
       mf_eur:               irMf?.mf_eur ?? 0,
       missing_rate_escales: irMf?.missingRateEscales ?? [],
+      is_fictive:           isFictive,
     });
   }
   for (const inst of instances) {

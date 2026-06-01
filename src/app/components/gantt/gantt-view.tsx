@@ -386,7 +386,7 @@ const REST_H = 6;
 
 function DraggableBar({
   item, clip, dim, year, mo, onEdit, isDragSource,
-  scenarioItems, rpcChevauchement,
+  scenarioItems, rpcChevauchement, isFictive = false,
 }: {
   item: CalendarItem;
   clip: { start: number; end: number };
@@ -400,6 +400,9 @@ function DraggableBar({
   scenarioItems: CalendarItem[];
   /** Mode RPC : true = pauses dans congés/TAF, false = report total après. */
   rpcChevauchement: boolean;
+  /** True si l'item est sur un mois de projection (snapshot fictif) →
+   *  override de la couleur du bar en violet clair. */
+  isFictive?: boolean;
 }) {
   const readOnly = !!item._isSpillover;
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
@@ -568,8 +571,9 @@ function DraggableBar({
           top: '50%',
           marginTop: -(BAR_H / 2),
           height: BAR_H,
-          backgroundColor: actMeta.color,
-          color: actMeta.textColor,
+          // Projection : fond violet clair, sinon couleur kind standard.
+          backgroundColor: isFictive ? '#DDD6FE' : actMeta.color,
+          color: isFictive ? '#5B21B6' : actMeta.textColor,
           opacity: isDragSource ? 0.35 : (readOnly ? 0.7 : 1),
           zIndex: 10,
           transform: transform ? CSS.Translate.toString(transform) : undefined,
@@ -660,6 +664,7 @@ export function GanttView({
   voitureKmAller = 0,
   voitureIndemniteKm = 0,
   notes = [],
+  fictiveMonths = [],
 }: {
   month: string;
   scenarios: Scenario[];
@@ -727,6 +732,8 @@ export function GanttView({
   volPRulesData?: { rules: unknown[] } | null;
   /** Notes utilisateur (cross-scénario) overlappant le mois courant. */
   notes?: UserNote[];
+  /** Mois "fictifs" (projection admin) — pour banner + coloration cellules. */
+  fictiveMonths?: string[];
 }) {
   const router = useRouter();
   const [isPending, _startTransition] = useTransition();
@@ -1599,6 +1606,13 @@ export function GanttView({
           </div>
         </header>
 
+        {/* Banner Projection — mois fictif (snapshot admin) */}
+        {fictiveMonths.includes(currentMonth) && (
+          <div className="flex-shrink-0 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-violet-900 dark:text-violet-100 bg-violet-200 dark:bg-violet-900/60 border-b border-violet-300 dark:border-violet-800 text-center">
+            Projection à titre indicatif — données fictives clonées d&apos;un mois réel récent
+          </div>
+        )}
+
         {/* Gantt area */}
         <div ref={rowRef} className={`flex-1 flex flex-col overflow-hidden ${isPending || monthLoading ? 'opacity-60 pointer-events-none' : ''}`}>
 
@@ -1873,6 +1887,7 @@ export function GanttView({
                           isDragSource={dragging?.id === item.id}
                           scenarioItems={scenario.items}
                           rpcChevauchement={rpcChevauchement}
+                          isFictive={fictiveMonths.includes(item.start_date.slice(0, 7))}
                         />
                       );
                     })}

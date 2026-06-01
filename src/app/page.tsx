@@ -55,7 +55,8 @@ export default async function Home({
 
   const [y, mo] = month.split('-').map(Number);
   const [scenarios, notes, annexe, allAnnexeRows, profileForMonth, profileVersions,
-         a81RowData, a81Cumul, irMfMonth, prorataRowData, ddaRulesRowData, volPRulesRowData] = await Promise.all([
+         a81RowData, a81Cumul, irMfMonth, prorataRowData, ddaRulesRowData, volPRulesRowData,
+         fictiveSnapsRaw] = await Promise.all([
     getScenariosWithItems(month),
     listNotesForMonth(month),
     loadAnnexeForMonth(month),
@@ -68,7 +69,14 @@ export default async function Home({
     loadAnnexeRowForMonth('prorata', month),
     loadAnnexeRowForMonth('dda_rules', month),
     loadAnnexeRowForMonth('vol_p_rules', month),
+    // Liste des mois fictifs (projection admin) — pour banner + coloration cellules.
+    supabase
+      .from('scrape_snapshot')
+      .select('target_month')
+      .eq('is_fictive', true)
+      .eq('status', 'success'),
   ]);
+  const fictiveMonths: string[] = (fictiveSnapsRaw?.data ?? []).map(r => (r.target_month as string).slice(0, 7));
   // Profil applicable au mois M (fallback user_profile pour les mois antérieurs
   // à la première version seedée, ou pendant la transition).
   const profile = profileForMonth ?? userProfile;
@@ -172,6 +180,7 @@ export default async function Home({
       ddaRulesData={ddaRulesData}
       volPRulesData={volPRulesData}
       notes={notes}
+      fictiveMonths={fictiveMonths}
     />
   );
 }

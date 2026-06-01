@@ -304,6 +304,7 @@ export async function computeA81ForYearLocal(
       montant: 0,
       debut_sejour_overridden: !!ov?.debut_sejour_at,
       fin_sejour_overridden:   !!ov?.fin_sejour_at,
+      is_fictive: sig.is_fictive === true,
     });
   }
 

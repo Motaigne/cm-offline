@@ -59,6 +59,8 @@ export interface A81Row {
    *   - 'm0'      : 1ʳᵉ part (Début Séjour = réel, Fin = boundary 24:00 synthétique)
    *   - 'm1'      : 2ᵉ part  (Début = boundary 00:00 synthétique, Fin = réel) */
   split_part?: 'm0' | 'm1';
+  /** True si la rotation est sur un snapshot fictif (projection admin). */
+  is_fictive?: boolean;
 }
 
 /** Ligne supprimée par l'utilisateur — métadata pour la section restauration. */
@@ -210,13 +212,21 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
   if (!instances?.length) return empty;
   const instById = new Map(instances.map(i => [i.id, i]));
 
-  // 5. Signatures avec raw_detail + zone + first_layover
+  // 5. Signatures avec raw_detail + zone + first_layover + snapshot_id (pour is_fictive)
   const sigIds = [...new Set(instances.map(i => i.signature_id))];
   const { data: sigs } = await supabase
     .from('pairing_signature')
-    .select('id, zone, first_layover, temps_sej, raw_detail')
+    .select('id, zone, first_layover, temps_sej, raw_detail, snapshot_id')
     .in('id', sigIds);
   const sigById = new Map((sigs ?? []).map(s => [s.id, s]));
+
+  // 5ter. Map snapshot_id → is_fictive pour marquer les rows de projection
+  const snapIds = [...new Set((sigs ?? []).map(s => s.snapshot_id))];
+  const { data: snaps } = await supabase
+    .from('scrape_snapshot')
+    .select('id, is_fictive')
+    .in('id', snapIds);
+  const fictiveBySnap = new Map((snaps ?? []).map(s => [s.id, s.is_fictive]));
 
   // 5bis. Overrides utilisateur (édits + suppressions)
   const { data: overrides } = await supabase
@@ -296,6 +306,7 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
       montant: 0, // calculé ci-dessous après application du plafond
       debut_sejour_overridden: !!ov?.debut_sejour_at,
       fin_sejour_overridden:   !!ov?.fin_sejour_at,
+      is_fictive: fictiveBySnap.get(sig.snapshot_id) === true,
     });
   }
 
