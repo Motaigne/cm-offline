@@ -55,6 +55,18 @@ export async function POST(req: Request) {
       }
 
       try {
+        // Lifecycle projection : si un fictif existait sur ce mois, le nuker
+        // AVANT que getOrCreateMonthSnapshot crée le vrai. La RPC supprime aussi
+        // les planning_item qui pointaient sur ses instances (cross-user, donc
+        // SECURITY DEFINER).
+        const { error: cleanupErr } = await supabase.rpc(
+          'cleanup_fictive_snapshots_for_month',
+          { p_target_month: `${month}-01` },
+        );
+        if (cleanupErr) {
+          emit({ type: 'log', message: `[cleanup fictif] ${cleanupErr.message}` });
+        }
+
         // Limite 50 rotations max pour les non-admin scrapers (cap appliqué
         // dans le pipeline). Les admins sont libres.
         let effectiveMax: number | undefined;

@@ -73,19 +73,27 @@ export type RotationSignature = {
   missing_rate_escales: string[];
 };
 
-export async function getAvailableMonths(): Promise<string[]> {
+export interface AvailableMonth { month: string; is_fictive: boolean; }
+
+export async function getAvailableMonths(): Promise<AvailableMonth[]> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return [];
 
   const { data } = await supabase
     .from('scrape_snapshot')
-    .select('target_month')
+    .select('target_month, is_fictive')
     .eq('status', 'success')
     .order('target_month', { ascending: false });
 
   if (!data) return [];
-  return [...new Set(data.map(d => (d.target_month as string).slice(0, 7)))];
+  // Dédup par mois : si un mois a un fictif ET un réel (anormal), garde le réel.
+  const map = new Map<string, boolean>();
+  for (const r of data) {
+    const m = (r.target_month as string).slice(0, 7);
+    if (!map.has(m) || map.get(m) === true) map.set(m, r.is_fictive);
+  }
+  return Array.from(map.entries()).map(([month, is_fictive]) => ({ month, is_fictive }));
 }
 
 export type RotationLoadMode = 'full' | 'planning_only';

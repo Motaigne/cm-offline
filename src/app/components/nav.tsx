@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { getAvailableMonths, getRotationsForMonth } from '@/app/actions/search';
+import { getAvailableMonths, getRotationsForMonth, type AvailableMonth } from '@/app/actions/search';
 import { getScenariosWithItems } from '@/app/actions/planning';
 import { getCurrentUserIsAdmin } from '@/app/actions/auth';
 import { loadAllProfileVersions } from '@/app/actions/profile-version';
@@ -55,24 +55,28 @@ interface SyncPlan {
   planningOnly: string[];
 }
 
-function buildSyncPlan(availableMonths: string[], mode: SyncMode, persoMonths: string[]): SyncPlan {
+function buildSyncPlan(availableMonths: AvailableMonth[], mode: SyncMode, persoMonths: string[]): SyncPlan {
   const now = new Date();
   const currentMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
-  const available = new Set(availableMonths);
+  const available = new Map(availableMonths.map(a => [a.month, a.is_fictive]));
 
   if (mode === 'perso') {
+    // Perso : on suit la sélection user, fictifs inclus s'ils sont cochés.
     return {
       full:         persoMonths.filter(m => available.has(m)),
       planningOnly: [],
     };
   }
 
-  // Lite : m..m+3 full ; tous mois < m disponibles → planning_only.
+  // Lite : m..m+3 full (HORS fictifs — auto-DL fictifs = off) ;
+  // mois < m disponibles → planning_only.
   const liteFull = [0, 1, 2, 3]
     .map(d => shiftMonthStr(currentMonth, d))
-    .filter(m => available.has(m));
+    .filter(m => available.has(m) && !available.get(m));
   const liteFullSet = new Set(liteFull);
-  const liteOnly = availableMonths.filter(m => m < currentMonth && !liteFullSet.has(m));
+  const liteOnly = availableMonths
+    .filter(a => a.month < currentMonth && !liteFullSet.has(a.month) && !a.is_fictive)
+    .map(a => a.month);
   return { full: liteFull, planningOnly: liteOnly };
 }
 
@@ -178,10 +182,10 @@ export function NavBar() {
     v => v,
   );
   const [persoMonths, setPersoMonths] = useLocalStorageState<string[]>(SYNC_PERSO_KEY, []);
-  const [availableMonths, setAvailableMonths] = useState<string[]>([]);
+  const [availableMonths, setAvailableMonths] = useState<AvailableMonth[]>([]);
   async function ensureAvailableMonths() {
     if (availableMonths.length > 0 || !navigator.onLine) return;
-    const months = await withTimeout(getAvailableMonths(), 5000, [] as string[]);
+    const months = await withTimeout(getAvailableMonths(), 5000, [] as AvailableMonth[]);
     setAvailableMonths(months);
   }
   function persistMode(m: SyncMode) {
@@ -251,7 +255,7 @@ export function NavBar() {
         .then(y => cacheA81YearData(y)).catch(() => {});
       const ready = await waitForSWController();
       if (ready) {
-        const months = await withTimeout(getAvailableMonths(), 8000, [] as string[]);
+        const months = await withTimeout(getAvailableMonths(), 8000, [] as AvailableMonth[]);
         const mode: SyncMode = (localStorage.getItem(SYNC_MODE_KEY) as SyncMode | null) ?? DEFAULT_SYNC_MODE;
         const persoRaw = localStorage.getItem(SYNC_PERSO_KEY);
         const persoMonths: string[] = (() => {
@@ -455,12 +459,12 @@ export function NavBar() {
         })}
         {isAdmin && (
           <a
-            href="/admin/whitelist"
+            href="/admin"
             className={[
               'px-4 h-8 flex items-center text-sm font-medium rounded transition-colors whitespace-nowrap',
               path.startsWith('/admin') ? 'bg-amber-700 text-white' : 'text-amber-400 hover:text-amber-200 hover:bg-zinc-800',
             ].join(' ')}
-            title="Administration (whitelist + journal)"
+            title="Administration (whitelist + outils)"
           >
             Admin
           </a>
@@ -547,7 +551,7 @@ export function NavBar() {
                         {availableMonths.length === 0 && (
                           <p className="text-[10px] italic text-zinc-400">Chargement…</p>
                         )}
-                        {availableMonths.map(m => (
+                        {availableMonths.map(({ month: m, is_fictive }) => (
                           <label key={m} className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-200 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-700 px-1.5 py-1 rounded">
                             <input
                               type="checkbox"
@@ -555,6 +559,11 @@ export function NavBar() {
                               onChange={() => togglePersoMonth(m)}
                             />
                             <span className="font-mono">{m}</span>
+                            {is_fictive && (
+                              <span className="text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
+                                Projection
+                              </span>
+                            )}
                           </label>
                         ))}
                       </div>

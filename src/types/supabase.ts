@@ -266,6 +266,7 @@ export type Database = {
           unique_signatures: number | null;
           http_requests: number | null;
           error_message: string | null;
+          is_fictive: boolean;
         };
         Insert: Partial<Database['public']['Tables']['scrape_snapshot']['Row']> & {
           target_month: string;
@@ -456,6 +457,10 @@ export type Database = {
       };
       next_release_version: {
         Args: { month: string };
+        Returns: number;
+      };
+      cleanup_fictive_snapshots_for_month: {
+        Args: { p_target_month: string };
         Returns: number;
       };
     };

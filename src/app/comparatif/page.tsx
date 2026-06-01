@@ -31,11 +31,13 @@ export default async function ComparatifPage({
   ]);
   const article81Data: Article81Data | null = (a81RowData as Article81Data | null) ?? null;
 
-  // Snapshots disponibles
+  // Snapshots disponibles (exclu fictifs : projection seulement accessible via
+  // calendrier + A81)
   const { data: snapshots } = await supabase
     .from('scrape_snapshot')
     .select('target_month, id')
     .eq('status', 'success')
+    .eq('is_fictive', false)
     .order('target_month', { ascending: false });
 
   const months = [...new Set((snapshots ?? []).map(s => s.target_month.slice(0, 7)))];

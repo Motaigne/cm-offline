@@ -118,6 +118,7 @@ async function getOrCreateMonthSnapshot(
     .from('scrape_snapshot')
     .select('id, status')
     .eq('target_month', monthDate)
+    .eq('is_fictive', false)         // ignore les fictifs : ils sont nukés avant scrape
     .order('started_at', { ascending: false })
     .limit(1)
     .maybeSingle();
