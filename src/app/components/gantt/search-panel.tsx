@@ -46,7 +46,7 @@ function endDateFromArrivee(arrivee_at: string): string {
   return arrivee_at.slice(0, 10);
 }
 
-const SOFT_BLOCKERS = new Set(['conge', 'taf']);
+const SOFT_BLOCKERS = new Set(['conge', 'conge_ss', 'taf']);
 const HARD_BLOCKERS = new Set(['sol', 'sim', 'medical', 'instr', 'autre']);
 
 /** Plage effective [start, end) en ms d'un item.

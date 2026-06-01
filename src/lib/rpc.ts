@@ -39,7 +39,9 @@ export type EffectiveRpc = {
   pauseIntervals: RpcSegment[];
 };
 
-const BLOCKING_KINDS = new Set(['conge', 'taf']);
+// Soft blockers : RPC peut les chevaucher (pause/resume en mode ON, flag en
+// mode OFF). CSS suit la même logique que conge (jour non travaillé).
+const BLOCKING_KINDS = new Set(['conge', 'conge_ss', 'taf']);
 const HARD_BLOCKERS = new Set(['sol', 'sim', 'medical', 'instr', 'autre']);
 
 /** Trouve le 1er hard blocker (sol/sim/...) à partir de `from`. Renvoie son
