@@ -1005,6 +1005,7 @@ export function GanttView({
     // Primes (déjà ventilées) + congés + IR/MF
     totalPrime: number; bitronconEur: number;
     incitation: number; a330: number; instruction: number;
+    irgav: number;
     primeMai: number; primeNoel: number; primesTotal: number;
     congeDays: number; cngPv: number; cngHs: number; congeAmount: number;
     irEur: number; mfEur: number;
@@ -1024,6 +1025,13 @@ export function GanttView({
   const [incitCount, setIncitCount] = useLocalStorageState<number>(
     `cm-incit-${currentMonth}`, 0,
     raw => Math.max(0, Math.min(5, parseInt(raw) || 0)),
+    String,
+  );
+
+  // Compteur prime IrgAv (0-10) — montant = Y × 5 × PVEI. Default 0.
+  const [irgavCount, setIrgavCount] = useLocalStorageState<number>(
+    `cm-irgav-${currentMonth}`, 0,
+    raw => Math.max(0, Math.min(10, parseInt(raw) || 0)),
     String,
   );
 
@@ -1047,6 +1055,10 @@ export function GanttView({
 
   function changeIncit(n: number) {
     setIncitCount(n);
+  }
+
+  function changeIrgav(n: number) {
+    setIrgavCount(n);
   }
 
   async function handleReset() {
@@ -1690,9 +1702,13 @@ export function GanttView({
               const pIncit  = finBaseState?.primeIncitationUnit ?? primeIncitationUnit;
               const pA330   = finBaseState?.primeA330           ?? primeA330;
               const pInstr  = finBaseState?.primeInstruction    ?? primeInstruction;
+              // IrgAv : Y × 5 × PVEI (cf. CCT) — non proratisé régime.
+              const pvForIrgav = finBaseState?.pvei ?? PVEI;
+              const primeIrgav = irgavCount * 5 * pvForIrgav;
               const monthlyFixedPrimes =
                 pIncit * incitCount
                 + (pA330 + pInstr) * a330InstrBoost
+                + primeIrgav
                 + primeMai + primeNoel;
               const cumulBeforeForScenario = a81CumulBeforeState[scenario.name] ?? 0;
               const irMfScn = irMfState.byScenario?.[scenario.name];
@@ -1812,6 +1828,7 @@ export function GanttView({
                           incitation: incitCount * (finBaseState?.primeIncitationUnit ?? primeIncitationUnit),
                           a330: (finBaseState?.primeA330 ?? primeA330) * boost,
                           instruction: (finBaseState?.primeInstruction ?? primeInstruction) * boost,
+                          irgav: irgavCount * 5 * (finBaseState?.pvei ?? PVEI),
                           primeMai, primeNoel,
                           primesTotal: stats.fin.primes,
                           congeDays: stats.congeDays, cngPv: effCngPv, cngHs: effCngHs, congeAmount: stats.congeAmount,
@@ -1980,6 +1997,22 @@ export function GanttView({
                 className={[
                   'w-7 h-7 rounded-full text-xs font-semibold border-2 transition-all',
                   incitCount === n
+                    ? 'border-zinc-800 dark:border-zinc-100 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900'
+                    : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:border-zinc-400',
+                ].join(' ')}>
+                {n}
+              </button>
+            ))}
+          </div>
+
+          {/* Compteur prime IrgAv 0–10 — montant Y × 5 × PVEI */}
+          <span className="text-xs text-zinc-400 flex-shrink-0 ml-3" title="Prime IrgAv = Y × 5 × PVEI">Prime IrgAv</span>
+          <div className="flex-shrink-0 flex items-center gap-1">
+            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
+              <button key={n} onClick={() => changeIrgav(n)}
+                className={[
+                  'w-7 h-7 rounded-full text-xs font-semibold border-2 transition-all',
+                  irgavCount === n
                     ? 'border-zinc-800 dark:border-zinc-100 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900'
                     : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:border-zinc-400',
                 ].join(' ')}>
@@ -2583,6 +2616,9 @@ export function GanttView({
                   <span>{Math.round(detailPanel.bitronconEur)}</span>
                 </div>
                 <div className="flex justify-between"><span>Instruction</span><span>{Math.round(detailPanel.instruction)}</span></div>
+                {detailPanel.irgav > 0 && (
+                  <div className="flex justify-between"><span>IrgAv</span><span>{Math.round(detailPanel.irgav)}</span></div>
+                )}
               </div>
             </div>
 
