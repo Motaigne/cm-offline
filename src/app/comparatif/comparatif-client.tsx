@@ -8,7 +8,7 @@ import type { RotationSignature } from '@/app/actions/search';
 import { Ep4Detail } from './ep4-detail';
 import { computeArticle81 } from '@/lib/article81';
 import type { Article81Data } from '@/lib/article81';
-import { getPveiKspForMonth, type AnnexeRow } from '@/lib/annexe';
+import { getPveiKspForMonth, getValeurJourForMonth, VALEUR_JOUR_DEFAULT, type AnnexeRow } from '@/lib/annexe';
 import type { ProfileVersion } from '@/app/actions/profile-version';
 
 type SigInstance = {
@@ -109,14 +109,13 @@ function rotToSig(s: RotationSignature): Sig {
 
 export function ComparatifClient({
   signatures: initialSigs, months: initialMonths, currentMonth: initialMonth,
-  article81Data, valeurJour,
+  article81Data,
   profileVersions = [], annexeRows = [],
 }: {
   signatures: Sig[];
   months: string[];
   currentMonth: string;
   article81Data: Article81Data | null;
-  valeurJour: number;
   profileVersions?: ProfileVersion[];
   annexeRows?: AnnexeRow[];
 }) {
@@ -186,6 +185,12 @@ export function ComparatifClient({
     const r = getPveiKspForMonth(profileVersions, annexeRows, currentMonth);
     return r ?? { pvei: PVEI_DEFAULT, ksp: KSP_DEFAULT };
   }, [profileVersions, annexeRows, currentMonth]);
+
+  // Valeur Jour A81 par mois courant — fallback 600 si profil/annexe insuffisants.
+  const valeurJour = useMemo(
+    () => getValeurJourForMonth(profileVersions, annexeRows, currentMonth) ?? VALEUR_JOUR_DEFAULT,
+    [profileVersions, annexeRows, currentMonth],
+  );
 
   const computed = useMemo(() => {
     if (!sig) return null;

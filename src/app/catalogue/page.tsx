@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import { NavBar } from '@/app/components/nav';
 import { CatalogueTable } from './catalogue-table';
 import { loadAnnexeRowForMonth, loadAllAnnexeRows } from '@/app/actions/annexe';
-import { loadProfileForMonth, loadAllProfileVersions } from '@/app/actions/profile-version';
+import { loadAllProfileVersions } from '@/app/actions/profile-version';
 import type { Article81Data } from '@/lib/article81';
 
 export default async function CataloguePage({
@@ -20,16 +20,15 @@ export default async function CataloguePage({
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  const [{ data: profile }, profileForMonth, profileVersions, annexeRows, a81RowData] = await Promise.all([
-    supabase.from('user_profile').select('is_admin, valeur_jour').eq('user_id', user.id).single(),
-    loadProfileForMonth(month, user.id),
+  const [{ data: profile }, profileVersions, annexeRows, a81RowData] = await Promise.all([
+    supabase.from('user_profile').select('is_admin').eq('user_id', user.id).single(),
     loadAllProfileVersions(user.id),
     loadAllAnnexeRows(),
     loadAnnexeRowForMonth('article_81', month),
   ]);
   const isAdmin = profile?.is_admin === true;
-  // valeur_jour : version du mois si dispo, sinon user_profile (compat).
-  const valeurJour = Number(profileForMonth?.valeur_jour ?? profile?.valeur_jour ?? 600);
+  // valeur_jour : dérivée client-side par mois courant via getValeurJourForMonth
+  // (suit les switches de mois et les versions annexe sans round-trip serveur).
   const article81Data: Article81Data | null = (a81RowData as Article81Data | null) ?? null;
 
   // Load available months from snapshots
@@ -85,7 +84,6 @@ export default async function CataloguePage({
           currentMonth={month}
           isAdmin={isAdmin}
           article81Data={article81Data}
-          valeurJour={valeurJour}
           profileVersions={profileVersions}
           annexeRows={annexeRows}
         />

@@ -1,5 +1,7 @@
 // Typed helpers for annexe_table JSONB data + derived financial constants
 
+import { computeValeurJour } from '@/lib/article81';
+
 export interface CatAnciennete { categorie: string; echelon: number; coefficient: number; }
 export interface CoefClasse    { role: 'CDB' | 'OPL'; classe: number; coefficient: number; }
 export interface TauxAvion     { avion: string; taux: number; }
@@ -152,6 +154,76 @@ export function getPveiKspForMonth<T extends FinanceProfileLite & { valid_from: 
     annexe as AnnexeData,
   );
   return { pvei, ksp: KSP };
+}
+
+/** Valeur jour par défaut (€) si profil ou annexe insuffisants. */
+export const VALEUR_JOUR_DEFAULT = 600;
+
+/** Profil minimal pour dériver Valeur Jour A81. */
+export interface ValeurJourProfileLite extends FinanceProfileLite {
+  echelon:         number | null;
+  tri_niveau:      number | null;
+  prime_330_count: number | null;
+}
+
+/**
+ * Calcule la Valeur Jour A81 pour le profil utilisateur applicable à un mois
+ * donné. Utilisé par catalogue / comparatif pour que la valeur suive le mois
+ * affiché (au lieu d'être figée sur celle persistée en DB au moment du save).
+ *
+ * Formule "pilote théorique 100%" : fixe TEMPS PLEIN + prime instruction non
+ * proratisée (cf computeValeurJour). Renvoie null si annexe ou profil
+ * incomplet → le caller doit fallback à VALEUR_JOUR_DEFAULT.
+ */
+export function getValeurJourForMonth<T extends ValeurJourProfileLite & { valid_from: string }>(
+  profileVersions: T[],
+  annexeRows: AnnexeRow[],
+  month: string,
+): number | null {
+  const cutoff = /^\d{4}-\d{2}$/.test(month) ? `${month}-01` : month;
+  const prof = [...profileVersions]
+    .sort((a, b) => b.valid_from.localeCompare(a.valid_from))
+    .find(v => v.valid_from <= cutoff);
+  if (!prof?.fonction || !prof.classe || !prof.echelon || !prof.categorie) return null;
+  const annexe = getAnnexeDataFromRows(annexeRows, month);
+  const hasAnnexe = !!(
+    annexe.cat_anciennete?.length &&
+    annexe.coef_classe?.length &&
+    annexe.taux_avion?.length &&
+    annexe.traitement_base
+  );
+  if (!hasAnnexe) return null;
+
+  const isTri = prof.fonction === 'TRI_OPL' || prof.fonction === 'TRI_CDB';
+  const primeInstFonction = prof.fonction === 'TRI_OPL' ? 'TRI_OPL'
+    : prof.fonction === 'TRI_CDB' ? 'ICPL'
+    : null;
+  // nb30e n'affecte pas la Valeur Jour (formule basée sur fixeTP + prime
+  // instruction NON proratisée) — on passe 30 pour simplifier.
+  const c = computeFullProfile(
+    prof.aircraft_principal ?? 'A335',
+    prof.fonction,
+    prof.classe,
+    prof.categorie,
+    prof.echelon,
+    prof.bonus_atpl ?? false,
+    30,
+    'LC',
+    primeInstFonction,
+    isTri ? prof.tri_niveau : null,
+    prof.prime_330_count,
+    annexe as AnnexeData,
+  );
+  const primeInstNonProratise = (primeInstFonction && isTri && prof.tri_niveau && annexe.prime_instruction)
+    ? computePrimeInstructionMontant(annexe.prime_instruction, primeInstFonction, prof.tri_niveau)
+    : 0;
+  return computeValeurJour({
+    fixe: c.fixeTP,
+    pvei: c.pvei,
+    ksp: c.ksp,
+    primeInstruction: primeInstNonProratise,
+    isTri,
+  });
 }
 
 export function computeFullProfile(

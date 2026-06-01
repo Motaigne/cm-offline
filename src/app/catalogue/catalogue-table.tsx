@@ -7,7 +7,7 @@ import { cacheRotations, loadRotationsFromDB, getCachedMonths } from '@/lib/loca
 import { ReleasePublisher } from './release-publisher';
 import { computeArticle81 } from '@/lib/article81';
 import type { Article81Data } from '@/lib/article81';
-import { getPveiKspForMonth, type AnnexeRow } from '@/lib/annexe';
+import { getPveiKspForMonth, getValeurJourForMonth, VALEUR_JOUR_DEFAULT, type AnnexeRow } from '@/lib/annexe';
 import type { ProfileVersion } from '@/app/actions/profile-version';
 
 type Sig = {
@@ -79,7 +79,7 @@ function Col({
 
 export function CatalogueTable({
   signatures: initialSigs, months: initialMonths, currentMonth: initialMonth, isAdmin,
-  article81Data, valeurJour,
+  article81Data,
   profileVersions = [], annexeRows = [],
 }: {
   signatures: Sig[];
@@ -87,10 +87,9 @@ export function CatalogueTable({
   currentMonth: string;
   isAdmin: boolean;
   article81Data: Article81Data | null;
-  valeurJour: number;
-  /** Versions du profil utilisateur — pour dériver PVEI applicable au mois. */
+  /** Versions du profil utilisateur — pour dériver PVEI + Valeur Jour applicables au mois. */
   profileVersions?: ProfileVersion[];
-  /** Rows annexe versionnées — pour `getPveiKspForMonth`. */
+  /** Rows annexe versionnées — pour `getPveiKspForMonth` + `getValeurJourForMonth`. */
   annexeRows?: AnnexeRow[];
 }) {
   const [sigs, setSigs]             = useState<Sig[]>(initialSigs);
@@ -148,6 +147,12 @@ export function CatalogueTable({
     const r = getPveiKspForMonth(profileVersions, annexeRows, currentMonth);
     return r ?? { pvei: PVEI_DEFAULT, ksp: KSP_DEFAULT };
   }, [profileVersions, annexeRows, currentMonth]);
+
+  // Valeur Jour A81 par mois courant — fallback 600 si profil/annexe insuffisants.
+  const valeurJour = useMemo(
+    () => getValeurJourForMonth(profileVersions, annexeRows, currentMonth) ?? VALEUR_JOUR_DEFAULT,
+    [profileVersions, annexeRows, currentMonth],
+  );
 
   const rows = useMemo(() => {
     const q = filter.toLowerCase();
