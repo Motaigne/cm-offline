@@ -426,6 +426,18 @@ export function NavBar() {
   }
 
   async function handleReset() {
+    // Bloque le clear si des changements locaux n'ont pas encore été syncés :
+    // le clear ne touche pas la queue Dexie mais le reload affichera l'état
+    // serveur avant que la queue ne soit rejouée — risque visuel de "revert".
+    const pending = await pendingOpsCount();
+    if (pending > 0) {
+      const proceed = confirm(
+        `${pending} modification${pending > 1 ? 's' : ''} non synchronisée${pending > 1 ? 's' : ''}.\n\n` +
+        `Vider le cache maintenant peut faire réapparaître des items supprimés (l'écran sera rechargé depuis le serveur avant que la queue ne soit rejouée).\n\n` +
+        `Lance d'abord un Sync. Vider quand même ?`,
+      );
+      if (!proceed) return;
+    }
     const offlineWarn = !navigator.onLine
       ? '\n\n⚠ Vous êtes hors ligne : l\'app risque d\'être inutilisable jusqu\'à la prochaine connexion. Continuer quand même ?'
       : '\n\nSi la connexion est instable, l\'app peut devenir partiellement inutilisable jusqu\'à la prochaine bonne connexion.';
