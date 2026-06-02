@@ -34,6 +34,9 @@ const SORT_OPTIONS: { value: SortBy; label: string }[] = [
   { value: 'hc_on', label: 'HC/ON' },
 ];
 
+type DateOp = '>=' | '=' | '<=';
+const DATE_OPS: DateOp[] = ['>=', '=', '<='];
+
 function fmtDate(dateStr: string) {
   return new Date(dateStr + 'T00:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
 }
@@ -462,6 +465,7 @@ export function SearchPanel({
   scenarios,
   preselectedScenario,
   preselectedCategory,
+  preselectedDate,
   panelTop,
   onClose,
   onItemAdded,
@@ -471,6 +475,8 @@ export function SearchPanel({
   scenarios: Scenario[];
   preselectedScenario?: ScenarioName;
   preselectedCategory?: BidCategory;
+  /** Pré-remplit le filtre départ avec op '=' sur cette date (YYYY-MM-DD). */
+  preselectedDate?: string;
   panelTop?: number;
   onClose: () => void;
   onItemAdded?: (item: CalendarItem, draftId: string) => void;
@@ -486,6 +492,8 @@ export function SearchPanel({
   const [families, setFamilies] = useState<string[]>([]);
   const [onExact,  setOnExact]  = useState<number | null>(null);
   const [sortBy,   setSortBy]   = useState<SortBy>('h2hc');
+  const [dateFilter, setDateFilter] = useState<string | null>(preselectedDate ?? null);
+  const [dateOp,     setDateOp]     = useState<DateOp>('=');
 
   useEffect(() => {
     let cancelled = false;
@@ -502,21 +510,35 @@ export function SearchPanel({
 
   const filtered = useMemo(() => {
     if (!data) return [];
-    const list = data.filter(s => {
-      if (query && !s.rotation_code.toLowerCase().includes(query.toLowerCase())) return false;
-      if (!matchesFamily(s.aircraft_code, families)) return false;
-      if (onExact !== null && s.nb_on_days !== onExact) return false;
-      return true;
-    });
-    return [...list].sort((a, b) => {
+    const list: RotationSignature[] = [];
+    for (const s of data) {
+      if (query && !s.rotation_code.toLowerCase().includes(query.toLowerCase())) continue;
+      if (!matchesFamily(s.aircraft_code, families)) continue;
+      if (onExact !== null && s.nb_on_days !== onExact) continue;
+      // Filtre date départ : restreint la liste d'instances de chaque signature.
+      // Si toutes les instances sont éliminées, la signature disparaît.
+      if (dateFilter) {
+        const insts = s.instances.filter(inst => {
+          if (dateOp === '=')  return inst.depart_date === dateFilter;
+          if (dateOp === '>=') return inst.depart_date >= dateFilter;
+          if (dateOp === '<=') return inst.depart_date <= dateFilter;
+          return true;
+        });
+        if (insts.length === 0) continue;
+        list.push({ ...s, instances: insts });
+      } else {
+        list.push(s);
+      }
+    }
+    return list.sort((a, b) => {
       if (sortBy === 'h2hc')  return b.hcr_crew - a.hcr_crew;
       if (sortBy === 'on')    return b.nb_on_days - a.nb_on_days;
       if (sortBy === 'hc_on') return (b.hcr_crew / b.nb_on_days) - (a.hcr_crew / a.nb_on_days);
       return 0;
     });
-  }, [data, query, families, onExact, sortBy]);
+  }, [data, query, families, onExact, sortBy, dateFilter, dateOp]);
 
-  const totalInstances = data?.reduce((a, s) => a + s.instances.length, 0) ?? 0;
+  const totalInstances = filtered.reduce((a, s) => a + s.instances.length, 0);
 
   return (
     <>
@@ -533,8 +555,8 @@ export function SearchPanel({
         {/* ── Filtres compacts ── */}
         <div className="flex-shrink-0 px-3 pt-3 pb-2 border-b border-zinc-200 dark:border-zinc-800 space-y-2">
 
-          {/* Ligne 1 : contexte + recherche destination + fermer */}
-          <div className="flex items-center gap-2">
+          {/* Ligne 1 : contexte + tri + recherche compacte + fermer */}
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs font-semibold text-zinc-500 flex-shrink-0">Rotations</span>
             <span className="text-xs text-zinc-400 flex-shrink-0">{month}</span>
             {preselectedCategory && (
@@ -547,12 +569,28 @@ export function SearchPanel({
                 → {preselectedScenario}
               </span>
             )}
+            <div className="flex gap-1 flex-shrink-0">
+              {SORT_OPTIONS.map(o => (
+                <button
+                  key={o.value}
+                  onClick={() => setSortBy(o.value)}
+                  className={[
+                    'px-2 py-1 rounded-lg border text-[11px] font-medium transition-all',
+                    sortBy === o.value
+                      ? 'bg-zinc-800 dark:bg-zinc-200 border-zinc-800 dark:border-zinc-200 text-white dark:text-zinc-900'
+                      : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400',
+                  ].join(' ')}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
             <input
               type="search"
-              placeholder="Rech. Dest. (ex : LAX, HND, SCL…)"
+              placeholder="Dest."
               value={query}
               onChange={e => setQuery(e.target.value)}
-              className="flex-1 min-w-0 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm placeholder-zinc-400 outline-none focus:border-blue-400"
+              className="ml-auto w-32 sm:w-44 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 text-sm placeholder-zinc-400 outline-none focus:border-blue-400"
             />
             <button
               onClick={onClose}
@@ -562,7 +600,7 @@ export function SearchPanel({
             </button>
           </div>
 
-          {/* Ligne 2 : avions + ON (même rangée, scroll horizontal) */}
+          {/* Ligne 2 : avions + ON + départ + compteur (scroll horizontal mobile) */}
           <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5" style={{ WebkitOverflowScrolling: 'touch' } as React.CSSProperties}>
             {AIRCRAFT_FAMILIES.map(f => (
               <button
@@ -593,29 +631,40 @@ export function SearchPanel({
                 {n}ON
               </button>
             ))}
-          </div>
-
-          {/* Ligne 3 : tri + compteur */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-zinc-400 flex-shrink-0">Trier</span>
-            <div className="flex gap-1">
-              {SORT_OPTIONS.map(o => (
-                <button
-                  key={o.value}
-                  onClick={() => setSortBy(o.value)}
-                  className={[
-                    'px-2.5 py-1 rounded-lg border text-xs font-medium transition-all',
-                    sortBy === o.value
-                      ? 'bg-zinc-800 dark:bg-zinc-200 border-zinc-800 dark:border-zinc-200 text-white dark:text-zinc-900'
-                      : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400',
-                  ].join(' ')}
-                >
-                  {o.label}
-                </button>
-              ))}
-            </div>
+            <div className="w-px h-4 bg-zinc-300 dark:bg-zinc-600 flex-shrink-0 mx-0.5" />
+            <span className="text-xs text-zinc-400 flex-shrink-0">Départ</span>
+            {DATE_OPS.map(op => (
+              <button
+                key={op}
+                onClick={() => setDateOp(op)}
+                className={[
+                  'flex-shrink-0 w-9 py-1.5 rounded-full border text-xs font-mono font-semibold transition-all',
+                  dateOp === op
+                    ? 'bg-zinc-800 dark:bg-zinc-200 border-zinc-800 dark:border-zinc-200 text-white dark:text-zinc-900'
+                    : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400',
+                ].join(' ')}
+              >
+                {op}
+              </button>
+            ))}
+            <input
+              type="date"
+              value={dateFilter ?? ''}
+              min={`${month}-01`}
+              onChange={e => setDateFilter(e.target.value || null)}
+              className="flex-shrink-0 w-36 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-2 py-1 text-xs outline-none focus:border-blue-400"
+            />
+            {dateFilter && (
+              <button
+                onClick={() => setDateFilter(null)}
+                className="flex-shrink-0 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 w-6 h-6 flex items-center justify-center text-lg leading-none"
+                title="Effacer le filtre date"
+              >
+                ×
+              </button>
+            )}
             {data && (
-              <span className="ml-auto text-xs text-zinc-400">
+              <span className="flex-shrink-0 ml-auto pl-2 text-xs text-zinc-400">
                 {filtered.length} rot. · {totalInstances} dates
                 {placedCount > 0 && ` · ${placedCount} placé`}
                 {fromCache && <span className="text-amber-500"> · cache</span>}

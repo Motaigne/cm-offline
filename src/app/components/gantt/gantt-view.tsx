@@ -1026,6 +1026,7 @@ export function GanttView({
   const [searchOpen,     setSearchOpen]     = useState(false);
   const [searchScenario, setSearchScenario] = useState<ScenarioName | null>(null);
   const [searchCategory, setSearchCategory] = useState<BidCategory | null>(null);
+  const [searchDate,     setSearchDate]     = useState<string | null>(null);
   const [searchPanelTop, setSearchPanelTop] = useState<number | undefined>(undefined);
   // Pickers en cascade : Rotations → catégorie → scénario → SearchPanel.
   const [categoryPicker, setCategoryPicker] = useState<{ rect: DOMRect } | null>(null);
@@ -2298,6 +2299,24 @@ export function GanttView({
                     >
                       📝 Note
                     </button>
+                    {/* Bouton "Rotation" — ouvre SearchPanel pré-filtré sur ce
+                        jour + ce scénario (catégorie reste à choisir dans le panel). */}
+                    <button
+                      onClick={() => {
+                        const d = sheet.date;
+                        const scName = sheet.scenarioName;
+                        setSheet(null);
+                        setSearchScenario(scName);
+                        setSearchCategory(null);
+                        setSearchDate(d);
+                        setSearchPanelTop(undefined);
+                        setSearchOpen(true);
+                      }}
+                      className="px-4 py-2 rounded-lg text-sm font-medium border-2 border-dashed border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:border-blue-400 hover:text-blue-600 transition-all"
+                      title="Rechercher une rotation partant ce jour"
+                    >
+                      ✈ Rotation
+                    </button>
                   </div>
                 )}
 
@@ -2568,11 +2587,13 @@ export function GanttView({
           scenarios={localScenarios}
           preselectedScenario={searchScenario ?? undefined}
           preselectedCategory={searchCategory ?? undefined}
+          preselectedDate={searchDate ?? undefined}
           panelTop={searchPanelTop}
           onClose={() => {
             setSearchOpen(false);
             setSearchScenario(null);
             setSearchCategory(null);
+            setSearchDate(null);
             setSearchPanelTop(undefined);
           }}
           onItemAdded={(item, draftId) => {
