@@ -2105,7 +2105,7 @@ export function GanttView({
                             left:   `${clip.left}%`,
                             width:  `${clip.width}%`,
                             top:    `calc(50% + ${REST_H / 2 + 4}px)`,
-                            height: 10,
+                            height: 15,
                           }}
                         />
                       );
