@@ -88,12 +88,39 @@ function readMeta(item: CalendarItem): Record<string, unknown> | null {
   return null;
 }
 
+/** Nombre de jours UTC ENTIÈREMENT couverts par le RPC après la fin du vol.
+ *  Un jour partiel (RPC se terminant en cours de journée) ne compte pas.
+ *  Ex: arrivee J5 06h Paris + 72h RPC → rpcEnd J8 06h Paris, jours pleins =
+ *  J6+J7 = 2. Capé 0-3. Fallback ceil(h/24) si pas de timestamp arrivee_at. */
 function rpcDaysOf(item: CalendarItem): number {
   const meta = readMeta(item);
   const h = typeof meta?.rest_after_h === 'number' ? meta.rest_after_h : 0;
-  if (h <= 0) return 1;
-  const d = Math.ceil(h / 24);
-  return Math.max(1, Math.min(3, d));
+  if (h <= 0) return 0;
+
+  const arriveeAtStr = typeof meta?.arrivee_at === 'string' ? meta.arrivee_at : null;
+  if (!arriveeAtStr) {
+    return Math.min(3, Math.max(0, Math.ceil(h / 24)));
+  }
+
+  const arriveeMs = new Date(arriveeAtStr).getTime();
+  const endActAtStr = typeof meta?.scheduled_end_activity_at === 'string'
+    ? meta.scheduled_end_activity_at : null;
+  const endActMs = endActAtStr ? new Date(endActAtStr).getTime() : NaN;
+  const restMs = Number.isFinite(endActMs) && endActMs > arriveeMs
+    ? endActMs - arriveeMs
+    : h * 3_600_000;
+  const rpcEndMs = arriveeMs + restMs;
+
+  // 1er jour candidat = end_date + 1 (00:00 UTC). On compte les jours [00:00, 24:00]
+  // entièrement dans [arrivee, rpcEnd].
+  const dayMs = 86_400_000;
+  let dayStart = new Date(item.end_date + 'T00:00:00Z').getTime() + dayMs;
+  let count = 0;
+  while (dayStart + dayMs <= rpcEndMs && count < 3) {
+    count++;
+    dayStart += dayMs;
+  }
+  return count;
 }
 
 /** Jour de référence "from" selon le mode. Renvoie une date YYYY-MM-DD. */
@@ -196,20 +223,19 @@ export function validateScenario(
   scenarioName: string,
   acceptedRpcReports: ReadonlySet<string> = new Set(),
 ): Violation[] {
-  // On filtre d'abord les items pertinents pour la validation : seuls les items
-  // dont la catégorie est définie ET non exempte (ELABO_SUIVI) entrent dans
-  // l'analyse. ELABO_SUIVI couvre sim/sol/medical/instr/autre + flights bid_category=elabo_suivi.
-  // (CSS et TAF sont bucketés en CONGES, donc validés normalement.)
+  // On garde TOUS les items à catégorie connue (y compris ELABO_SUIVI) dans
+  // l'ordre chronologique : un item ELABO_SUIVI (medical/sol/autre/sim/instr
+  // ou vol elabo_suivi) qui tombe entre A et B casse la chaîne — on ne compare
+  // pas A↔B directement (et aucune règle ne s'applique à un pair impliquant
+  // ELABO_SUIVI).
+  // CSS et TAF restent bucketés en CONGES, donc validés normalement.
   // Les spillovers (vols partis en M-1 et arrivant en M) SONT inclus : ils
   // peuvent former la 1ère moitié d'une violation cross-mois avec un item de M
   // (typique : JNB du 31/07 au 03/08 suivi d'un DDA REPOS le 08/08, le 1er
   // poseur est un spillover en vue M). Les paires both-spillover sont
   // skippées plus bas (déjà validées dans la vue de M-1).
   const sorted = [...items]
-    .filter(it => {
-      const c = categoryOf(it);
-      return c !== null && c !== 'ELABO_SUIVI';
-    })
+    .filter(it => categoryOf(it) !== null)
     .sort((a, b) => a.start_date.localeCompare(b.start_date));
 
   const violations: Violation[] = [];
@@ -224,6 +250,8 @@ export function validateScenario(
     const catA = categoryOf(a);
     const catB = categoryOf(b);
     if (!catA || !catB) continue;
+    // ELABO_SUIVI casse la chaîne : ni A ni B ne peut être ELABO_SUIVI.
+    if (catA === 'ELABO_SUIVI' || catB === 'ELABO_SUIVI') continue;
 
     const rule = findRule(rules, catA, catB);
     if (!rule) continue;
