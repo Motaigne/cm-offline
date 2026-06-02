@@ -143,7 +143,10 @@ export type Violation = {
   cat_b: DdaCategory;
   gap_days: number;
   rpc_days?: number;
-  /** Date charnière (1er jour libre après item_a) — pour positionnement UI. */
+  /** 1er jour de la fenêtre interdite (= refFrom + 1, exprime le démarrage
+   *  du gap mesuré par la règle ; exclut RPC pour les règles rpc_last_day,
+   *  exclut juste end pour les règles 'end'/'rpc_first_day'). Sert au rendu
+   *  visuel : la bande couvre [pivot_date, b_start_date - 1] = gap_days j. */
   pivot_date: string;
   /** Date de début de l'item B — pour clipper le rendu de l'overlay. */
   b_start_date: string;
@@ -255,7 +258,7 @@ export function validateScenario(
         cat_b: catB,
         gap_days: gap,
         rpc_days: rpcDays,
-        pivot_date: addDays(a.end_date, 1),
+        pivot_date: addDays(fromDay, 1),
         b_start_date: b.start_date,
         rule_label: ruleLabel(rule, gap, rpcDays),
         can_accept_rpc_report: canAcceptRpcReport,
