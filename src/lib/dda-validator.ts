@@ -145,6 +145,8 @@ export type Violation = {
   rpc_days?: number;
   /** Date charnière (1er jour libre après item_a) — pour positionnement UI. */
   pivot_date: string;
+  /** Date de début de l'item B — pour clipper le rendu de l'overlay. */
+  b_start_date: string;
   rule_label: string;
   /** Vrai si DDA_VOL → CONGES avec gap_no_rpc ∈ {0,1} : option de report RPC. */
   can_accept_rpc_report?: boolean;
@@ -179,13 +181,13 @@ export function validateScenario(
 ): Violation[] {
   // On filtre d'abord les items pertinents pour la validation : seuls les items
   // dont la catégorie est définie ET non exempte (ELABO_SUIVI) entrent dans
-  // l'analyse. Les autres (sim/sol/medical/instr/taf/autre, spillovers) sont
-  // transparents : ils ne déclenchent pas de paire et n'influencent pas le gap
-  // calculé entre deux items non-exempts (le gap est purement basé sur les
-  // dates, donc un sim au milieu d'un gap libre est comptabilisé comme une
-  // journée libre dans le calcul).
+  // l'analyse. Les autres (sim/sol/medical/instr/taf/autre) sont transparents.
+  // Les spillovers (vols partis en M-1 et arrivant en M) SONT inclus : ils
+  // peuvent former la 1ère moitié d'une violation cross-mois avec un item de M
+  // (typique : JNB du 31/07 au 03/08 suivi d'un DDA REPOS le 08/08, le 1er
+  // poseur est un spillover en vue M). Les paires both-spillover sont
+  // skippées plus bas (déjà validées dans la vue de M-1).
   const sorted = [...items]
-    .filter(it => !it._isSpillover)
     .filter(it => {
       const c = categoryOf(it);
       return c !== null && c !== 'ELABO_SUIVI';
@@ -197,6 +199,9 @@ export function validateScenario(
   for (let i = 0; i < sorted.length - 1; i++) {
     const a = sorted[i];
     const b = sorted[i + 1];
+
+    // Paire entièrement issue de M-1 → déjà validée dans la vue M-1.
+    if (a._isSpillover && b._isSpillover) continue;
 
     const catA = categoryOf(a);
     const catB = categoryOf(b);
@@ -251,6 +256,7 @@ export function validateScenario(
         gap_days: gap,
         rpc_days: rpcDays,
         pivot_date: addDays(a.end_date, 1),
+        b_start_date: b.start_date,
         rule_label: ruleLabel(rule, gap, rpcDays),
         can_accept_rpc_report: canAcceptRpcReport,
       });

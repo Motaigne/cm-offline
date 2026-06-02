@@ -25,6 +25,9 @@ const nextConfig: NextConfig = {
     },
   },
   allowedDevOrigins: ['192.168.1.72'],
+  // Déplace l'indicateur Next dev (défaut: bottom-left) hors de la zone
+  // basse, où il chevauche l'action bar du Gantt sur localhost PC.
+  devIndicators: { position: 'top-right' },
 };
 
 export default withSerwist(nextConfig);

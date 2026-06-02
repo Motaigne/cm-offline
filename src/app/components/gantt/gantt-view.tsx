@@ -29,9 +29,8 @@ import type { RotationInstance, RotationSignature } from '@/app/actions/search';
 import { enqueueAdd, enqueueDelete, enqueueUpdate, enqueueBidCategoryUpdate, enqueueMetaUpdate, pendingOpsCount } from '@/lib/sync-service';
 import {
   validateScenario, mergeRules,
-  type DdaRule, type DdaRulesData, type Violation,
+  type DdaRule, type DdaRulesData, type Violation, type DdaCategory,
 } from '@/lib/dda-validator';
-import { DdaViolationsStrip } from './dda-violations-strip';
 import { getRotationsForMonth } from '@/app/actions/search';
 import { getCurrentUserScrapeRights } from '@/app/actions/auth';
 import { computeA81CumulBeforeLocal } from '@/lib/a81-local';
@@ -76,6 +75,33 @@ function shiftMonth(m: string, delta: number) {
 }
 function daysInMonth(y: number, mo: number) { return new Date(y, mo, 0).getDate(); }
 function dayNum(dateStr: string) { return parseInt(dateStr.slice(8), 10); }
+/** Décale une date YYYY-MM-DD de n jours (n négatif autorisé). */
+function shiftDay(dateStr: string, n: number): string {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+/** Calcule la fenêtre interdite (left%, width%) d'une violation clippée au
+ *  mois courant. Renvoie null si la fenêtre est hors mois ou vide. */
+function clipViolationGap(pivot: string, bStart: string, y: number, mo: number):
+  { left: number; width: number } | null {
+  const dim = daysInMonth(y, mo);
+  const prefix = `${y}-${String(mo).padStart(2, '0')}`;
+  const monthStartStr = `${prefix}-01`;
+  const monthEndStr   = `${prefix}-${String(dim).padStart(2, '0')}`;
+  const endStr = shiftDay(bStart, -1);
+  if (endStr < monthStartStr) return null;
+  if (pivot   > monthEndStr)  return null;
+  const startStr = pivot < monthStartStr ? monthStartStr : pivot;
+  const clippedEnd = endStr > monthEndStr ? monthEndStr : endStr;
+  if (startStr > clippedEnd) return null;
+  const startDay = dayNum(startStr);
+  const endDay   = dayNum(clippedEnd);
+  return {
+    left:  ((startDay - 1) / dim) * 100,
+    width: ((endDay - startDay + 1) / dim) * 100,
+  };
+}
 function isWeekend(y: number, mo: number, d: number) {
   const dow = new Date(y, mo - 1, d).getDay();
   return dow === 0 || dow === 6;
@@ -1058,10 +1084,22 @@ export function GanttView({
     return out;
   }, [localScenarios, ddaRules]);
 
-  const allViolations = useMemo(
-    () => Array.from(violationsByScenario.values()).flat(),
-    [violationsByScenario],
-  );
+  /** Acquitte une violation DDA_VOL → CONGES en marquant le vol
+   *  rpc_reported=true (RPC reporté à la fin des congés). */
+  function handleAcceptRpcReport(itemId: string) {
+    const target = localScenarios.flatMap(s => s.items).find(it => it.id === itemId);
+    if (!target) return;
+    const prevMeta = (target.meta && typeof target.meta === 'object' && !Array.isArray(target.meta))
+      ? target.meta as Record<string, unknown>
+      : {};
+    const nextMeta = { ...prevMeta, rpc_reported: true } as unknown as import('@/types/supabase').Json;
+    setLocalScenarios(prev => prev.map(s => ({
+      ...s,
+      items: s.items.map(it => it.id === itemId ? { ...it, meta: nextMeta } : it),
+    })));
+    setPendingCount(c => c + 1);
+    void enqueueMetaUpdate(itemId, nextMeta);
+  }
 
   // Quand search ouvert : scénario sélectionné remonté en premier
   const displayScenarios = useMemo(() => {
@@ -1118,6 +1156,20 @@ export function GanttView({
     brut: number;
   };
   const [detailPanel, setDetailPanel] = useState<DetailPanel | null>(null);
+
+  // Popover violation DDA (déclenché au clic sur un bandeau rouge).
+  const [violationPopover, setViolationPopover] = useState<{
+    key: string;
+    rule: string;
+    catA: DdaCategory;
+    catB: DdaCategory;
+    gap: number;
+    rpc?: number;
+    canReport: boolean;
+    itemAId: string;
+    left: number;  // viewport coords (centre horizontal du bandeau)
+    top:  number;  // viewport coords (juste sous le bandeau)
+  } | null>(null);
 
   // Compteur prime d'incitation (0-5), persistance localStorage par mois.
   const [incitCount, setIncitCount] = useLocalStorageState<number>(
@@ -2015,6 +2067,50 @@ export function GanttView({
                       );
                     })}
 
+                    {/* Overlay violations DDA — bandeau fin rouge transparent
+                        positionné juste sous la ligne RPC (visuellement entre
+                        la base du Gantt et le RPC). Cliquable → ouvre un
+                        popover avec la règle + l'action "Reporter RPC" si
+                        applicable. */}
+                    {(violationsByScenario.get(scenario.id) ?? []).map(v => {
+                      const clip = clipViolationGap(v.pivot_date, v.b_start_date, year, mo);
+                      if (!clip) return null;
+                      const isOpen = violationPopover?.key === `${v.item_a_id}-${v.item_b_id}`;
+                      return (
+                        <button
+                          key={`viol-${v.item_a_id}-${v.item_b_id}`}
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation();
+                            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                            setViolationPopover({
+                              key: `${v.item_a_id}-${v.item_b_id}`,
+                              rule: v.rule_label,
+                              catA: v.cat_a, catB: v.cat_b,
+                              gap: v.gap_days, rpc: v.rpc_days,
+                              canReport: v.can_accept_rpc_report ?? false,
+                              itemAId: v.item_a_id,
+                              left: rect.left + rect.width / 2,
+                              top:  rect.bottom + 6,
+                            });
+                          }}
+                          title="Cliquer pour voir la règle violée"
+                          className={[
+                            'absolute z-[11] rounded-sm transition-colors cursor-pointer',
+                            isOpen
+                              ? 'bg-red-500/60 dark:bg-red-500/70 border-x border-red-700'
+                              : 'bg-red-500/35 dark:bg-red-500/45 border-x border-red-500/70 hover:bg-red-500/55',
+                          ].join(' ')}
+                          style={{
+                            left:   `${clip.left}%`,
+                            width:  `${clip.width}%`,
+                            top:    `calc(50% + ${REST_H / 2 + 4}px)`,
+                            height: 10,
+                          }}
+                        />
+                      );
+                    })}
+
                     {/* Notes utilisateur (cross-scénario) — bar fine en bas
                         de chaque ligne A/B/C. Click = édit. Empilées si
                         plusieurs notes le même jour. */}
@@ -2069,28 +2165,8 @@ export function GanttView({
           </div>
         </div>
 
-        {/* Violations DDA / VOL P — strip discret au-dessus de l'action bar */}
-        {allViolations.length > 0 && (
-          <DdaViolationsStrip
-            violations={allViolations}
-            onAcceptRpcReport={(itemId) => {
-              // Lit le meta courant, calcule le nextMeta avec rpc_reported = true,
-              // applique en local et queue l'update.
-              const target = localScenarios.flatMap(s => s.items).find(it => it.id === itemId);
-              if (!target) return;
-              const prevMeta = (target.meta && typeof target.meta === 'object' && !Array.isArray(target.meta))
-                ? target.meta as Record<string, unknown>
-                : {};
-              const nextMeta = { ...prevMeta, rpc_reported: true } as unknown as import('@/types/supabase').Json;
-              setLocalScenarios(prev => prev.map(s => ({
-                ...s,
-                items: s.items.map(it => it.id === itemId ? { ...it, meta: nextMeta } : it),
-              })));
-              setPendingCount(c => c + 1);
-              void enqueueMetaUpdate(itemId, nextMeta);
-            }}
-          />
-        )}
+        {/* (Violations DDA : visualisées en overlay rouge transparent dans
+             chaque ligne Gantt — voir le rendu plus haut.) */}
 
         {/* Action bar */}
         <div className="flex-shrink-0 flex items-center gap-2 h-14 border-t border-zinc-200 dark:border-zinc-800 px-4 bg-zinc-50 dark:bg-zinc-900 overflow-x-auto">
@@ -2615,6 +2691,72 @@ export function GanttView({
           onDone={() => { setScrapeOpen(false); router.refresh(); }}
         />
       )}
+
+      {/* Popover violation DDA — affiché au clic sur un bandeau rouge.
+          Position centrée horizontalement sous le bandeau. */}
+      {violationPopover && (() => {
+        const CAT_SHORT: Record<DdaCategory, string> = {
+          DDA_REPOS:   'DDA REPOS',
+          DDA_VOL:     'DDA VOL',
+          VOL_P:       'VOL P',
+          CONGES:      'CONGES',
+          ELABO_SUIVI: 'Élabo/Suivi',
+        };
+        const W = 240;
+        const vw = window.innerWidth;
+        const rawLeft = violationPopover.left - W / 2;
+        const left = Math.max(8, Math.min(rawLeft, vw - W - 8));
+        return (
+          <>
+            <div className="fixed inset-0 z-[45]" onClick={() => setViolationPopover(null)} />
+            <div
+              role="dialog"
+              className="fixed z-[50] bg-white dark:bg-zinc-900 border border-red-300 dark:border-red-800/60 rounded-xl shadow-2xl p-3 space-y-2"
+              style={{ left, top: violationPopover.top, width: W }}
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-start gap-2">
+                <span className="text-red-500 dark:text-red-400 text-base leading-none flex-shrink-0">⚑</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[10px] font-bold text-red-600 dark:text-red-400 uppercase tracking-wide">
+                    Violation DDA
+                  </div>
+                  <div className="text-xs font-semibold text-zinc-800 dark:text-zinc-100 mt-0.5">
+                    {CAT_SHORT[violationPopover.catA]} → {CAT_SHORT[violationPopover.catB]}
+                    {violationPopover.rpc != null && (
+                      <span className="text-zinc-400 font-normal ml-1">· RPC {violationPopover.rpc}j</span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setViolationPopover(null)}
+                  className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-lg leading-none flex-shrink-0"
+                >×</button>
+              </div>
+              <div className="flex items-center gap-2 pt-1">
+                <span className="text-[10px] text-zinc-500 dark:text-zinc-400">Gap mesuré</span>
+                <span className="px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-950/50 text-red-600 dark:text-red-400 font-mono font-semibold text-xs">
+                  {violationPopover.gap}j
+                </span>
+              </div>
+              <p className="text-[11px] text-zinc-600 dark:text-zinc-300 leading-snug">
+                {violationPopover.rule}
+              </p>
+              {violationPopover.canReport && (
+                <button
+                  onClick={() => {
+                    handleAcceptRpcReport(violationPopover.itemAId);
+                    setViolationPopover(null);
+                  }}
+                  className="w-full px-2 py-1.5 rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 text-xs font-semibold hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                >
+                  ↩ Reporter RPC à la fin des CONGES
+                </button>
+              )}
+            </div>
+          </>
+        );
+      })()}
 
       {/* Panneau détail paie (fixed, à droite du label) */}
       {detailPanel && (
