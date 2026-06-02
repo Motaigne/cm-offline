@@ -408,7 +408,8 @@ export async function loadA81ForYear(year: number): Promise<A81YearData> {
 }
 
 /** Upsert un override sur une ligne A81 (édit Début/Fin Séjour). Passe null
- *  pour remettre la valeur d'origine sur un champ. */
+ *  pour remettre la valeur d'origine sur un champ. Atomique (onConflict
+ *  sur la PK composite) — pas de race SELECT-puis-INSERT. */
 export async function upsertA81Override(
   instanceId: string,
   fields: { debut_sejour_at?: string | null; fin_sejour_at?: string | null },
@@ -416,27 +417,15 @@ export async function upsertA81Override(
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Non authentifié' };
-
-  // Upsert : on essaie update, sinon insert
-  const { data: existing } = await supabase
+  // PATCH-style : seules les colonnes du payload sont écrites en cas de
+  // conflit, donc on n'écrase pas `deleted` ni l'autre champ sejour.
+  const { error } = await supabase
     .from('user_a81_override')
-    .select('user_id')
-    .eq('user_id', user.id)
-    .eq('pairing_instance_id', instanceId)
-    .maybeSingle();
-  if (existing) {
-    const { error } = await supabase
-      .from('user_a81_override')
-      .update(fields)
-      .eq('user_id', user.id)
-      .eq('pairing_instance_id', instanceId);
-    if (error) return { error: error.message };
-  } else {
-    const { error } = await supabase
-      .from('user_a81_override')
-      .insert({ user_id: user.id, pairing_instance_id: instanceId, ...fields });
-    if (error) return { error: error.message };
-  }
+    .upsert(
+      { user_id: user.id, pairing_instance_id: instanceId, ...fields },
+      { onConflict: 'user_id,pairing_instance_id' },
+    );
+  if (error) return { error: error.message };
   revalidatePath('/a81');
   return { ok: true };
 }
@@ -446,39 +435,29 @@ export async function deleteA81Row(instanceId: string): Promise<{ ok: true } | {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Non authentifié' };
-  const { data: existing } = await supabase
+  const { error } = await supabase
     .from('user_a81_override')
-    .select('user_id')
-    .eq('user_id', user.id)
-    .eq('pairing_instance_id', instanceId)
-    .maybeSingle();
-  if (existing) {
-    const { error } = await supabase
-      .from('user_a81_override')
-      .update({ deleted: true })
-      .eq('user_id', user.id)
-      .eq('pairing_instance_id', instanceId);
-    if (error) return { error: error.message };
-  } else {
-    const { error } = await supabase
-      .from('user_a81_override')
-      .insert({ user_id: user.id, pairing_instance_id: instanceId, deleted: true });
-    if (error) return { error: error.message };
-  }
+    .upsert(
+      { user_id: user.id, pairing_instance_id: instanceId, deleted: true },
+      { onConflict: 'user_id,pairing_instance_id' },
+    );
+  if (error) return { error: error.message };
   revalidatePath('/a81');
   return { ok: true };
 }
 
-/** Restaure une ligne supprimée (unset deleted). */
+/** Restaure une ligne supprimée (unset deleted). Upsert pour rester safe si
+ *  la row n'existe pas (replay queue dans un ordre inattendu). */
 export async function restoreA81Row(instanceId: string): Promise<{ ok: true } | { error: string }> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Non authentifié' };
   const { error } = await supabase
     .from('user_a81_override')
-    .update({ deleted: false })
-    .eq('user_id', user.id)
-    .eq('pairing_instance_id', instanceId);
+    .upsert(
+      { user_id: user.id, pairing_instance_id: instanceId, deleted: false },
+      { onConflict: 'user_id,pairing_instance_id' },
+    );
   if (error) return { error: error.message };
   revalidatePath('/a81');
   return { ok: true };

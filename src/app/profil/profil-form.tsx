@@ -2,8 +2,14 @@
 
 import { useState, useMemo, useTransition, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { saveProfile, type ProfileData } from '@/app/actions/profile';
-import { saveProfileVersion, deleteProfileVersion, type ProfileVersion } from '@/app/actions/profile-version';
+import { type ProfileData } from '@/app/actions/profile';
+import { type ProfileVersion } from '@/app/actions/profile-version';
+import {
+  enqueueSaveProfile,
+  enqueueSaveProfileVersion,
+  enqueueDeleteProfileVersion,
+  syncNow,
+} from '@/lib/sync-service';
 import { signOut } from '@/app/actions/auth';
 import { computeFullProfile, computePrimeInstructionMontant, getAnnexeDataFromRows, KSP, type AnnexeData, type AnnexeRow } from '@/lib/annexe';
 import { computeValeurJour } from '@/lib/article81';
@@ -257,54 +263,62 @@ export function ProfilForm({
   function handleSave() {
     if (!fonction || !regime) return;
     setErr(''); setSaved(false);
-    if (!isOnline) {
-      setErr("Hors ligne — la sauvegarde du profil nécessite une connexion. Réessaie une fois en ligne.");
-      return;
-    }
     const data = buildPayload();
     const targetValidFrom = selectedValidFrom;
     // Sync user_profile uniquement si on édite la version la plus récente (ou le 1er enregistrement d'un new user).
     const shouldSyncUserProfile = isNew || targetValidFrom === latestValidFrom;
 
+    const versionFields = {
+      fonction:   data.fonction,
+      regime:     data.regime,
+      qualifs_avion: data.qualifs_avion,
+      classe:     data.classe,
+      categorie:  data.categorie,
+      echelon:    data.echelon,
+      bonus_atpl: data.bonus_atpl,
+      transport:  data.transport,
+      navigo_eur: data.navigo_eur,
+      voiture_km_aller:     data.voiture_km_aller,
+      voiture_indemnite_km: data.voiture_indemnite_km,
+      aircraft_principal:   data.aircraft_principal,
+      cng_pv:     data.cng_pv,
+      cng_hs:     data.cng_hs,
+      tri_niveau: data.tri_niveau,
+      prime_330_count: data.prime_330_count,
+      valeur_jour: data.valeur_jour,
+      tmi:        data.tmi,
+    };
+    // Optimistic row pour cache local (les lecteurs offline calculent paie là-dessus).
+    const optimisticVersion: ProfileVersion = {
+      user_id:     selectedVersion?.user_id ?? sortedVersions[0]?.user_id ?? '',
+      valid_from:  targetValidFrom,
+      base:        selectedVersion?.base ?? 'PAR',
+      instructeur: selectedVersion?.instructeur ?? false,
+      created_at:  selectedVersion?.created_at ?? new Date().toISOString(),
+      updated_at:  new Date().toISOString(),
+      ...versionFields,
+    };
+
     start(async () => {
       try {
-        // 1. user_profile : pour les compats (display_name, fallback queries, onboarding check)
+        // 1. user_profile : table de compat (display_name, onboarding check).
         if (shouldSyncUserProfile) {
-          const res = await saveProfile(data);
-          if (res && 'error' in res) { setErr(res.error ?? 'Erreur user_profile'); return; }
+          await enqueueSaveProfile(data);
         }
-        // 2. user_profile_version : source de vérité pour les calculs paie
-        const res2 = await saveProfileVersion(targetValidFrom, {
-          fonction:   data.fonction,
-          regime:     data.regime,
-          qualifs_avion: data.qualifs_avion,
-          classe:     data.classe,
-          categorie:  data.categorie,
-          echelon:    data.echelon,
-          bonus_atpl: data.bonus_atpl,
-          transport:  data.transport,
-          navigo_eur: data.navigo_eur,
-          voiture_km_aller:     data.voiture_km_aller,
-          voiture_indemnite_km: data.voiture_indemnite_km,
-          aircraft_principal:   data.aircraft_principal,
-          cng_pv:     data.cng_pv,
-          cng_hs:     data.cng_hs,
-          tri_niveau: data.tri_niveau,
-          prime_330_count: data.prime_330_count,
-          valeur_jour: data.valeur_jour,
-          tmi:        data.tmi,
-        });
-        if ('error' in res2) { setErr(res2.error); return; }
+        // 2. user_profile_version : source de vérité paie. Cache local mis à
+        //    jour de manière atomique avec la queue.
+        await enqueueSaveProfileVersion(targetValidFrom, versionFields, optimisticVersion);
 
         setSaved(true);
         setTimeout(() => setSaved(false), 3000);
         router.refresh();
-      } catch (e) {
-        if (e instanceof TypeError) {
-          setErr("Connexion perdue pendant l'enregistrement — réessaie une fois reconnecté.");
-        } else {
-          setErr(`Exception : ${String(e).slice(0, 300)}`);
+        // Tentative de sync immédiate si online (best-effort). En offline,
+        // l'op reste en queue et sera rejouée au prochain Sync manuel ou online.
+        if (isOnline) {
+          try { await syncNow(); } catch { /* silencieux : retry au prochain Sync */ }
         }
+      } catch (e) {
+        setErr(`Exception : ${String(e).slice(0, 300)}`);
         console.error('[saveProfile] threw:', e);
       }
     });
@@ -339,24 +353,31 @@ export function ProfilForm({
       valeur_jour: data.valeur_jour,
       tmi:        data.tmi,
     };
+    // Optimistic update : ajoute la nouvelle version au state local et au
+    // cache Dexie immédiatement → dropdown reflète la création sans navigation.
+    const optimistic: ProfileVersion = {
+      user_id: selectedVersion?.user_id ?? sortedVersions[0]?.user_id ?? '',
+      valid_from: newDate,
+      base: selectedVersion?.base ?? 'PAR',
+      instructeur: selectedVersion?.instructeur ?? false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      ...fields,
+    };
     start(async () => {
-      const res = await saveProfileVersion(newDate, fields);
-      if ('error' in res) { setNewErr(res.error); return; }
-      // Optimistic update : ajoute la nouvelle version au state local
-      // immédiatement → dropdown reflète la création sans navigation.
-      const optimistic: ProfileVersion = {
-        user_id: selectedVersion?.user_id ?? sortedVersions[0]?.user_id ?? '',
-        valid_from: newDate,
-        base: selectedVersion?.base ?? 'PAR',
-        instructeur: selectedVersion?.instructeur ?? false,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        ...fields,
-      };
+      try {
+        await enqueueSaveProfileVersion(newDate, fields, optimistic);
+      } catch (e) {
+        setNewErr(`Exception : ${String(e).slice(0, 200)}`);
+        return;
+      }
       setLocalVersions(prev => [...prev, optimistic]);
       setShowNewForm(false);
       setSelectedValidFrom(newDate);
       router.refresh(); // resync silencieux en arrière-plan
+      if (isOnline) {
+        try { await syncNow(); } catch { /* silencieux */ }
+      }
     });
   }
 
@@ -364,17 +385,25 @@ export function ProfilForm({
     if (sortedVersions.length <= 1) return;
     const label = fmtDateApp(selectedValidFrom);
     if (!confirm(`Supprimer la version du ${label} ?\n\nLes mois utilisant cette version basculeront sur la version précédente.`)) return;
+    const toDelete = selectedValidFrom;
     start(async () => {
-      const res = await deleteProfileVersion(selectedValidFrom);
-      if ('error' in res) { setErr(res.error); return; }
+      try {
+        await enqueueDeleteProfileVersion(toDelete);
+      } catch (e) {
+        setErr(`Exception : ${String(e).slice(0, 200)}`);
+        return;
+      }
       // Optimistic : retire la version du state local + sélectionne la suivante (la plus récente restante).
-      const remaining = localVersions.filter(v => v.valid_from !== selectedValidFrom);
+      const remaining = localVersions.filter(v => v.valid_from !== toDelete);
       setLocalVersions(remaining);
       const nextValidFrom = remaining
         .map(v => v.valid_from)
         .sort((a, b) => b.localeCompare(a))[0];
       if (nextValidFrom) setSelectedValidFrom(nextValidFrom);
       router.refresh();
+      if (isOnline) {
+        try { await syncNow(); } catch { /* silencieux */ }
+      }
     });
   }
 
@@ -639,7 +668,9 @@ export function ProfilForm({
 
       <button type="button" onClick={handleSave} disabled={isPending || !canSave}
         className="w-full rounded-lg bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-4 py-2.5 text-sm font-semibold hover:opacity-80 disabled:opacity-40 transition-opacity">
-        {saved ? '✓ Enregistré' : isPending ? 'Enregistrement…' : isNew
+        {saved
+          ? (isOnline ? '✓ Enregistré' : '✓ Sauvegardé localement — synchro à la reconnexion')
+          : isPending ? 'Enregistrement…' : isNew
           ? 'Créer mon profil'
           : `Enregistrer la version du ${fmtDateApp(selectedValidFrom)}`}
       </button>

@@ -20,7 +20,7 @@ import type { Database } from '@/types/supabase';
 import { SearchPanel } from './search-panel';
 import { ScrapeDialog } from './scrape-dialog';
 import { rotationValue, monthlyFinancialsP, PVEI, KSP, FIXE_MENSUEL, NB_30E, REGIME_NB30E } from '@/lib/finance';
-import { computeArticle81, computeTSej24, getPlafondJours } from '@/lib/article81';
+import { computeArticle81, computeTSej24, getPlafondJours, TAXI_TSEJ_ADJUST_H } from '@/lib/article81';
 import type { Article81Data } from '@/lib/article81';
 import { createClient } from '@/lib/supabase/client';
 import { hydrateDB, loadFromDB, hasPendingOps, loadScenariosForMonth, cacheRotations, purgeScenarios, hydrateNotes, loadNotesForMonth, loadRotationsFromDB } from '@/lib/local-db';
@@ -329,14 +329,17 @@ function computeStats(
     const zone     = typeof m.zone      === 'string' ? m.zone      as string : null;
     if (tempsSej == null || !zone) continue;
 
-    const tSej24 = computeTSej24(tempsSej);
+    // m.temps_sej = block-to-block (scraper, sans taxi). Compensation pour
+    // approximer l'atterrissage/décollage réels — cf TAXI_TSEJ_ADJUST_H.
+    const tempsSejAdj = tempsSej + TAXI_TSEJ_ADJUST_H;
+    const tSej24 = computeTSej24(tempsSejAdj);
     if (tSej24 === 0) continue; // < 24h → pas Article 81
 
     // Plafond : si on dépasse, on n'ajoute pas le montant de cette rotation
     if (cumulJoursRunning >= plafondJours) continue;
     cumulJoursRunning += tSej24;
 
-    const a81 = computeArticle81({ tSej: tempsSej, zone, valeurJour, data: article81Data });
+    const a81 = computeArticle81({ tSej: tempsSejAdj, zone, valeurJour, data: article81Data });
     const departAt  = typeof m.depart_at  === 'string' ? m.depart_at  as string : null;
     const arriveeAt = typeof m.arrivee_at === 'string' ? m.arrivee_at as string : null;
     const montant = (departAt && arriveeAt)
@@ -361,55 +364,29 @@ function computeStats(
   const fixeTPVal   = fixeTPArg ?? (nb30eRegime > 0 ? FIXE_MENSUEL * 30 / nb30eRegime : FIXE_MENSUEL);
   // Scale par CSS : (nb30eR - cssDays) / nb30eR. Sans CSS = 1 (no-op).
   const fixeForFin  = (fullPrime ? fixeTPVal : fixeRegime) * cssScale;
-  // Le nb30e passé à monthlyFinancialsP n'a pas d'effet sur les valeurs qu'on
-  // garde (fixe, pv, primes) — on override hs/total/mga avec les bonnes formules.
-  const finBase = monthlyFinancialsP(totalHcr, totalPrime, totalTsvNuit, { pvei, ksp, fixe: fixeForFin, nb30e: nb30eEff });
-  // HS : nouvelle formule HS.FIXE + HS.VOL
-  // HS.FIXE = fixe × 1.25 / 75 (1/75e du fixe × 1.25)
-  // HS.VOL  = taux_moyen × 0.25 ; taux_moyen = PV€ / totalHC (HC, pas HCr)
-  const totalPv    = totalHcr + totalTsvNuit / 2;
-  const pvEur      = totalPv * pvei * ksp;
-  const tauxMoyen  = totalHc > 0 ? pvEur / totalHc : pvei * ksp;
-  const hsFixeRate = nb30eEff > 0 ? fixeForFin * 1.25 / 75 : 0;
-  const hsVolRate  = tauxMoyen * 0.25;
-  const hsSeuil    = 75 * (nb30eEff / 30);
-  const hsH        = Math.max(0, totalHc - hsSeuil);
-  const hsNew      = hsH * (hsFixeRate + hsVolRate);
+  // Calcul mensuel complet : HS (fixe + vol), MGA, DIF, total — cf finance.ts.
+  // total = fixe + pv + hs + dif (hors primes — primes mensuelles fixes ajoutées
+  // dans le brut plus bas via primesTotal).
+  const finBase = monthlyFinancialsP(totalHcr, totalHc, totalPrime, totalTsvNuit, { pvei, ksp, fixe: fixeForFin, nb30e: nb30eEff });
   // PRIME = bi-tronçon (sommée par vol via finBase.primes) + primes mensuelles
   // fixes (incit + A330 + instruction + Mai + Noël). monthlyFixedPrimes est calculé
   // en amont avec proration régime + boost 100% en juillet/août pour TAF*_10_12.
   const primesTotal = finBase.primes + monthlyFixedPrimes;
   const congeAmount = congeDays * (cngPv + cngHs);
-  // MGA = 85 × PVEI × (nb30eEff / 30) — plancher sur (PV + HS), abattu par
-  // congés (et CSS via nb30eBase). N'inclut PAS le fixe (cf optiP_DEF).
-  const mga      = 85 * (nb30eEff / 30) * pvei;
-  // DIF (top-up) = max(0, MGA − (PV + HS)). Compense la PV jusqu'au MGA, sans
-  // tenir compte du fixe ni des congés.
-  const difNew   = Math.max(0, mga - (finBase.pv + hsNew));
-  // TOTAL = FIXE + PV + HS + DIF (paie hors primes et hors congés)
-  // DIFF affichage = (PV + HS) − MGA : signé. Positif = au-dessus du MGA
-  //                  (rien à compenser) ; négatif = MGA a absorbé l'écart.
-  // BRUT : plancher MGA déjà appliqué via DIF dans totalNew → addition simple.
-  const totalNew = finBase.fixe + finBase.pv + hsNew + difNew;
-  const diffNew  = (finBase.pv + hsNew) - mga;
-  // IT (Indemnité Transport) ajoutée au BRUT comme IR/MF — calculée en amont
-  // par le caller selon profil.transport (Navigo = forfait mensuel ; Voiture =
-  // nbActivités × 2 × km_aller × indemnité_km, vol à cheval = 0.5/mois).
-  const brut     = totalNew + congeAmount + primesTotal + irMfEur + itEur;
+  // BRUT : plancher MGA déjà appliqué via DIF dans finBase.total → addition simple.
+  // IT (Indemnité Transport) ajoutée comme IR/MF — calculée en amont par le caller
+  // selon profil.transport (Navigo = forfait mensuel ; Voiture = nbActivités × 2
+  // × km_aller × indemnité_km, vol à cheval = 0.5/mois).
+  const brut = finBase.total + congeAmount + primesTotal + irMfEur + itEur;
   const fin = {
     ...finBase,
-    hs:     hsNew,
-    primes: primesTotal,
-    total:  totalNew,
-    mga,
-    dif:    difNew,
-    diff:   diffNew,
+    primes: primesTotal,  // remplace les primes bi-tronçon par le total (bi-tronçon + fixes mensuelles)
   };
   return {
     flights, onDays, congeDays, cssDays, totalHcr, totalHc, totalPrime, totalTsvNuit,
     fin, congeAmount, brut,
     totalA81, totalA81Net, cumulJoursRunning, plafondJours,
-    hsH, hsFixeRate, hsVolRate, hsSeuil,
+    hsH: finBase.hsH, hsFixeRate: finBase.hsFixeRate, hsVolRate: finBase.hsVolRate, hsSeuil: finBase.hsSeuil,
     flightBreakdown,
     solDays, simDays, solHcrEur, simHcrEur,
     cssScale,

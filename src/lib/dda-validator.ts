@@ -113,8 +113,22 @@ function refTo(item: CalendarItem): string {
 
 /** Catégorie DDA d'un item, ou null si exempt. */
 export function categoryOf(item: CalendarItem): DdaCategory | null {
-  if (item.kind === 'off')   return 'DDA_REPOS';
-  if (item.kind === 'conge') return 'CONGES';
+  if (item.kind === 'off')      return 'DDA_REPOS';
+  if (item.kind === 'conge')    return 'CONGES';
+  // CSS (congés sans solde) = traité comme CONGES pour les règles DDA.
+  if (item.kind === 'conge_ss') return 'CONGES';
+  // TAF = "Temps Alterné" (régime TAF7 notamment). La spec optiP_DEF parle
+  // de "CONGES/TA" partout — mêmes règles, mêmes seuils que CONGES.
+  if (item.kind === 'taf')      return 'CONGES';
+  // Exempts explicites : ces kinds occupent le calendrier mais ne participent
+  // ni à la dispersion ni aux violations de règles d'enchaînement.
+  // Marqués ELABO_SUIVI pour cohérence (même bucket que bid_category=elabo_suivi)
+  // — le validator filtre ELABO_SUIVI en amont (cf validateScenario).
+  if (item.kind === 'sim'
+   || item.kind === 'instr'
+   || item.kind === 'sol'
+   || item.kind === 'medical'
+   || item.kind === 'autre')    return 'ELABO_SUIVI';
   if (item.kind === 'flight') {
     if (item.bid_category === 'vol_p')       return 'VOL_P';
     if (item.bid_category === 'elabo_suivi') return 'ELABO_SUIVI';
@@ -184,7 +198,8 @@ export function validateScenario(
 ): Violation[] {
   // On filtre d'abord les items pertinents pour la validation : seuls les items
   // dont la catégorie est définie ET non exempte (ELABO_SUIVI) entrent dans
-  // l'analyse. Les autres (sim/sol/medical/instr/taf/autre) sont transparents.
+  // l'analyse. ELABO_SUIVI couvre sim/sol/medical/instr/autre + flights bid_category=elabo_suivi.
+  // (CSS et TAF sont bucketés en CONGES, donc validés normalement.)
   // Les spillovers (vols partis en M-1 et arrivant en M) SONT inclus : ils
   // peuvent former la 1ère moitié d'une violation cross-mois avec un item de M
   // (typique : JNB du 31/07 au 03/08 suivi d'un DDA REPOS le 08/08, le 1er

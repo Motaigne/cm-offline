@@ -13,7 +13,7 @@
 | PVEI | `PVEI` | Taux avion x (Bonus ATPL + Coef. CLasse) x Catégorie d'ancienneté | **112,70 €/h** (ce n'est pas une constante) | 
 | KSP | `KSP` | Coefficient valorisation avion LC | **1,07** |
 | Traitement fixe | `FIXE_MENSUEL` | Traitement mensuel fixe x CoefficientFonction x Echelon x nb30e / 30 | **1 826,66 €** (ce n'est pas une constante) |
-| Prime bi tronçon | `PRIME_BITRONCON` | 2,5 × PVEI | **281,75 €** (ce n'est pas une constante)|
+| Prime bi tronçon | `2.5 × PVEI` | 2,5 × PVEI | **281,75 €** (ce n'est pas une constante)|
 
 
 ---
@@ -136,7 +136,7 @@
 | Terme EP4 | Mon terme | Définition | Formule implémentée |
 |-----------|-----------|------------|---------------------|
 | Temps séjour | `tSej` | Durée séjour en heures | *(même que `ep4.tempsSej`)* | — |
-| tSej24 | `tSej24` | Tranche de jours (pas 0,5j) | `ceil((tSej + 0,25h) / 24 × 2) / 2` si ≥ 24h, sinon 0 | `computeTSej24(tSej)` |
+| tSej24 | `tSej24` | Tranche de jours (pas 0,5j) | `ceil(tSej / 24 × 2) / 2` si tSej ≥ 24h, sinon 0. L'appelant ajoute `TAXI_TSEJ_ADJUST_H` (0,25h) si sa source est block-only (catalogue/comparatif/calendrier). Pas d'ajout si données déjà ajustées (page A81 : signature `debut/fin_sejour_at` ou override utilisateur). | `computeTSej24(tSej)` |
 | Taux séjour | `tauxSej` | Taux lookup zone × durée | lookup matrice annexe (`article_81`) | `lookupTauxSej(data, zone, tSej)` |
 | Prime séjour | `montantPrimeSej` | Montant pour la rotation | `valeurJour × tauxSej × tSej24` | idem |
 | Prime séjour/j | `montantPrimeSejJour` | Montant unitaire (1 jour) | `valeurJour × tauxSej` | idem |

@@ -21,7 +21,8 @@ export interface SyncOp {
   op: 'add' | 'delete' | 'update' | 'update_bid' | 'update_meta'
     | 'add_note' | 'update_note' | 'delete_note'
     | 'a81_upsert_override' | 'a81_delete' | 'a81_restore'
-    | 'a81_save_plafond_exo';
+    | 'a81_save_plafond_exo'
+    | 'save_profile' | 'save_profile_version' | 'delete_profile_version';
   payload: string; // JSON
   created_at: number;
 }
@@ -311,11 +312,43 @@ export async function hydrateNotes(notes: UserNote[], month: string): Promise<vo
 
 // ─── Cache profil versionné ───────────────────────────────────────────────────
 
-/** Remplace le cache local des versions de profil avec celles passées. */
+/**
+ * Remplace le cache local par les versions serveur, mais préserve les rows
+ * pour lesquelles une op `save_profile_version` ou `delete_profile_version`
+ * est encore en attente (sinon l'hydration online écraserait les éditions
+ * offline avant qu'elles ne soient pushées). Même esprit que cacheA81Overrides.
+ */
 export async function cacheProfileVersions(versions: ProfileVersion[]): Promise<void> {
-  await db.transaction('rw', db.profile_versions, async () => {
+  await db.transaction('rw', db.profile_versions, db.sync_queue, async () => {
+    // 2 reads en parallèle dans la même tx — Dexie autorise les promesses
+    // concurrentes au sein d'une transaction.
+    const [pending, existing] = await Promise.all([
+      db.sync_queue.toArray(),
+      db.profile_versions.toArray(),
+    ]);
+    const pendingSaves = new Set<string>();
+    const pendingDeletes = new Set<string>();
+    for (const op of pending) {
+      if (op.op === 'save_profile_version') {
+        try {
+          const p = JSON.parse(op.payload) as { valid_from?: string };
+          if (p.valid_from) pendingSaves.add(p.valid_from);
+        } catch { /* skip */ }
+      } else if (op.op === 'delete_profile_version') {
+        try {
+          const p = JSON.parse(op.payload) as { valid_from?: string };
+          if (p.valid_from) pendingDeletes.add(p.valid_from);
+        } catch { /* skip */ }
+      }
+    }
+    const keptLocal = existing.filter(v => pendingSaves.has(v.valid_from));
+    const fromServer = versions
+      .filter(v => !pendingSaves.has(v.valid_from))   // override local-first
+      .filter(v => !pendingDeletes.has(v.valid_from)); // pas de résurrection
     await db.profile_versions.clear();
-    if (versions.length) await db.profile_versions.bulkPut(versions);
+    if (keptLocal.length || fromServer.length) {
+      await db.profile_versions.bulkPut([...keptLocal, ...fromServer]);
+    }
   });
 }
 
@@ -350,7 +383,10 @@ export async function loadAnnexeRowsLocal(): Promise<AnnexeRow[]> {
  */
 export async function cacheA81Overrides(overrides: A81OverrideLocal[]): Promise<void> {
   await db.transaction('rw', db.a81_overrides, db.sync_queue, async () => {
-    const pending = await db.sync_queue.toArray();
+    const [pending, existing] = await Promise.all([
+      db.sync_queue.toArray(),
+      db.a81_overrides.toArray(),
+    ]);
     const pendingInstIds = new Set<string>();
     for (const op of pending) {
       if (op.op === 'a81_upsert_override' || op.op === 'a81_delete' || op.op === 'a81_restore') {
@@ -360,7 +396,6 @@ export async function cacheA81Overrides(overrides: A81OverrideLocal[]): Promise<
         } catch { /* skip op malformée */ }
       }
     }
-    const existing = await db.a81_overrides.toArray();
     const keptLocal = existing.filter(o => pendingInstIds.has(o.pairing_instance_id));
     const fromServer = overrides.filter(o => !pendingInstIds.has(o.pairing_instance_id));
     await db.a81_overrides.clear();
@@ -379,7 +414,10 @@ export async function loadA81OverridesLocal(): Promise<A81OverrideLocal[]> {
 /** Préserve les années avec ops pending (même esprit que cacheA81Overrides). */
 export async function cacheA81YearData(rows: A81YearDataLocal[]): Promise<void> {
   await db.transaction('rw', db.a81_year_data, db.sync_queue, async () => {
-    const pending = await db.sync_queue.toArray();
+    const [pending, existing] = await Promise.all([
+      db.sync_queue.toArray(),
+      db.a81_year_data.toArray(),
+    ]);
     const pendingYears = new Set<number>();
     for (const op of pending) {
       if (op.op === 'a81_save_plafond_exo') {
@@ -389,7 +427,6 @@ export async function cacheA81YearData(rows: A81YearDataLocal[]): Promise<void> 
         } catch { /* skip */ }
       }
     }
-    const existing = await db.a81_year_data.toArray();
     const keptLocal = existing.filter(r => pendingYears.has(r.year));
     const fromServer = rows.filter(r => !pendingYears.has(r.year));
     await db.a81_year_data.clear();

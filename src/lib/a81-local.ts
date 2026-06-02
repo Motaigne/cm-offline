@@ -24,6 +24,7 @@ import {
   getPlafondJours,
   computeValeurJour,
   splitRotationAtMonth,
+  TAXI_TSEJ_ADJUST_H,
   type Article81Data,
 } from '@/lib/article81';
 import {
@@ -96,7 +97,8 @@ export async function computeA81CumulBeforeLocal(
     if (!name) continue;
     const tSej = tSejByInstId.get(it.pairing_instance_id as string);
     if (tSej == null) continue;
-    result.byScenarioBefore[name] += computeTSej24(tSej);
+    // r.temps_sej = block-to-block depuis le scraper, sans compensation taxi.
+    result.byScenarioBefore[name] += computeTSej24(tSej + TAXI_TSEJ_ADJUST_H);
   }
   return result;
 }

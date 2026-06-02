@@ -3,15 +3,18 @@
 //
 // Étapes :
 //  1. tSej     = temps entre 1er atterrissage rotation et dernier décollage.
-//                (= signature.temps_sej, déjà calculé par le scraper)
-//  2. tSej24   = ceil((tSej + 0.25) / 24, 0.5) si (tSej + 0.25) ≥ 24, sinon 0.
-//                (le +0.25 = 15 min réglementaires)
+//                Doit déjà inclure le taxi (roulage atterrissage + décollage,
+//                ~15 min) côté APPELANT. Deux cas :
+//                  - Données block-only (catalogue/comparatif/calendrier) :
+//                    ajouter `TAXI_TSEJ_ADJUST_H` à `signature.temps_sej`.
+//                  - Données A81 page (timestamps `debut/fin_sejour_at`) :
+//                    le taxi est DÉJÀ inclus via les offsets −5min/+10min
+//                    de `computeSejourOffsetsFromDetail`. Ne rien ajouter.
+//                    Idem pour les overrides utilisateur (heures réelles).
+//  2. tSej24   = ceil(tSej / 24, 0.5) si tSej ≥ 24, sinon 0.
 //  3. tauxSej  = lookup matrice (zone × seuil durée) en annexe.
 //  4. montantPrimeSej     = valeurJour × tauxSej × tSej24
 //  5. montantPrimeSejJour = valeurJour × tauxSej (montant pour 1 jour)
-//
-// Plafond annuel par régime : non implémenté pour l'instant (cf chunk
-// suivant — nécessite cumul cross-mois sur l'année).
 
 import type { Database } from '@/types/supabase';
 import type { PairingDetail } from '@/lib/scraper/types';
@@ -46,14 +49,21 @@ export interface Article81Result {
   zone: string | null;
 }
 
-const QUART_HEURE = 15 / 60; // 0.25h réglementaires
+/** Compensation taxi (roulage atterrissage + décollage) à appliquer par
+ *  l'appelant quand `tSej` est calculé à partir des heures BLOCK uniquement
+ *  (sans estimation atterrissage/décollage). Ne PAS ajouter quand `tSej`
+ *  vient de timestamps qui contiennent déjà cette compensation (signature
+ *  `debut/fin_sejour_at` via offsets −5min/+10min) ou d'overrides utilisateur
+ *  (heures réelles d'atterrissage/décollage saisies à la main). */
+export const TAXI_TSEJ_ADJUST_H = 15 / 60;
 
-/** tSej24 : tranche par 0.5j, arrondi supérieur, après ajout de 15 min. */
+/** tSej24 : tranche par 0.5j, arrondi supérieur. Conforme à la spec
+ *  (optiP_DEF.md) : `pour tSej ≥ 24, tSej24 = ceil(tSej/24 * 2)/2 ; sinon 0`.
+ *  L'appelant est responsable d'ajouter `TAXI_TSEJ_ADJUST_H` si sa source
+ *  de `tSej` n'inclut pas déjà le taxi (cf. doc en tête de fichier). */
 export function computeTSej24(tSej: number): number {
-  const adjusted = tSej + QUART_HEURE;
-  if (adjusted < 24) return 0;
-  // Arrondi supérieur à 0.5 près
-  return Math.ceil((adjusted / 24) * 2) / 2;
+  if (tSej < 24) return 0;
+  return Math.ceil((tSej / 24) * 2) / 2;
 }
 
 /** Parse "24h", "24" ou "24.5h" → 24, 24, 24.5. */
@@ -62,31 +72,32 @@ function parseDuree(s: string): number {
 }
 
 /** Lookup tauxSej dans la matrice. La grille est une fonction étagée : la
- *  tranche `duree=X` s'applique pour `adjusted ∈ [X, next_X)`. On retourne
- *  donc la plus GRANDE tranche dont `seuil ≤ adjusted` (= la marche à laquelle
- *  on appartient), pas la plus petite ≥ adjusted (l'ancienne logique tombait
+ *  tranche `duree=X` s'applique pour `tSej ∈ [X, next_X)`. On retourne donc
+ *  la plus GRANDE tranche dont `seuil ≤ tSej` (= la marche à laquelle on
+ *  appartient), pas la plus petite ≥ tSej (l'ancienne logique tombait
  *  systématiquement sur la tranche d'au-dessus — ex : 63h Afrique sortait
  *  160% (72h tier) au lieu de 140% (48h tier)).
- *  Renvoie null si tSej < seuil minimum (= durée non éligible à A81). */
+ *  Renvoie null si tSej < seuil minimum (= durée non éligible à A81).
+ *  Comme `computeTSej24`, c'est à l'appelant d'avoir injecté
+ *  `TAXI_TSEJ_ADJUST_H` si sa source est block-only. */
 export function lookupTauxSej(
   data: Article81Data | null | undefined,
   zone: string | null,
   tSej: number,
 ): number | null {
   if (!data || !zone) return null;
-  const adjusted = tSej + QUART_HEURE;
-  if (adjusted < (data.duree_min_h ?? 24)) return null;
+  if (tSej < (data.duree_min_h ?? 24)) return null;
 
   const sorted = [...data.rates]
     .map(r => ({ ...r, seuil: parseDuree(r.duree) }))
     .filter(r => r.seuil > 0)
     .sort((a, b) => a.seuil - b.seuil);
 
-  // Plus grande tranche dont seuil ≤ adjusted. Si adjusted dépasse tous les
-  // seuils, on retombe naturellement sur le dernier (chosen reste défini).
+  // Plus grande tranche dont seuil ≤ tSej. Si tSej dépasse tous les seuils,
+  // on retombe naturellement sur le dernier (chosen reste défini).
   let chosen: typeof sorted[number] | null = null;
   for (const r of sorted) {
-    if (r.seuil <= adjusted) chosen = r;
+    if (r.seuil <= tSej) chosen = r;
     else break;
   }
   return chosen?.taux[zone] ?? null;

@@ -6,7 +6,7 @@ import { getRotationsForMonth } from '@/app/actions/search';
 import { cacheRotations, loadRotationsFromDB, getCachedMonths } from '@/lib/local-db';
 import type { RotationSignature } from '@/app/actions/search';
 import { Ep4Detail } from './ep4-detail';
-import { computeArticle81 } from '@/lib/article81';
+import { computeArticle81, TAXI_TSEJ_ADJUST_H } from '@/lib/article81';
 import type { Article81Data } from '@/lib/article81';
 import { getPveiKspForMonth, getValeurJourForMonth, VALEUR_JOUR_DEFAULT, type AnnexeRow } from '@/lib/annexe';
 import type { ProfileVersion } from '@/app/actions/profile-version';
@@ -208,8 +208,9 @@ export function ComparatifClient({
 
   const a81 = useMemo(() => {
     if (!sig?.temps_sej || !sig.zone) return null;
+    // sig.temps_sej = block-to-block (scraper, sans taxi) — cf TAXI_TSEJ_ADJUST_H.
     return computeArticle81({
-      tSej: Number(sig.temps_sej),
+      tSej: Number(sig.temps_sej) + TAXI_TSEJ_ADJUST_H,
       zone: sig.zone,
       valeurJour,
       data: article81Data,

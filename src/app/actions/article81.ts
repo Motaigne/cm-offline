@@ -2,7 +2,7 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
-import { computeTSej24 } from '@/lib/article81';
+import { computeTSej24, TAXI_TSEJ_ADJUST_H } from '@/lib/article81';
 
 export interface YearA81Cumul {
   /** Somme tSej24 par scénario, AVANT le mois donné (Jan → mois-1). */
@@ -73,7 +73,8 @@ export async function getYearA81CumulBefore(year: number, month: number): Promis
     const tSej = sigTSejById.get(inst.signature_id);
     if (tSej == null) continue;
 
-    result.byScenarioBefore[name] += computeTSej24(tSej);
+    // sigs.temps_sej = block-to-block depuis le scraper, sans compensation taxi.
+    result.byScenarioBefore[name] += computeTSej24(tSej + TAXI_TSEJ_ADJUST_H);
   }
 
   return result;

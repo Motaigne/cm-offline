@@ -5,7 +5,7 @@ import { PVEI as PVEI_DEFAULT, KSP as KSP_DEFAULT } from '@/lib/finance';
 import { getRotationsForMonth } from '@/app/actions/search';
 import { cacheRotations, loadRotationsFromDB, getCachedMonths } from '@/lib/local-db';
 import { ReleasePublisher } from './release-publisher';
-import { computeArticle81 } from '@/lib/article81';
+import { computeArticle81, TAXI_TSEJ_ADJUST_H } from '@/lib/article81';
 import type { Article81Data } from '@/lib/article81';
 import { getPveiKspForMonth, getValeurJourForMonth, VALEUR_JOUR_DEFAULT, type AnnexeRow } from '@/lib/annexe';
 import type { ProfileVersion } from '@/app/actions/profile-version';
@@ -156,38 +156,49 @@ export function CatalogueTable({
     [profileVersions, annexeRows, currentMonth],
   );
 
+  // Enrichement + tri — coûteux (500+ rows × computeArticle81), mais ne dépend
+  // pas du filtre. Re-calculé seulement au changement de mois / profil / tri.
+  const enrichedSorted = useMemo(() => {
+    const enriched = sigs.map(s => {
+      const tsvNuit  = s.tsv_nuit ?? 0;
+      const prime    = s.prime ?? 0;
+      const pvH      = s.hcr_crew + tsvNuit / 2;
+      const montantPv = pvH * pvei * ksp;
+      const primeBT  = prime * 2.5 * pvei;
+      const totalEur = montantPv + primeBT;
+      // Article 81 — montant prime séjour + montant/jour, lookup zone × tSej en annexe
+      // s.temps_sej = block-to-block (scraper, sans taxi) — cf TAXI_TSEJ_ADJUST_H.
+      const a81 = (s.temps_sej != null && s.zone)
+        ? computeArticle81({ tSej: Number(s.temps_sej) + TAXI_TSEJ_ADJUST_H, zone: s.zone, valeurJour, data: article81Data })
+        : null;
+      const hcOn = s.nb_on_days > 0 ? s.hc / s.nb_on_days : 0;
+      return {
+        ...s,
+        pv_h: pvH, total_eur: totalEur, montant_pv: montantPv, prime_bt: primeBT,
+        hc_on: hcOn,
+        a81_brut: a81?.montantPrimeSej ?? 0,
+        a81_jour: a81?.montantPrimeSejJour ?? 0,
+      };
+    });
+    enriched.sort((a, b) => {
+      const va = a[sortKey as keyof typeof a] ?? '';
+      const vb = b[sortKey as keyof typeof b] ?? '';
+      if (va < vb) return sortDir === 'asc' ? -1 : 1;
+      if (va > vb) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+    return enriched;
+  }, [sigs, pvei, ksp, valeurJour, article81Data, sortKey, sortDir]);
+
+  // Filtrage uniquement — O(n), s'exécute à chaque keystroke du filtre sans
+  // jamais déclencher de recompute de computeArticle81.
   const rows = useMemo(() => {
     const q = filter.toLowerCase();
-    return sigs
-      .map(s => {
-        const tsvNuit  = s.tsv_nuit ?? 0;
-        const prime    = s.prime ?? 0;
-        const pvH      = s.hcr_crew + tsvNuit / 2;
-        const montantPv = pvH * pvei * ksp;
-        const primeBT  = prime * 2.5 * pvei;
-        const totalEur = montantPv + primeBT;
-        // Article 81 — montant prime séjour + montant/jour, lookup zone × tSej en annexe
-        const a81 = (s.temps_sej != null && s.zone)
-          ? computeArticle81({ tSej: Number(s.temps_sej), zone: s.zone, valeurJour, data: article81Data })
-          : null;
-        const hcOn = s.nb_on_days > 0 ? s.hc / s.nb_on_days : 0;
-        return {
-          ...s,
-          pv_h: pvH, total_eur: totalEur, montant_pv: montantPv, prime_bt: primeBT,
-          hc_on: hcOn,
-          a81_brut: a81?.montantPrimeSej ?? 0,
-          a81_jour: a81?.montantPrimeSejJour ?? 0,
-        };
-      })
-      .filter(s => !q || [s.rotation_code, s.zone, s.aircraft_code, s.first_layover].some(v => v?.toLowerCase().includes(q)))
-      .sort((a, b) => {
-        const va = a[sortKey as keyof typeof a] ?? '';
-        const vb = b[sortKey as keyof typeof b] ?? '';
-        if (va < vb) return sortDir === 'asc' ? -1 : 1;
-        if (va > vb) return sortDir === 'asc' ? 1 : -1;
-        return 0;
-      });
-  }, [sigs, sortKey, sortDir, filter, pvei, ksp, valeurJour, article81Data]);
+    if (!q) return enrichedSorted;
+    return enrichedSorted.filter(s =>
+      [s.rotation_code, s.zone, s.aircraft_code, s.first_layover].some(v => v?.toLowerCase().includes(q)),
+    );
+  }, [enrichedSorted, filter]);
 
   function monthLabel(m: string) {
     const [y, mo] = m.split('-').map(Number);

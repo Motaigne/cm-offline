@@ -101,10 +101,14 @@ async function precachePage(url: string): Promise<boolean> {
   try {
     const response = await fetch(url, { credentials: 'include', redirect: 'follow', cache: 'reload' });
     if (!response.ok) return false;
-    // Si l'on demande une page protégée et que le serveur a redirigé vers /login,
-    // ne pas cacher ce contenu sous l'URL d'origine. Mais autoriser le cache
-    // explicite de /login lui-même.
-    if (response.url.includes('/login') && !url.endsWith('/login')) return false;
+    // Si le serveur a redirigé vers /login (pas authentifié) ou /profil
+    // (profil pas encore créé), ne pas cacher la redirection sous l'URL
+    // d'origine — sinon l'utilisateur reste piégé après auth/setup du profil.
+    // Autoriser le cache explicite de /login et /profil eux-mêmes.
+    const redirectedAway =
+      (response.url.includes('/login')  && !url.endsWith('/login')) ||
+      (response.url.includes('/profil') && !url.endsWith('/profil'));
+    if (redirectedAway) return false;
     const ct = response.headers.get('content-type') ?? 'text/html; charset=utf-8';
     if (!ct.includes('html')) return false;
 
@@ -205,6 +209,22 @@ export function NavBar() {
         const targets: string[] = [...PAGES];
         for (const p of PAGES_MONTH) targets.push(`${p}?m=${currentMonth}`);
         for (const url of targets) { void precachePage(url); }
+
+        // Hydrate Dexie pour le mois courant : sans ça, premier offline après
+        // login = calendrier vide (loadScenariosForMonth retourne null tant
+        // que l'user n'a pas cliqué Sync). Best-effort, silencieux, parallèle.
+        void (async () => {
+          try {
+            const [scs, rots] = await Promise.all([
+              withTimeout(getScenariosWithItems(currentMonth), 8000, [] as Awaited<ReturnType<typeof getScenariosWithItems>>),
+              withTimeout(getRotationsForMonth(currentMonth, 'full'), 12000, [] as Awaited<ReturnType<typeof getRotationsForMonth>>),
+            ]);
+            await Promise.all([
+              scs.length ? hydrateDB(scs, currentMonth) : Promise.resolve(),
+              rots.length ? cacheRotations(rots, currentMonth) : Promise.resolve(),
+            ]);
+          } catch { /* silencieux : Sync explicite ré-essaiera */ }
+        })();
       }
     })();
     void getCurrentUserIsAdmin().then(setIsAdmin).catch(() => setIsAdmin(false));
