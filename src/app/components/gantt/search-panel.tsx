@@ -8,6 +8,7 @@ import { loadRotationsFromDB } from '@/lib/local-db';
 import { enqueueAdd, enqueueDelete } from '@/lib/sync-service';
 import { rotationValue } from '@/lib/finance';
 import { ACTIVITY_META, type BidCategory } from '@/lib/activity-meta';
+import { hardBlockerWindow } from '@/lib/rpc';
 
 const BID_LABEL: Record<BidCategory, string> = {
   dda_vol:     'DDA',
@@ -49,16 +50,13 @@ function endDateFromArrivee(arrivee_at: string): string {
   return arrivee_at.slice(0, 10);
 }
 
-const SOFT_BLOCKERS = new Set(['conge', 'conge_ss', 'taf']);
 const HARD_BLOCKERS = new Set(['sol', 'sim', 'medical', 'instr', 'autre']);
 
-/** Plage effective [start, end) en ms d'un item.
- *  - Vol : [depart_at, arrivee_at + rest_after_h × 3600s] (sans pause par
- *    congé/TAF, peu importe le mode — la pause par congé est traitée en
- *    couche au-dessus dans hasOverlap : le RPC d'un vol PEUT chevaucher
- *    un congé/TAF sans bloquer la pose, ce sont les autres vols et les
- *    hard blockers qui sont strictement incompatibles).
- *  - Autre : [start_date 00:00 UTC, end_date+1 00:00 UTC).  */
+/** Plage corps d'un item (sans RPC) en ms.
+ *  - Vol         : [depart_at, arrivee_at].
+ *  - Hard blocker: fenêtre d'occupation (8h-18h Paris pour sol/medical/autre,
+ *    jour entier pour sim/instr) via hardBlockerWindow.
+ *  - Autre       : [start_date 00:00 UTC, end_date+1 00:00 UTC). */
 function rawRangeMs(item: CalendarItem): [number, number] {
   if (item.kind === 'flight') {
     const meta = (item.meta && typeof item.meta === 'object' && !Array.isArray(item.meta))
@@ -66,28 +64,23 @@ function rawRangeMs(item: CalendarItem): [number, number] {
       : null;
     const depart  = typeof meta?.depart_at  === 'string' ? new Date(meta.depart_at).getTime()  : NaN;
     const arrivee = typeof meta?.arrivee_at === 'string' ? new Date(meta.arrivee_at).getTime() : NaN;
-    const restH   = typeof meta?.rest_after_h === 'number' ? meta.rest_after_h : 0;
     if (Number.isFinite(depart) && Number.isFinite(arrivee)) {
-      return [depart, arrivee + Math.max(0, restH) * 3_600_000];
+      return [depart, arrivee];
     }
   }
+  const w = hardBlockerWindow(item);
+  if (w) return [w.startMs, w.endMs];
   const startMs = new Date(item.start_date + 'T00:00:00Z').getTime();
   const endMs   = new Date(item.end_date   + 'T00:00:00Z').getTime() + 86_400_000;
   return [startMs, endMs];
 }
 
-/** Overlap simple par dates (sans RPC), conservé pour le mode legacy. */
-function _hasOverlap(items: CalendarItem[], start: string, end: string) {
-  return items.some(i => i.start_date <= end && i.end_date >= start);
-}
-
 /** Items en conflit avec le candidat (vol) :
- *    1. Dates calendaires qui se chevauchent (toujours bloquant).
- *    2. RPC qui chevauche un autre VOL → bloquant (RPC mutuels).
- *    3. RPC qui chevauche un HARD blocker (sol/sim/medical/instr/autre) →
- *       bloquant (ces activités ne peuvent jamais être chevauchées par le RPC).
- *  Le RPC qui chevauche un congé/TAF est AUTORISÉ (juste signalé par le
- *  flag visuel sur la barre de vol).  */
+ *    1. Vol↔vol : overlap calendaire OU overlap RPC ↔ corps de l'autre vol.
+ *    2. Vol↔hard blocker : overlap corps↔fenêtre du hard blocker (8h-18h pour
+ *       sol/medical/autre, jour entier pour sim/instr). Le chevauchement RPC
+ *       seul ne bloque PLUS — il sera juste rendu en rouge dans le gantt.
+ *    3. Congé/TAF/CSS : jamais bloquants (RPC peut les chevaucher partiellement). */
 function getConflictingItems(
   items: CalendarItem[],
   candDepartAt: string,
@@ -96,19 +89,26 @@ function getConflictingItems(
 ): CalendarItem[] {
   const candStart = candDepartAt.slice(0, 10);
   const candEnd   = candArriveeAt.slice(0, 10);
-  const candStartMs = new Date(candDepartAt).getTime();
+  const candDepartMs  = new Date(candDepartAt).getTime();
   const candArriveeMs = new Date(candArriveeAt).getTime();
-  const candRpcEndMs = candArriveeMs + Math.max(0, candRestAfterH ?? 0) * 3_600_000;
+  const candRpcEndMs  = candArriveeMs + Math.max(0, candRestAfterH ?? 0) * 3_600_000;
   return items.filter(i => {
     // Spillovers (vols à cheval issus du mois précédent) : non supprimables ici.
     if (i._isSpillover) return false;
-    // 1. Date overlap → toujours bloquant.
-    if (i.start_date <= candEnd && i.end_date >= candStart) return true;
-    // 2. RPC overlap → bloquant uniquement vs vol ou hard blocker.
-    if (i.kind !== 'flight' && !HARD_BLOCKERS.has(i.kind)) return false;
-    if (SOFT_BLOCKERS.has(i.kind)) return false;
-    const [iStart, iEnd] = rawRangeMs(i);
-    return iStart < candRpcEndMs && candStartMs < iEnd;
+    if (i.kind === 'flight') {
+      // Vol↔vol : date overlap OU corps vs RPC d'autrui.
+      if (i.start_date <= candEnd && i.end_date >= candStart) return true;
+      const [iStart, iEnd] = rawRangeMs(i);
+      return iStart < candRpcEndMs && candDepartMs < iEnd;
+    }
+    if (HARD_BLOCKERS.has(i.kind)) {
+      // Seul l'overlap entre le CORPS du vol et la fenêtre du hard blocker
+      // bloque. L'overlap RPC↔hard blocker est désormais autorisé (signal rouge).
+      const [iStart, iEnd] = rawRangeMs(i);
+      return iStart < candArriveeMs && candDepartMs < iEnd;
+    }
+    // Soft blockers (conge / taf / conge_ss) : jamais bloquants ici.
+    return false;
   });
 }
 

@@ -37,7 +37,7 @@ import { computeA81CumulBeforeLocal } from '@/lib/a81-local';
 import { computeFullProfile, getAnnexeDataFromRows, type AnnexeData, type AnnexeRow } from '@/lib/annexe';
 import type { ProfileVersion } from '@/app/actions/profile-version';
 import { computeMonthlyIrMfFromLocalCache } from '@/lib/ir-mf-local';
-import { computeEffectiveRpc } from '@/lib/rpc';
+import { computeEffectiveRpc, hardBlockerWindow } from '@/lib/rpc';
 import { enqueueAddNote, enqueueUpdateNote, enqueueDeleteNote } from '@/lib/sync-service';
 import { listNotesForMonth, type UserNote } from '@/app/actions/notes';
 import { NavBar } from '@/app/components/nav';
@@ -540,12 +540,28 @@ function DraggableBar({
   // Sub-day precision for flights with timestamps, integer days for others
   let leftPct: number, wPct: number;
   let restBeforeBar: { left: number; width: number } | null = null;
+  const restBeforeHardBars: { left: number; width: number }[] = [];
   // Post-RPC : N segments solides + M pauses (mode chevauchement).
   // En mode OFF, 1 segment d'origine + hasRpcConflict = true si un jour
   // entier de congé/TAF est dans le RPC (déclenche le flag visuel).
   const restAfterSegments: { left: number; width: number }[] = [];
   const restAfterPauses:   { left: number; width: number }[] = [];
+  const restAfterHardBars: { left: number; width: number }[] = [];
   let hasRpcConflict = false;
+  let hasHardConflict = false;
+
+  // Helper utilisé pour convertir un intervalle UTC ms en barre relative au mois.
+  const segToBar = (startMs: number, endMs: number): { left: number; width: number } | null => {
+    const sFrac = dayFrac(new Date(startMs).toISOString(), year, mo, dim);
+    const eFrac = dayFrac(new Date(endMs).toISOString(),   year, mo, dim);
+    const sClamped = Math.max(sFrac, 1);
+    const eClamped = Math.min(eFrac, dim + 1);
+    if (eClamped <= sClamped) return null;
+    const sLeft  = (sClamped - 1) / dim * 100;
+    const sWidth = (eClamped - sClamped) / dim * 100;
+    if (sWidth < 0.05) return null;
+    return { left: sLeft, width: sWidth };
+  };
 
   if (item.kind === 'flight' && departAt && arriveeAt) {
     const startFrac = dayFrac(departAt,  year, mo, dim);
@@ -563,24 +579,26 @@ function DraggableBar({
       const rLeft = Math.max(0, (rFrac - 1) / dim * 100);
       const rW    = leftPct - rLeft;
       if (rW > 0.05) restBeforeBar = { left: rLeft, width: rW };
+      // Chevauchement éventuel avec une fenêtre hard blocker → bandes rouges.
+      const preStartMs = new Date(preStartIso).getTime();
+      const departMs   = new Date(departAt).getTime();
+      for (const other of scenarioItems) {
+        if (other.id === item.id) continue;
+        const w = hardBlockerWindow(other);
+        if (!w) continue;
+        const a = Math.max(preStartMs, w.startMs);
+        const b = Math.min(departMs,   w.endMs);
+        if (b > a) {
+          const bar = segToBar(a, b);
+          if (bar) restBeforeHardBars.push(bar);
+        }
+      }
     }
 
     // Barres post-RPC : computeEffectiveRpc tient compte des congés/TAF
-    // (selon mode chevauchement) et des hard blockers (sol/sim/etc qui
-    // tronquent). Renvoie 1+ segments ; on en dérive aussi les pauses
-    // visuelles (intervalles entre segments dans le même mois).
+    // (selon mode chevauchement) et expose les segments hardConflict (rouges)
+    // pour les portions chevauchant une fenêtre sol/medical/autre/sim/instr.
     const eff = computeEffectiveRpc(item, scenarioItems, rpcChevauchement);
-    const segToBar = (startMs: number, endMs: number): { left: number; width: number } | null => {
-      const sFrac = dayFrac(new Date(startMs).toISOString(), year, mo, dim);
-      const eFrac = dayFrac(new Date(endMs).toISOString(),   year, mo, dim);
-      const sClamped = Math.max(sFrac, 1);
-      const eClamped = Math.min(eFrac, dim + 1);
-      if (eClamped <= sClamped) return null;
-      const sLeft  = (sClamped - 1) / dim * 100;
-      const sWidth = (eClamped - sClamped) / dim * 100;
-      if (sWidth < 0.05) return null;
-      return { left: sLeft, width: sWidth };
-    };
     for (const seg of eff.segments) {
       const bar = segToBar(seg.startMs, seg.endMs);
       if (bar) restAfterSegments.push(bar);
@@ -589,7 +607,27 @@ function DraggableBar({
       const bar = segToBar(p.startMs, p.endMs);
       if (bar) restAfterPauses.push(bar);
     }
-    hasRpcConflict = eff.hasConflict && !rpcChevauchement;
+    for (const hc of eff.hardConflict) {
+      const bar = segToBar(hc.startMs, hc.endMs);
+      if (bar) restAfterHardBars.push(bar);
+    }
+    hasRpcConflict  = eff.hasConflict && !rpcChevauchement;
+    hasHardConflict = eff.hardConflict.length > 0 || restBeforeHardBars.length > 0;
+  } else if ((item.kind === 'sol' || item.kind === 'medical' || item.kind === 'autre')) {
+    // 8h-18h Paris : fenêtre temporelle au sein du jour (au lieu du jour entier).
+    const w = hardBlockerWindow(item);
+    if (w) {
+      const sFrac = dayFrac(new Date(w.startMs).toISOString(), year, mo, dim);
+      const eFrac = dayFrac(new Date(w.endMs).toISOString(),   year, mo, dim);
+      const sClamped = Math.max(sFrac, 1);
+      const eClamped = Math.min(eFrac, dim + 1);
+      leftPct = Math.max(0, (sClamped - 1) / dim * 100);
+      wPct    = Math.max(0.3, (eClamped - sClamped) / dim * 100);
+    } else {
+      const span = clip.end - clip.start + 1;
+      leftPct = ((clip.start - 1) / dim) * 100;
+      wPct    = (span / dim) * 100;
+    }
   } else {
     const span = clip.end - clip.start + 1;
     leftPct = ((clip.start - 1) / dim) * 100;
@@ -614,6 +652,22 @@ function DraggableBar({
           }}
         />
       )}
+      {/* Overlay rouge sur la portion du repos pré-courrier qui chevauche un
+          hard blocker (sol/medical/autre 8h-18h, sim/instr jour entier). */}
+      {restBeforeHardBars.map((seg, i) => (
+        <div
+          key={`rest-before-hard-${i}`}
+          className="absolute pointer-events-none z-[12] rounded-sm"
+          style={{
+            left: `${seg.left}%`,
+            width: `${seg.width}%`,
+            top: restTop,
+            height: REST_H,
+            backgroundColor: '#DC2626',
+            opacity: isDragSource ? 0.3 : 0.85,
+          }}
+        />
+      ))}
 
       {/* Post-repos : N segments solides (pleins) + M pauses (pointillés
           au-dessus des congés/TAF traversés en mode chevauchement).
@@ -648,12 +702,39 @@ function DraggableBar({
           }}
         />
       ))}
+      {/* Overlay rouge sur la portion du RPC qui chevauche un hard blocker. */}
+      {restAfterHardBars.map((seg, i) => (
+        <div
+          key={`rest-hard-${i}`}
+          className="absolute pointer-events-none z-[12] rounded-sm"
+          style={{
+            left: `${seg.left}%`,
+            width: `${seg.width}%`,
+            top: restTop,
+            height: REST_H,
+            backgroundColor: '#DC2626',
+            opacity: isDragSource ? 0.3 : 0.85,
+          }}
+        />
+      ))}
       {hasRpcConflict && restAfterSegments.length > 0 && (
         <span
           className="absolute pointer-events-none z-[12] text-amber-500 text-[10px] font-bold leading-none"
           title="RPC en conflit avec un congé/TAF (jour entier). Active Chevauchement pour reporter le RPC, ou retire le congé."
           style={{
             left: `calc(${restAfterSegments[0].left}% - 2px)`,
+            top: `calc(50% - ${REST_H / 2 + 8}px)`,
+          }}
+        >
+          ⚠
+        </span>
+      )}
+      {hasHardConflict && (restAfterHardBars.length > 0 || restBeforeHardBars.length > 0) && (
+        <span
+          className="absolute pointer-events-none z-[13] text-red-600 text-[10px] font-bold leading-none"
+          title="Le RPC ou le repos pré-courrier chevauche une activité sol/médicale/sim/instruction. Vol autorisé, mais à signaler."
+          style={{
+            left: `calc(${(restAfterHardBars[0] ?? restBeforeHardBars[0]).left}% - 2px)`,
             top: `calc(50% - ${REST_H / 2 + 8}px)`,
           }}
         >

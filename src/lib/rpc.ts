@@ -15,8 +15,12 @@
 //   au sein du RPC le décale de 24h. Cascade : si l'extension englobe un
 //   nouveau jour de congé/TAF, on continue.
 //
-// Hard blockers (sol / sim / medical / instr / autre) : ne peuvent JAMAIS
-// être chevauchés. Le RPC est tronqué au début du 1er hard blocker rencontré.
+// Hard blockers (sol / sim / medical / instr / autre) : ne tronquent PLUS le
+// RPC. Si le RPC les chevauche, on expose un segment hardConflict (rendu rouge
+// par l'UI + alerte). Le placement reste autorisé. Fenêtre d'occupation :
+//   - sol/medical/autre → 8h-18h Paris
+//   - sim/instr         → jour entier
+// (voir hardBlockerWindow).
 
 import type { CalendarItem } from '@/app/page';
 
@@ -27,8 +31,6 @@ export type EffectiveRpc = {
   segments: RpcSegment[];
   /** Fin effective du RPC (= dernier endMs des segments). 0 si pas de RPC. */
   endMs: number;
-  /** True si le calcul a été tronqué par un hard blocker (sol/sim/...). */
-  truncated: boolean;
   /** True si au moins une journée entière de congé/TAF est dans le RPC.
    *  En mode OFF c'est le déclencheur du flag visuel ; en mode ON c'est
    *  juste informatif (les pauses sont déjà dans segments). */
@@ -37,23 +39,98 @@ export type EffectiveRpc = {
    *  positionner les pauses pointillées en mode ON. Vide en OFF même si
    *  hasConflict. */
   pauseIntervals: RpcSegment[];
+  /** Portions du RPC qui chevauchent une fenêtre d'occupation d'un hard
+   *  blocker (sol/medical/autre 8h-18h Paris, sim/instr jour entier).
+   *  Rendues en rouge par l'UI avec une icône d'alerte. */
+  hardConflict: RpcSegment[];
 };
 
 // Soft blockers : RPC peut les chevaucher (pause/resume en mode ON, flag en
 // mode OFF). CSS suit la même logique que conge (jour non travaillé).
 const BLOCKING_KINDS = new Set(['conge', 'conge_ss', 'taf']);
-const HARD_BLOCKERS = new Set(['sol', 'sim', 'medical', 'instr', 'autre']);
+export const HARD_BLOCKERS = new Set(['sol', 'sim', 'medical', 'instr', 'autre']);
+// Hard blockers à fenêtre journalière 8h-18h Paris. Les autres (sim, instr)
+// gardent une représentation jour entier.
+const PARIS_DAY_HARD_BLOCKERS = new Set(['sol', 'medical', 'autre']);
 
-/** Trouve le 1er hard blocker (sol/sim/...) à partir de `from`. Renvoie son
- *  startMs ou +∞ si aucun. */
-function nextHardBlockerStart(from: number, items: CalendarItem[]): number {
-  let min = Number.POSITIVE_INFINITY;
-  for (const item of items) {
-    if (!HARD_BLOCKERS.has(item.kind)) continue;
-    const startMs = new Date(item.start_date + 'T00:00:00Z').getTime();
-    if (startMs >= from && startMs < min) min = startMs;
+// ─── Paris time helpers ──────────────────────────────────────────────────────
+// Convertit une heure locale Paris (gère CEST/CET automatiquement via Intl)
+// vers un timestamp UTC ms. Utilisé pour positionner les fenêtres 8h-18h des
+// hard blockers indépendamment du fuseau du serveur/client.
+
+function parisOffsetMinutes(utcMs: number): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Paris',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date(utcMs));
+  const find = (t: string) => Number(parts.find(p => p.type === t)?.value ?? 0);
+  const parisAsUtc = Date.UTC(
+    find('year'), find('month') - 1, find('day'),
+    find('hour') % 24, find('minute'), find('second'),
+  );
+  return Math.round((parisAsUtc - utcMs) / 60_000);
+}
+
+/** Convertit "YYYY-MM-DD HH:00" en heure de Paris vers un timestamp UTC ms.
+ *  Une passe de correction suffit (DST ne saute jamais entre 8h et 18h). */
+export function parisHourToUtcMs(dateStr: string, hour: number): number {
+  const y  = Number(dateStr.slice(0, 4));
+  const m  = Number(dateStr.slice(5, 7));
+  const d  = Number(dateStr.slice(8, 10));
+  const naive = Date.UTC(y, m - 1, d, hour, 0, 0);
+  const offset = parisOffsetMinutes(naive);
+  return naive - offset * 60_000;
+}
+
+/** Fenêtre d'occupation d'un item considéré comme "hard blocker".
+ *  - sol/medical/autre : 8h-18h Paris (10h, payés 4 HCr).
+ *  - sim/instr         : jour entier [start_date 00:00 UTC, end_date+1 00:00 UTC[.
+ *  Retourne null si kind ∉ HARD_BLOCKERS. */
+export function hardBlockerWindow(item: CalendarItem): { startMs: number; endMs: number } | null {
+  if (!HARD_BLOCKERS.has(item.kind)) return null;
+  if (PARIS_DAY_HARD_BLOCKERS.has(item.kind)) {
+    // Mono-jour 8h-18h Paris. Si end_date > start_date (rare), on étire jusqu'au
+    // 18h Paris du dernier jour.
+    return {
+      startMs: parisHourToUtcMs(item.start_date, 8),
+      endMs:   parisHourToUtcMs(item.end_date,   18),
+    };
   }
-  return min;
+  // sim / instr : jour entier
+  return {
+    startMs: new Date(item.start_date + 'T00:00:00Z').getTime(),
+    endMs:   new Date(item.end_date   + 'T00:00:00Z').getTime() + 86_400_000,
+  };
+}
+
+/** Collecte les fenêtres d'occupation des hard blockers qui peuvent croiser
+ *  une plage temporelle donnée. Utilisé pour détecter les zones rouges du RPC. */
+function collectHardBlockerWindows(items: CalendarItem[]): RpcSegment[] {
+  const out: RpcSegment[] = [];
+  for (const item of items) {
+    const w = hardBlockerWindow(item);
+    if (w && w.endMs > w.startMs) out.push(w);
+  }
+  return out.sort((a, b) => a.startMs - b.startMs);
+}
+
+/** Intersecte une liste de segments avec une liste de fenêtres (hard blockers).
+ *  Renvoie les portions de segments couvertes par au moins une fenêtre. */
+function intersectSegmentsWithWindows(
+  segments: RpcSegment[],
+  windows: RpcSegment[],
+): RpcSegment[] {
+  const out: RpcSegment[] = [];
+  for (const s of segments) {
+    for (const w of windows) {
+      const a = Math.max(s.startMs, w.startMs);
+      const b = Math.min(s.endMs,   w.endMs);
+      if (b > a) out.push({ startMs: a, endMs: b });
+    }
+  }
+  return out.sort((a, b) => a.startMs - b.startMs);
 }
 
 /** Décompose les items congé/TAF en jours individuels (un objet par 24h).
@@ -90,8 +167,8 @@ export function computeEffectiveRpc(
   chevauchement: boolean,
 ): EffectiveRpc {
   const empty: EffectiveRpc = {
-    segments: [], endMs: 0, truncated: false,
-    hasConflict: false, pauseIntervals: [],
+    segments: [], endMs: 0,
+    hasConflict: false, pauseIntervals: [], hardConflict: [],
   };
   if (flight.kind !== 'flight') return empty;
   const meta = (flight.meta && typeof flight.meta === 'object' && !Array.isArray(flight.meta))
@@ -110,9 +187,9 @@ export function computeEffectiveRpc(
     : restH * 3_600_000;
   if (restMs <= 0) return empty;
 
-  const others    = items.filter(it => it.id !== flight.id);
-  const hardLimit = nextHardBlockerStart(arrivee, others);
-  const origEnd   = arrivee + restMs;
+  const others        = items.filter(it => it.id !== flight.id);
+  const hardWindows   = collectHardBlockerWindows(others);
+  const origEnd       = arrivee + restMs;
 
   // Itère : pour chaque jour entier de congé/TAF couvert par le RPC (de plus
   // en plus étendu), on l'ajoute à pauses et on décale endMs de 24h. Cascade
@@ -137,27 +214,32 @@ export function computeEffectiveRpc(
   }
   pausedDays.sort((a, b) => a.startMs - b.startMs);
 
-  // Mode OFF : pas de shift. Retourne le RPC d'origine + flag conflit.
+  // Mode OFF : pas de shift. Retourne le RPC d'origine + flag conflit + zones
+  // de chevauchement avec hard blockers (rouges).
   if (!chevauchement) {
-    const cappedEnd = Math.min(origEnd, hardLimit);
+    const segments: RpcSegment[] = origEnd > arrivee
+      ? [{ startMs: arrivee, endMs: origEnd }]
+      : [];
     return {
-      segments: cappedEnd > arrivee ? [{ startMs: arrivee, endMs: cappedEnd }] : [],
-      endMs: cappedEnd,
-      truncated: cappedEnd < origEnd,
+      segments,
+      endMs: origEnd,
       hasConflict: pausedDays.length > 0,
       pauseIntervals: [],
+      hardConflict: intersectSegmentsWithWindows(segments, hardWindows),
     };
   }
 
-  // Mode ON : pas de conflit (rien à signaler) → RPC normal.
+  // Mode ON : pas de conflit (rien à signaler) → RPC normal + zones rouges.
   if (pausedDays.length === 0) {
-    const cappedEnd = Math.min(origEnd, hardLimit);
+    const segments: RpcSegment[] = origEnd > arrivee
+      ? [{ startMs: arrivee, endMs: origEnd }]
+      : [];
     return {
-      segments: cappedEnd > arrivee ? [{ startMs: arrivee, endMs: cappedEnd }] : [],
-      endMs: cappedEnd,
-      truncated: cappedEnd < origEnd,
+      segments,
+      endMs: origEnd,
       hasConflict: false,
       pauseIntervals: [],
+      hardConflict: intersectSegmentsWithWindows(segments, hardWindows),
     };
   }
 
@@ -170,36 +252,20 @@ export function computeEffectiveRpc(
     else pauseIntervals.push({ startMs: d.startMs, endMs: d.endMs });
   }
 
-  const rawSegments: RpcSegment[] = [];
+  const segments: RpcSegment[] = [];
   let cursor = arrivee;
   for (const p of pauseIntervals) {
-    if (p.startMs > cursor) rawSegments.push({ startMs: cursor, endMs: p.startMs });
+    if (p.startMs > cursor) segments.push({ startMs: cursor, endMs: p.startMs });
     cursor = p.endMs;
   }
-  if (extendedEnd > cursor) rawSegments.push({ startMs: cursor, endMs: extendedEnd });
-
-  // Truncation par hard blocker
-  const segments: RpcSegment[] = [];
-  let truncated = false;
-  for (const s of rawSegments) {
-    if (s.startMs >= hardLimit) { truncated = true; continue; }
-    const cappedEnd = Math.min(s.endMs, hardLimit);
-    if (cappedEnd > s.startMs) segments.push({ startMs: s.startMs, endMs: cappedEnd });
-    if (cappedEnd < s.endMs) truncated = true;
-  }
-  // Pause intervals tronqués aussi
-  const trimmedPauses: RpcSegment[] = [];
-  for (const p of pauseIntervals) {
-    if (p.startMs >= hardLimit) continue;
-    trimmedPauses.push({ startMs: p.startMs, endMs: Math.min(p.endMs, hardLimit) });
-  }
+  if (extendedEnd > cursor) segments.push({ startMs: cursor, endMs: extendedEnd });
 
   const endMs = segments.length > 0 ? segments[segments.length - 1].endMs : arrivee;
   return {
     segments,
     endMs,
-    truncated,
     hasConflict: true,
-    pauseIntervals: trimmedPauses,
+    pauseIntervals,
+    hardConflict: intersectSegmentsWithWindows(segments, hardWindows),
   };
 }
