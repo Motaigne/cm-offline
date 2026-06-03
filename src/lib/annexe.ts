@@ -246,9 +246,9 @@ export function computeFullProfile(
   const role  = toRole(fonction);
   const pi    = a.prime_incitation.find(r => r.role === role && r.type === primeIncitationType)?.montant ?? 0;
   const primeBiTroncon = 2.5 * pvei;
-  // MGA = 85 × PVEI × (nb30e/30) — plancher sur PV+HS, sans fixe (optiP_DEF).
-  const mga   = 85 * (nb30e / 30) * pvei;
-  const mgaTP = 85 * pvei;
+  // MGA = 85 × PVEI × KSP × (nb30e/30) — plancher sur PV+HS, sans fixe (optiP_DEF).
+  const mga   = 85 * pvei * KSP * (nb30e / 30);
+  const mgaTP = 85 * pvei * KSP;
   // SMMG = Salaire Minimum Mensuel Garanti = fixe + MGA (cf. optiP_DEF).
   const smmg   = fixe   + mga;
   const smmgTP = fixeTP + mgaTP;

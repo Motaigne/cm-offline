@@ -702,14 +702,14 @@ export function ProfilForm({
             <ValueCard label="Traitement fixe"  value={`${computed.fixe.toFixed(2)} €`}           color="zinc"
               formula="Fixe × Coef(FO/CDB) × Echelon × 30e" />
             <ValueCard label="MGA"              value={`${computed.mga.toFixed(2)} €`}            color="violet"
-              formula="85 × PVEI × (30e/30)" />
+              formula="85 × PVEI × KSP × (30e/30)" />
 
             {/* Row 3 : SMMG TP · T.Fixe TP · MGA TP (temps plein théorique) */}
             <ValueCard label="SMMG temps plein"    value={`${computed.smmgTP.toFixed(2)} €`}          color="violet"
               formula="T.Fixe TP + MGA TP" />
             <ValueCard label="T. Fixe temps plein" value={`${computed.fixeTP.toFixed(2)} €`}          color="zinc"   />
             <ValueCard label="MGA temps plein"     value={`${computed.mgaTP.toFixed(2)} €`}           color="violet"
-              formula="85 × PVEI" />
+              formula="85 × PVEI × KSP" />
 
             {/* Row 4 : Prime bi-tronçon · Prime d'incitation · Valeur Jour A81 */}
             <ValueCard label="Prime bi-tronçon" value={`${computed.primeBiTroncon.toFixed(2)} €`} color="amber"

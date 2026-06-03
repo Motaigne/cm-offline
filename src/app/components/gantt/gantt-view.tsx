@@ -1194,9 +1194,9 @@ export function GanttView({
     // HS : breakdown
     totalHc: number; seuil75: number; hsH: number; hsEur: number;
     hsFixeRate: number; hsVolRate: number;
-    // PV+HS / MGA / DIFF — pveiEff & nb30eEff servent à afficher la formule MGA
+    // PV+HS / MGA / DIFF — pveiEff, kspEff & nb30eEff servent à afficher la formule MGA
     fixeForFin: number; totalNew: number; mga: number; diff: number;
-    pveiEff: number; nb30eEff: number;
+    pveiEff: number; kspEff: number; nb30eEff: number;
     // Primes (déjà ventilées) + congés + IR/MF
     totalPrime: number; bitronconEur: number;
     incitation: number; a330: number; instruction: number;
@@ -2042,7 +2042,7 @@ export function GanttView({
                           hsFixeRate: stats.hsFixeRate, hsVolRate: stats.hsVolRate,
                           fixeForFin: fixeFF,
                           totalNew: stats.fin.total, mga: stats.fin.mga, diff: stats.fin.diff,
-                          pveiEff, nb30eEff: stats.nb30eEff,
+                          pveiEff, kspEff, nb30eEff: stats.nb30eEff,
                           totalPrime: stats.totalPrime, bitronconEur: bitroncon,
                           incitation: incitCount * (finBaseState?.primeIncitationUnit ?? primeIncitationUnit),
                           a330: (finBaseState?.primeA330 ?? primeA330) * boost * stats.cssScale,
@@ -2906,7 +2906,7 @@ export function GanttView({
               </div>
               <div className="flex items-baseline justify-between gap-1">
                 <span className="text-zinc-500">
-                  MGA <span className="text-[8px] text-zinc-400 dark:text-zinc-500">(85 × {detailPanel.pveiEff.toFixed(2)}) × ({detailPanel.nb30eEff}/30)</span>
+                  MGA <span className="text-[8px] text-zinc-400 dark:text-zinc-500">(85 × {detailPanel.pveiEff.toFixed(2)} × {detailPanel.kspEff}) × ({detailPanel.nb30eEff}/30)</span>
                 </span>
                 <span className="text-zinc-600 dark:text-zinc-300">{Math.round(detailPanel.mga)}</span>
               </div>

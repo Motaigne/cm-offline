@@ -18,7 +18,7 @@ export interface FinanceProfile {
  *   hsFixeRate = tFixe × 1.25 / 75                  (0 si nb30e=0)
  *   hsVolRate  = tauxMoyen × 0.25
  *   hs         = hsH × (hsFixeRate + hsVolRate)     ← composante FIXE + VOL
- *   mga        = 85 × PVEI × (nb30e/30)             (n'inclut PAS le fixe)
+ *   mga        = 85 × PVEI × KSP × (nb30e/30)       (n'inclut PAS le fixe)
  *   dif        = max(0, mga − (pv + hs))            (top-up jusqu'au MGA)
  *   diff       = (pv + hs) − mga                    (affichage signé)
  *   total      = fixe + pv + hs + dif               (hors primes — ajoutées au brut séparément)
@@ -42,7 +42,7 @@ export function monthlyFinancialsP(
   const hsFixeRate = p.nb30e > 0 ? p.fixe * 1.25 / 75 : 0;
   const hsVolRate  = tauxMoyen * 0.25;
   const hs         = hsH * (hsFixeRate + hsVolRate);
-  const mga        = 85 * (p.nb30e / 30) * p.pvei;
+  const mga        = 85 * p.pvei * p.ksp * (p.nb30e / 30);
   const dif        = Math.max(0, mga - (pv + hs));
   const diff       = (pv + hs) - mga;
   const total      = p.fixe + pv + hs + dif;
