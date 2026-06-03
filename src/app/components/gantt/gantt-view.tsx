@@ -2904,14 +2904,11 @@ export function GanttView({
                 <span className="text-zinc-700 dark:text-zinc-200">PV + HS</span>
                 <span className="text-zinc-900 dark:text-zinc-100 font-bold">{Math.round(detailPanel.pvEur + detailPanel.hsEur)}</span>
               </div>
-              <div>
-                <div className="flex items-baseline justify-between">
-                  <span className="text-zinc-500">MGA</span>
-                  <span className="text-zinc-600 dark:text-zinc-300">{Math.round(detailPanel.mga)}</span>
-                </div>
-                <div className="text-[8px] text-zinc-400 dark:text-zinc-500 pl-2">
-                  (85 × {detailPanel.pveiEff.toFixed(2)}) × ({detailPanel.nb30eEff}/30)
-                </div>
+              <div className="flex items-baseline justify-between gap-1">
+                <span className="text-zinc-500">
+                  MGA <span className="text-[8px] text-zinc-400 dark:text-zinc-500">(85 × {detailPanel.pveiEff.toFixed(2)}) × ({detailPanel.nb30eEff}/30)</span>
+                </span>
+                <span className="text-zinc-600 dark:text-zinc-300">{Math.round(detailPanel.mga)}</span>
               </div>
               <div className="flex items-baseline justify-between">
                 <span className={detailPanel.diff < 0 ? 'text-red-500' : 'text-emerald-500'}>
