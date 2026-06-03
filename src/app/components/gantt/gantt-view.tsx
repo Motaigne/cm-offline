@@ -26,7 +26,7 @@ import { createClient } from '@/lib/supabase/client';
 import { hydrateDB, loadFromDB, hasPendingOps, loadScenariosForMonth, cacheRotations, purgeScenarios, hydrateNotes, loadNotesForMonth, loadRotationsFromDB } from '@/lib/local-db';
 import { computePrimeNoel, computePrimeMai } from '@/lib/prime-mai-noel';
 import type { RotationInstance, RotationSignature } from '@/app/actions/search';
-import { enqueueAdd, enqueueDelete, enqueueUpdate, enqueueBidCategoryUpdate, enqueueMetaUpdate, pendingOpsCount } from '@/lib/sync-service';
+import { enqueueAdd, enqueueDelete, enqueueUpdate, enqueueBidCategoryUpdate, enqueueMetaUpdate, pendingOpsCount, PENDING_CHANGED_EVENT } from '@/lib/sync-service';
 import {
   validateScenario, mergeRules,
   type DdaRule, type DdaRulesData, type Violation, type DdaCategory,
@@ -978,6 +978,18 @@ export function GanttView({
   }, [irMfByScenario, irMfPerFlightByScenario]);
   useEffect(() => { setA81CumulBeforeState(a81CumulBefore); }, [a81CumulBefore]);
 
+  // pendingCount : source de vérité = sync_queue Dexie. Les optimistic
+  // `setPendingCount(c => c + 1)` répartis dans le fichier sont corrects pour
+  // 99 % des cas, mais le coalescing add+delete (cf sync-service) supprime des
+  // ops sans appeler setPendingCount → on s'abonne à l'event pour recoller au
+  // vrai count après chaque enqueue.
+  useEffect(() => {
+    void pendingOpsCount().then(setPendingCount);
+    const onChange = () => { void pendingOpsCount().then(setPendingCount); };
+    window.addEventListener(PENDING_CHANGED_EVENT, onChange);
+    return () => window.removeEventListener(PENDING_CHANGED_EVENT, onChange);
+  }, []);
+
   // Profil individuel applicable au mois courant (versionné). Pioche la row
   // dont valid_from <= 1er du mois, la plus récente. Si aucune version
   // applicable (mois trop ancien) → fallback aux props initiales.
@@ -1735,7 +1747,6 @@ export function GanttView({
         {/* Header */}
         <header className="flex items-center justify-between px-4 h-14 border-b border-zinc-200 dark:border-zinc-800 flex-shrink-0">
           <div className="flex items-center gap-2">
-            <span className="font-semibold text-sm tracking-tight">CM-offline</span>
             {pendingCount > 0 && (
               <span className="text-[10px] font-mono bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 px-1.5 rounded-full">
                 {pendingCount} à sync
