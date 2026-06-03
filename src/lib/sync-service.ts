@@ -97,9 +97,25 @@ export async function enqueueAdd(item: CalendarItem, draftId: string): Promise<v
 }
 
 export async function enqueueDelete(itemId: string): Promise<void> {
-  const payload: DeletePayload = { id: itemId };
   await db.transaction('rw', db.items, db.sync_queue, async () => {
     await db.items.delete(itemId);
+    // Coalescing : si l'item a une op 'add' encore en queue, le serveur ne le
+    // connaît pas → on supprime add + updates intermédiaires et on ne pousse
+    // PAS le delete. Net : compteur revient à zéro pour ce cycle add+delete.
+    const ops = await db.sync_queue.toArray();
+    const opsForItem = ops.filter(op => {
+      if (op.op !== 'add' && op.op !== 'delete' && op.op !== 'update'
+          && op.op !== 'update_bid' && op.op !== 'update_meta') return false;
+      try { return (JSON.parse(op.payload) as { id?: string }).id === itemId; }
+      catch { return false; }
+    });
+    const hasPendingAdd = opsForItem.some(op => op.op === 'add');
+    if (hasPendingAdd) {
+      const ids = opsForItem.map(op => op.id!).filter((x): x is number => typeof x === 'number');
+      if (ids.length) await db.sync_queue.bulkDelete(ids);
+      return;
+    }
+    const payload: DeletePayload = { id: itemId };
     await db.sync_queue.add({ op: 'delete', payload: JSON.stringify(payload), created_at: Date.now() });
   });
   notifyPendingChanged();
