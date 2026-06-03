@@ -389,7 +389,7 @@ function computeStats(
     hsH: finBase.hsH, hsFixeRate: finBase.hsFixeRate, hsVolRate: finBase.hsVolRate, hsSeuil: finBase.hsSeuil,
     flightBreakdown,
     solDays, simDays, solHcrEur, simHcrEur,
-    cssScale,
+    cssScale, nb30eEff,
   };
 }
 
@@ -1194,8 +1194,9 @@ export function GanttView({
     // HS : breakdown
     totalHc: number; seuil75: number; hsH: number; hsEur: number;
     hsFixeRate: number; hsVolRate: number;
-    // TOTAL / MGA / DIFF
+    // PV+HS / MGA / DIFF — pveiEff & nb30eEff servent à afficher la formule MGA
     fixeForFin: number; totalNew: number; mga: number; diff: number;
+    pveiEff: number; nb30eEff: number;
     // Primes (déjà ventilées) + congés + IR/MF
     totalPrime: number; bitronconEur: number;
     incitation: number; a330: number; instruction: number;
@@ -1986,6 +1987,7 @@ export function GanttView({
                     {/* FinRows */}
                     <div className="w-full px-2 flex flex-col gap-[1px]">
                       <FinRow label="FIXE" value={stats.fin.fixe} cls="text-zinc-400" />
+                      <div className="border-t border-zinc-300 dark:border-zinc-600 my-0.5" />
                       <FinRow label="PV"   value={stats.fin.pv}   cls="text-blue-500" />
                       {stats.fin.hs > 0 ? (
                         <FinRow label={`HS(${stats.hsH.toFixed(1)}h)`} value={stats.fin.hs} cls="text-green-500" />
@@ -1993,7 +1995,7 @@ export function GanttView({
                         <FinRow label={`HS(−${Math.max(0, stats.hsSeuil - stats.totalHc).toFixed(1)}h)`} value={0} cls="text-zinc-400 dark:text-zinc-500" />
                       )}
                       <div className="border-t border-zinc-300 dark:border-zinc-600 my-0.5" />
-                      <FinRow label="TOTAL" value={stats.fin.total} cls="text-zinc-700 dark:text-zinc-100" bold />
+                      <FinRow label="PV+HS" value={stats.fin.pv + stats.fin.hs} cls="text-zinc-700 dark:text-zinc-100" bold />
                       <FinRow label="MGA"   value={stats.fin.mga}   cls="text-zinc-500" />
                       <FinRow label="DIFF"  value={stats.fin.diff}  cls={stats.fin.diff < 0 ? 'text-red-500' : 'text-emerald-500'} />
                       <div className="border-t border-dashed border-zinc-300 dark:border-zinc-600 my-0.5" />
@@ -2040,6 +2042,7 @@ export function GanttView({
                           hsFixeRate: stats.hsFixeRate, hsVolRate: stats.hsVolRate,
                           fixeForFin: fixeFF,
                           totalNew: stats.fin.total, mga: stats.fin.mga, diff: stats.fin.diff,
+                          pveiEff, nb30eEff: stats.nb30eEff,
                           totalPrime: stats.totalPrime, bitronconEur: bitroncon,
                           incitation: incitCount * (finBaseState?.primeIncitationUnit ?? primeIncitationUnit),
                           a330: (finBaseState?.primeA330 ?? primeA330) * boost * stats.cssScale,
@@ -2895,19 +2898,24 @@ export function GanttView({
 
             <div className="border-t border-zinc-200 dark:border-zinc-700 my-1.5" />
 
-            {/* TOTAL / MGA / DIFF */}
+            {/* PV+HS / MGA / DIFF */}
             <div className="space-y-1 mb-2 font-mono text-[9px]">
               <div className="flex items-baseline justify-between">
-                <span className="text-zinc-700 dark:text-zinc-200">TOTAL = FIXE + PV + HS</span>
-                <span className="text-zinc-900 dark:text-zinc-100 font-bold">{Math.round(detailPanel.totalNew)}</span>
+                <span className="text-zinc-700 dark:text-zinc-200">PV + HS</span>
+                <span className="text-zinc-900 dark:text-zinc-100 font-bold">{Math.round(detailPanel.pvEur + detailPanel.hsEur)}</span>
               </div>
-              <div className="flex items-baseline justify-between">
-                <span className="text-zinc-500">MGA</span>
-                <span className="text-zinc-600 dark:text-zinc-300">{Math.round(detailPanel.mga)}</span>
+              <div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-zinc-500">MGA</span>
+                  <span className="text-zinc-600 dark:text-zinc-300">{Math.round(detailPanel.mga)}</span>
+                </div>
+                <div className="text-[8px] text-zinc-400 dark:text-zinc-500 pl-2">
+                  (85 × {detailPanel.pveiEff.toFixed(2)}) × ({detailPanel.nb30eEff}/30)
+                </div>
               </div>
               <div className="flex items-baseline justify-between">
                 <span className={detailPanel.diff < 0 ? 'text-red-500' : 'text-emerald-500'}>
-                  DIFF = TOTAL − MGA
+                  DIFF = (PV + HS) − MGA
                 </span>
                 <span className={`font-semibold ${detailPanel.diff < 0 ? 'text-red-500' : 'text-emerald-500'}`}>
                   {Math.round(detailPanel.diff)}
@@ -2988,20 +2996,20 @@ export function GanttView({
 
             <div className="border-t border-zinc-200 dark:border-zinc-700 my-1.5" />
 
-            {/* BRUT — branche selon TOTAL+congés vs MGA */}
+            {/* BRUT — branche selon DIFF (PV+HS vs MGA) ; FIXE + congés présents dans les 2 cas */}
             {(() => {
-              const totalPlusCg  = detailPanel.totalNew + detailPanel.congeAmount;
-              const totalWins    = totalPlusCg >= detailPanel.mga;
+              const diffPos      = detailPanel.diff >= 0;
               const irMfEur      = detailPanel.irEur + detailPanel.mfEur;
               const itEur        = detailPanel.itEur;
               const itSuffix     = detailPanel.itMode ? ' + IT' : '';
               const itValSuffix  = detailPanel.itMode ? ` + ${Math.round(itEur)}` : '';
-              const formulaLabel = totalWins
-                ? `BRUT = TOTAL + cg + P + IR/MF${itSuffix}`
-                : `BRUT = MGA + P + IR/MF${itSuffix}`;
-              const breakdown    = totalWins
-                ? `${Math.round(detailPanel.totalNew)} + ${Math.round(detailPanel.congeAmount)} + ${Math.round(detailPanel.primesTotal)} + ${Math.round(irMfEur)}${itValSuffix}`
-                : `${Math.round(detailPanel.mga)} + ${Math.round(detailPanel.primesTotal)} + ${Math.round(irMfEur)}${itValSuffix}`;
+              const formulaLabel = diffPos
+                ? `BRUT = FIXE + PV + HS + cg + P + IR/MF${itSuffix}`
+                : `BRUT = FIXE + MGA + cg + P + IR/MF${itSuffix}`;
+              const pvHs         = detailPanel.pvEur + detailPanel.hsEur;
+              const breakdown    = diffPos
+                ? `${Math.round(detailPanel.fixeForFin)} + ${Math.round(pvHs)} + ${Math.round(detailPanel.congeAmount)} + ${Math.round(detailPanel.primesTotal)} + ${Math.round(irMfEur)}${itValSuffix}`
+                : `${Math.round(detailPanel.fixeForFin)} + ${Math.round(detailPanel.mga)} + ${Math.round(detailPanel.congeAmount)} + ${Math.round(detailPanel.primesTotal)} + ${Math.round(irMfEur)}${itValSuffix}`;
               return (
                 <div className="font-mono text-[9px]">
                   <div className="flex items-baseline justify-between">
