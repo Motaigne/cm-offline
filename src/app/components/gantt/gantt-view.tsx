@@ -1131,6 +1131,10 @@ export function GanttView({
   const [nbJours, setNbJours]     = useState('');
   const [overlapErr, setOverlapErr] = useState(false);
   const [editBidCat, setEditBidCat] = useState<BidCategory | null>(null);
+  // Day-sheet : true quand l'utilisateur a cliqué "Rotations" et qu'on doit
+  // afficher le choix de catégorie (DDA / Vol P / Élabo) inline à la place
+  // des boutons d'activité, dans le même cadre.
+  const [sheetCategoryMode, setSheetCategoryMode] = useState(false);
 
   // dnd
   const [dragging, setDragging]   = useState<CalendarItem | null>(null);
@@ -1547,6 +1551,7 @@ export function GanttView({
     setAddKind('off');
     setNbJours('');
     setAddEnd(date);
+    setSheetCategoryMode(false);
     setSheet({ mode: 'add', scenarioId, scenarioName, date });
   }
 
@@ -2489,22 +2494,18 @@ export function GanttView({
                   </div>
                 </div>
 
-                {/* Kind selector (hide in edit mode) */}
-                {sheet.mode === 'add' && (
+                {/* Kind selector (hide in edit mode).
+                    Deux modes mutuellement exclusifs dans le même cadre :
+                    - défaut : Rotations + activités (off/congés/CSS/...) + Note
+                    - sheetCategoryMode : ← retour + DDA / Vol P / Élabo/Suivi
+                      (déclenché par clic sur Rotations) */}
+                {sheet.mode === 'add' && !sheetCategoryMode && (
                   <div className="flex flex-wrap gap-2 items-center">
-                    {/* Bouton "Rotations" (tout à gauche) — ouvre la cascade categoryPicker
-                        pré-rempli (scénario + date du jour cliqué) ; après le choix de
-                        catégorie on saute le scenarioPicker et on file direct au
-                        SearchPanel. Bleu comme le bouton "Rotations" de la barre du
-                        bas, forme rectangulaire des boutons d'activité (congés/CSS...). */}
+                    {/* Bouton "Rotations" (tout à gauche) — bascule l'intérieur du
+                        sheet en mode "choix de catégorie" (DDA/Vol P/Élabo) dans
+                        le MÊME cadre, sans ouvrir de popup séparé. */}
                     <button
-                      onClick={e => {
-                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                        const d = sheet.date;
-                        const scName = sheet.scenarioName;
-                        setSheet(null);
-                        setCategoryPicker({ rect, prefilledScenario: scName, prefilledDate: d });
-                      }}
+                      onClick={() => setSheetCategoryMode(true)}
                       className="px-4 py-2 rounded-lg text-sm font-medium border-2 border-transparent bg-blue-600 hover:bg-blue-500 text-white transition-all flex items-center gap-1.5"
                       title="Rechercher une rotation partant ce jour"
                     >
@@ -2548,6 +2549,48 @@ export function GanttView({
                   </div>
                 )}
 
+                {/* Mode "choix de catégorie" — inline dans le sheet, déclenché
+                    par le bouton Rotations. Le clic sur une catégorie ouvre
+                    direct le SearchPanel (scénario + date déjà connus). */}
+                {sheet.mode === 'add' && sheetCategoryMode && (
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <button
+                      onClick={() => setSheetCategoryMode(false)}
+                      className="px-3 py-2 rounded-lg text-sm font-medium border-2 border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-zinc-400 transition-all"
+                      title="Retour"
+                    >
+                      ←
+                    </button>
+                    {([
+                      { value: 'dda_vol',     label: 'DDA' },
+                      { value: 'vol_p',       label: 'Vol P' },
+                      { value: 'elabo_suivi', label: 'Élabo/Suivi' },
+                    ] as { value: BidCategory; label: string }[]).map(opt => (
+                      <button
+                        key={opt.value}
+                        onClick={() => {
+                          const d = sheet.date;
+                          const scName = sheet.scenarioName;
+                          const rowEl = scenarioRowsRef.current.get(scName);
+                          setSearchCategory(opt.value);
+                          setSearchScenario(scName);
+                          setSearchDate(d);
+                          setSearchPanelTop(rowEl?.getBoundingClientRect().bottom);
+                          setSheet(null);
+                          setSheetCategoryMode(false);
+                          setSearchOpen(true);
+                        }}
+                        className="px-4 py-2 rounded-lg text-sm font-bold border-2 border-transparent bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:bg-zinc-700 dark:hover:bg-zinc-300 transition-all"
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Inputs durée + Submit : masqués en mode catégorie (le cadre
+                    ne montre alors que les boutons DDA/Vol P/Élabo). */}
+                {!sheetCategoryMode && <>
                 {/* Congés / CSS : nb de jours */}
                 {(addKind === 'conge' || addKind === 'conge_ss') && (
                   <div className="flex items-center gap-3">
@@ -2633,6 +2676,7 @@ export function GanttView({
                   className="w-full rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-zinc-700 disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900">
                   {sheet.mode === 'edit' ? 'Mettre à jour' : 'Placer'}
                 </button>
+                </>}
               </div>
             </div>
           </>
