@@ -2474,7 +2474,27 @@ export function GanttView({
 
                 {/* Kind selector (hide in edit mode) */}
                 {sheet.mode === 'add' && (
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-2 items-center">
+                    {/* Bouton "Rotations" (tout à gauche) — ouvre la cascade categoryPicker
+                        pré-rempli (scénario + date du jour cliqué) ; après le choix de
+                        catégorie on saute le scenarioPicker et on file direct au
+                        SearchPanel. Même style que le bouton "Rotations" de la barre du bas. */}
+                    <button
+                      onClick={e => {
+                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                        const d = sheet.date;
+                        const scName = sheet.scenarioName;
+                        setSheet(null);
+                        setCategoryPicker({ rect, prefilledScenario: scName, prefilledDate: d });
+                      }}
+                      className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors"
+                      title="Rechercher une rotation partant ce jour"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                        <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+                      </svg>
+                      Rotations
+                    </button>
                     {addableKinds.map(k => {
                       const meta = ACTIVITY_META[k];
                       const disabled = k === 'taf' && !tafOk;
@@ -2506,26 +2526,6 @@ export function GanttView({
                       title="Note libre (cross-scénario, indépendante d'un vol)"
                     >
                       📝 Note
-                    </button>
-                    {/* Bouton "Rotations" — ouvre la cascade categoryPicker pré-rempli
-                        (scénario + date du jour cliqué) ; après le choix de catégorie
-                        on saute le scenarioPicker et on file direct au SearchPanel.
-                        Même style que le bouton "Rotations" de la barre du bas. */}
-                    <button
-                      onClick={e => {
-                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                        const d = sheet.date;
-                        const scName = sheet.scenarioName;
-                        setSheet(null);
-                        setCategoryPicker({ rect, prefilledScenario: scName, prefilledDate: d });
-                      }}
-                      className="ml-auto flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors"
-                      title="Rechercher une rotation partant ce jour"
-                    >
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                        <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-                      </svg>
-                      Rotations
                     </button>
                   </div>
                 )}
