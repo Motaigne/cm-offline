@@ -205,19 +205,6 @@ function countItActivities(items: CalendarItem[], year: number, mo: number): num
   return n;
 }
 
-/** Nombre de jours CSS (Congés Sans Solde) effectivement présents sur le mois.
- *  Utilisé pour abater nb30e — réduit primes (A330, instruction), tFixe, MGA et
- *  seuil HS. Différent des congés classiques qui n'affectent QUE le seuil HS. */
-function countCssDays(items: CalendarItem[], year: number, mo: number): number {
-  let n = 0;
-  for (const item of items) {
-    if (item.kind !== 'conge_ss') continue;
-    const clip = clipItem(item, year, mo);
-    if (clip) n += clip.end - clip.start + 1;
-  }
-  return n;
-}
-
 /** IT mensuelle selon le mode profil. Navigo = forfait (0 si aucune activité). */
 function computeItEur(
   transport: string | null,
@@ -353,22 +340,18 @@ function computeStats(
     totalA81 += montant;
   }
   const totalA81Net = totalA81 * 0.82;
-  // nb30eR    : valeur régime du mois (full-prime = 30 en jul/aoû pour TAF*_10_12).
-  // nb30eBase : nb30eR − CSS (CSS abate la base → impacte primes, fixe, MGA).
-  // nb30eEff  : nb30eBase − congés classiques (utilisé uniquement pour le seuil HS).
-  // Les congés classiques n'affectent QUE hsSeuil ; le CSS abate primes/fixe/MGA en plus.
+  // nb30eEff = nb30eR − CSS − congés classiques. Seul MGA (et hsSeuil, par
+  // construction dans monthlyFinancialsP) dépendent de nb30eEff. Le fixe et
+  // les primes (A330, Instruction) ne sont PAS abattus par CSS ni congés.
   const nb30eRegime = REGIME_NB30E[regime] ?? NB_30E;
   const fullPrime   = isFullPrimeMonth(regime, mo);
   const nb30eR      = fullPrime ? 30 : nb30eRegime;
-  const nb30eBase   = Math.max(0, nb30eR - cssDays);
-  const nb30eEff    = Math.max(0, nb30eBase - congeDays);
-  const cssScale    = nb30eR > 0 ? nb30eBase / nb30eR : 0;
+  const nb30eEff    = Math.max(0, nb30eR - cssDays - congeDays);
   // En jul/août pour TAF*_10_12 (full-prime month) : on bascule sur le fixe TP.
   // fixeTPArg fourni par le caller (depuis l'annexe versionnée) ; sinon legacy
   // = FIXE_MENSUEL * 30 / nb30eRegime.
   const fixeTPVal   = fixeTPArg ?? (nb30eRegime > 0 ? FIXE_MENSUEL * 30 / nb30eRegime : FIXE_MENSUEL);
-  // Scale par CSS : (nb30eR - cssDays) / nb30eR. Sans CSS = 1 (no-op).
-  const fixeForFin  = (fullPrime ? fixeTPVal : fixeRegime) * cssScale;
+  const fixeForFin  = fullPrime ? fixeTPVal : fixeRegime;
   // Calcul mensuel complet : HS (fixe + vol), MGA, DIF, total — cf finance.ts.
   // total = fixe + pv + hs + dif (hors primes — primes mensuelles fixes ajoutées
   // dans le brut plus bas via primesTotal).
@@ -394,7 +377,7 @@ function computeStats(
     hsH: finBase.hsH, hsFixeRate: finBase.hsFixeRate, hsVolRate: finBase.hsVolRate, hsSeuil: finBase.hsSeuil,
     flightBreakdown,
     solDays, simDays, solHcrEur, simHcrEur,
-    cssScale, nb30eEff,
+    nb30eEff,
   };
 }
 
@@ -1964,15 +1947,9 @@ export function GanttView({
               // IrgAv : Y × 5 × PVEI (cf. CCT) — non proratisé régime.
               const pvForIrgav = finBaseState?.pvei ?? PVEI;
               const primeIrgav = irgavCount * 5 * pvForIrgav;
-              // CSS abate aussi A330 + Instruction (proratisés régime). On
-              // calcule cssScale ici en miroir de computeStats pour scaler les
-              // primes avant agrégation dans monthlyFixedPrimes.
-              const cssDaysScn = countCssDays(scenario.items, year, mo);
-              const nb30eR_scn = isFullPrimeMonth(effRegime, mo) ? 30 : (REGIME_NB30E[effRegime] ?? NB_30E);
-              const cssScale_scn = nb30eR_scn > 0 ? Math.max(0, nb30eR_scn - cssDaysScn) / nb30eR_scn : 0;
               const monthlyFixedPrimes =
                 pIncit * incitCount
-                + (pA330 + pInstr) * a330InstrBoost * cssScale_scn
+                + (pA330 + pInstr) * a330InstrBoost
                 + primeIrgav
                 + primeMai + primeNoel;
               const cumulBeforeForScenario = a81CumulBeforeState[scenario.name] ?? 0;
@@ -2093,8 +2070,8 @@ export function GanttView({
                           pveiEff, kspEff, nb30eEff: stats.nb30eEff,
                           totalPrime: stats.totalPrime, bitronconEur: bitroncon,
                           incitation: incitCount * (finBaseState?.primeIncitationUnit ?? primeIncitationUnit),
-                          a330: (finBaseState?.primeA330 ?? primeA330) * boost * stats.cssScale,
-                          instruction: (finBaseState?.primeInstruction ?? primeInstruction) * boost * stats.cssScale,
+                          a330: (finBaseState?.primeA330 ?? primeA330) * boost,
+                          instruction: (finBaseState?.primeInstruction ?? primeInstruction) * boost,
                           irgav: irgavCount * 5 * (finBaseState?.pvei ?? PVEI),
                           primeMai, primeNoel,
                           primesTotal: stats.fin.primes,
