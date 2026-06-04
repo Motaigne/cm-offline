@@ -1135,6 +1135,8 @@ export function GanttView({
   // afficher le choix de catégorie (DDA / Vol P / Élabo) inline à la place
   // des boutons d'activité, dans le même cadre.
   const [sheetCategoryMode, setSheetCategoryMode] = useState(false);
+  // Top px de la sheet en mode edit-flight (alignée sur le haut de la ligne C).
+  const [editSheetTop, setEditSheetTop] = useState<number | null>(null);
 
   // dnd
   const [dragging, setDragging]   = useState<CalendarItem | null>(null);
@@ -1562,6 +1564,15 @@ export function GanttView({
     setNbJours(String(dur));
     setAddEnd(item.end_date);
     setEditBidCat(item.kind === 'flight' ? (item.bid_category ?? 'dda_vol') : null);
+    // Edit-flight : sheet plus haute, démarrant du haut de la ligne C (sous
+    // les 3 lignes Gantt). Recalculée à chaque openEdit (taille viewport
+    // variable). Pour les autres modes la sheet reste collée en bas.
+    if (item.kind === 'flight') {
+      const rowC = scenarioRowsRef.current.get('C');
+      setEditSheetTop(rowC?.getBoundingClientRect().top ?? null);
+    } else {
+      setEditSheetTop(null);
+    }
     setSheet({ mode: 'edit', scenarioId: scenario.id, scenarioName: scenario.name, date: item.start_date, item });
   }
 
@@ -2468,25 +2479,35 @@ export function GanttView({
         {sheet && (
           <>
             <div className="fixed inset-0 z-20 bg-black/20" onClick={() => setSheet(null)} />
-            <div className="fixed bottom-0 left-0 right-0 z-30 bg-white dark:bg-zinc-900 rounded-t-2xl shadow-xl">
-              <div className="p-5 space-y-4">
+            <div
+              className="fixed bottom-0 left-0 right-0 z-30 bg-white dark:bg-zinc-900 rounded-t-2xl shadow-xl overflow-y-auto"
+              style={editSheetTop != null ? { top: editSheetTop } : undefined}
+            >
+              <div className="p-5 space-y-4 h-full flex flex-col">
 
-                {/* Sheet header */}
-                <div className="flex items-center justify-between">
-                  <div>
-                    <span className="text-xs font-medium text-zinc-400 uppercase tracking-wide">
-                      Scénario {sheet.scenarioName}
-                    </span>
-                    <h2 className="font-semibold capitalize">
-                      {new Date(sheet.date + 'T00:00:00').toLocaleDateString('fr-FR', {
-                        weekday: 'long', day: 'numeric', month: 'long',
-                      })}
-                    </h2>
+                {/* Sheet header — en mode edit-flight le scénario+date sont
+                    déplacés dans la colonne de gauche du layout 2 colonnes. */}
+                {!(sheet.mode === 'edit' && sheet.item?.kind === 'flight') ? (
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-medium text-zinc-400 uppercase tracking-wide">
+                        Scénario {sheet.scenarioName}
+                      </span>
+                      <h2 className="font-semibold capitalize">
+                        {new Date(sheet.date + 'T00:00:00').toLocaleDateString('fr-FR', {
+                          weekday: 'long', day: 'numeric', month: 'long',
+                        })}
+                      </h2>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => setSheet(null)} className="text-zinc-400 hover:text-zinc-600 text-2xl leading-none">×</button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                ) : (
+                  <div className="flex items-center justify-end">
                     <button onClick={() => setSheet(null)} className="text-zinc-400 hover:text-zinc-600 text-2xl leading-none">×</button>
                   </div>
-                </div>
+                )}
 
                 {/* Kind selector (hide in edit mode).
                     Deux modes mutuellement exclusifs dans le même cadre :
@@ -2616,8 +2637,10 @@ export function GanttView({
                   </div>
                 )}
 
-                {/* OFF/Sol/etc: date fin libre */}
-                {addKind !== 'conge' && addKind !== 'conge_ss' && addKind !== 'taf' && (
+                {/* OFF/Sol/etc: date fin libre — non applicable au vol (dates
+                    fixées par la rotation) en mode edit-flight. */}
+                {addKind !== 'conge' && addKind !== 'conge_ss' && addKind !== 'taf' &&
+                  !(sheet.mode === 'edit' && sheet.item?.kind === 'flight') && (
                   <div className="flex items-center gap-3">
                     <label className="text-xs text-zinc-500">Jusqu&apos;au</label>
                     <input type="date" value={addEnd} min={sheet.date}
@@ -2633,34 +2656,12 @@ export function GanttView({
                   </p>
                 )}
 
-                {/* Edit flight: catégorie DDA */}
-                {sheet.mode === 'edit' && sheet.item && sheet.item.kind === 'flight' && (
-                  <div className="flex items-center gap-2 flex-wrap pt-1">
-                    <span className="text-xs text-zinc-400 flex-shrink-0">Catégorie :</span>
-                    {([
-                      { value: 'dda_vol',     label: 'DDA Vol' },
-                      { value: 'vol_p',       label: 'Vol P' },
-                      { value: 'elabo_suivi', label: 'Élabo/Suivi' },
-                    ] as { value: BidCategory; label: string }[]).map(opt => (
-                      <button
-                        key={opt.value}
-                        onClick={() => setEditBidCat(opt.value)}
-                        className={[
-                          'px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all min-h-[36px]',
-                          editBidCat === opt.value
-                            ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300'
-                            : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-zinc-400',
-                        ].join(' ')}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {/* Edit flight: récap chiffres (HC/HCr/PVnuit/PV/prime/A81). 100%
-                    offline : meta du vol + signaturesByInstId (cache IDB) +
-                    finBaseState/article81Data (annexe cachée). Aucun fetch. */}
+                {/* Edit-flight : layout 2 colonnes (1/3 gauche, 2/3 droite).
+                    Gauche : Scénario + Date + Catégorie (DDA / Vol P / Élabo).
+                    Droite : valeurs (HC, HCr, PVnuit, HCr+nuit, PV €, prime
+                    bi-tronçon, A81/jour, A81 total + MEP si applicable).
+                    100% offline : meta du vol + signaturesByInstId (cache IDB)
+                    + finBaseState/article81Data (annexe cachée). Aucun fetch. */}
                 {sheet.mode === 'edit' && sheet.item && sheet.item.kind === 'flight' && (() => {
                   const m = sheet.item.meta && typeof sheet.item.meta === 'object' && !Array.isArray(sheet.item.meta)
                     ? sheet.item.meta as Record<string, unknown> : null;
@@ -2701,25 +2702,63 @@ export function GanttView({
                   );
 
                   return (
-                    <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800 space-y-2">
-                      {isMep && (
-                        <p className="text-[11px] text-orange-500 font-semibold">
-                          MEP{mepFlight ? ` · ${mepFlight}` : ''}
-                        </p>
-                      )}
-                      <div className="grid grid-cols-3 gap-2">
-                        {hcM !== null      && <Info label="HC"           value={`${hcM.toFixed(2)} h`} />}
-                        {hcrCrewM !== null && <Info label="HCr"          value={`${hcrCrewM.toFixed(2)} h`} />}
-                        <Info                       label="PV nuit"      value={`${pvNuitH.toFixed(2)} h`} />
-                        <Info                       label="HCr + nuit"   value={`${pvH.toFixed(2)} h`} />
-                        <Info                       label="PV"           value={`${Math.round(pvEur)} €`} />
-                        {primeM > 0 && <Info        label="Prime bi-tr." value={`×${primeM} · ${Math.round(primeEur)} €`} />}
-                        {a81 && a81.montantPrimeSej > 0 && (
-                          <Info label="A81 / jour" value={`${Math.round(a81.montantPrimeSejJour)} €`} />
+                    <div className="grid grid-cols-3 gap-4 flex-1 min-h-0">
+                      {/* Colonne gauche 1/3 : scénario + date + catégorie */}
+                      <div className="col-span-1 space-y-3">
+                        <div>
+                          <span className="text-xs font-medium text-zinc-400 uppercase tracking-wide">
+                            Scénario {sheet.scenarioName}
+                          </span>
+                          <h2 className="font-semibold capitalize text-sm leading-tight">
+                            {new Date(sheet.date + 'T00:00:00').toLocaleDateString('fr-FR', {
+                              weekday: 'long', day: 'numeric', month: 'long',
+                            })}
+                          </h2>
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide">Catégorie</span>
+                          {([
+                            { value: 'dda_vol',     label: 'DDA Vol' },
+                            { value: 'vol_p',       label: 'Vol P' },
+                            { value: 'elabo_suivi', label: 'Élabo/Suivi' },
+                          ] as { value: BidCategory; label: string }[]).map(opt => (
+                            <button
+                              key={opt.value}
+                              onClick={() => setEditBidCat(opt.value)}
+                              className={[
+                                'px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all min-h-[36px] text-left',
+                                editBidCat === opt.value
+                                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300'
+                                  : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-zinc-400',
+                              ].join(' ')}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Colonne droite 2/3 : valeurs */}
+                      <div className="col-span-2 space-y-3 border-l border-zinc-100 dark:border-zinc-800 pl-4">
+                        {isMep && (
+                          <p className="text-xs text-orange-500 font-semibold">
+                            MEP{mepFlight ? ` · ${mepFlight}` : ''}
+                          </p>
                         )}
-                        {a81 && a81.montantPrimeSej > 0 && (
-                          <Info label="A81 total"  value={`${Math.round(a81.montantPrimeSej)} €`} />
-                        )}
+                        <div className="grid grid-cols-3 gap-3">
+                          {hcM !== null      && <Info label="HC"           value={`${hcM.toFixed(2)} h`} />}
+                          {hcrCrewM !== null && <Info label="HCr"          value={`${hcrCrewM.toFixed(2)} h`} />}
+                          <Info                       label="PV nuit"      value={`${pvNuitH.toFixed(2)} h`} />
+                          <Info                       label="HCr + nuit"   value={`${pvH.toFixed(2)} h`} />
+                          <Info                       label="PV"           value={`${Math.round(pvEur)} €`} />
+                          {primeM > 0 && <Info        label="Prime bi-tr." value={`×${primeM} · ${Math.round(primeEur)} €`} />}
+                          {a81 && a81.montantPrimeSej > 0 && (
+                            <Info label="A81 / jour" value={`${Math.round(a81.montantPrimeSejJour)} €`} />
+                          )}
+                          {a81 && a81.montantPrimeSej > 0 && (
+                            <Info label="A81 total"  value={`${Math.round(a81.montantPrimeSej)} €`} />
+                          )}
+                        </div>
                       </div>
                     </div>
                   );
@@ -2733,9 +2772,11 @@ export function GanttView({
                 )}
 
                 {/* Submit (+ Supprimer en mode edit) — full-width en add,
-                    splittés 50/50 en edit avec Supprimer rouge à droite. */}
+                    splittés 50/50 en edit avec Supprimer rouge à droite.
+                    mt-auto pousse les boutons en bas quand la sheet est tall
+                    (edit-flight depuis le haut de la ligne C). */}
                 {sheet.mode === 'edit' ? (
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 mt-auto">
                     <button onClick={handleSubmit} disabled={isPending}
                       className="flex-1 rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-zinc-700 disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900">
                       Mettre à jour
