@@ -441,10 +441,10 @@ export function ProfilForm({
               type="button"
               onClick={handleDeleteVersion}
               disabled={isPending}
-              className="text-xs px-2 py-1 rounded border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-40 ml-auto"
+              className="text-xs px-2 py-1 rounded border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-40"
               title="Supprime cette version. Les mois concernés basculeront sur la version précédente."
             >
-              Supprimer cette version
+              Supprimer version
             </button>
           )}
         </div>
@@ -685,6 +685,9 @@ export function ProfilForm({
               {regime && ` · ${REGIME_NB30E[regime as RegimeEnum]}/30`}
               {regime && REGIME_MOIS12[regime as RegimeEnum] !== undefined && (
                 <span className="text-zinc-400 dark:text-zinc-500"> · {REGIME_MOIS12[regime as RegimeEnum]}/12</span>
+              )}
+              {selectedValidFrom && (
+                <span className="text-zinc-300 dark:text-zinc-600"> · valable à partir du {fmtDateApp(selectedValidFrom)}</span>
               )}
             </span>
           </p>
