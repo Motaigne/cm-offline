@@ -246,7 +246,9 @@ export function NavBar() {
     return () => window.removeEventListener(PENDING_CHANGED_EVENT, onChange);
   }, []);
 
-  async function handleSync() {
+  /** PUSH seul : envoie les opérations en attente (sync_queue Dexie) vers
+   *  Supabase. Rapide (1 batch). Bouton visible uniquement si pendingCount>0. */
+  async function handlePush() {
     if (!navigator.onLine) {
       setSyncStatus('offline');
       setTimeout(() => setSyncStatus(''), 3000);
@@ -254,17 +256,33 @@ export function NavBar() {
     }
     setSyncing(true);
     try {
-      // 1. Push les opérations en attente vers Supabase
-      const pending = await pendingOpsCount();
-      if (pending > 0) {
-        setSyncStatus('push');
-        await syncNow();
-        setPendingCount(0);
-      }
-      // 2. Pull toutes les données depuis Supabase
+      setSyncStatus('push');
+      await syncNow();
+      setPendingCount(0);
+      setSyncStatus('ok');
+      setTimeout(() => { setSyncStatus(''); router.refresh(); }, 1200);
+    } catch {
+      setSyncStatus('err');
+      setTimeout(() => setSyncStatus(''), 3000);
+    } finally {
+      setSyncing(false);
+      void pendingOpsCount().then(setPendingCount);
+    }
+  }
+
+  /** PULL : télécharge depuis Supabase et hydrate l'IndexedDB pour les mois
+   *  du SyncPlan (Lite ou Perso). Mois traités en PARALLÈLE (Promise.allSettled)
+   *  — gain ~5× sur la phase pull par rapport à la boucle séquentielle. */
+  async function handlePull() {
+    if (!navigator.onLine) {
+      setSyncStatus('offline');
+      setTimeout(() => setSyncStatus(''), 3000);
+      return;
+    }
+    setSyncing(true);
+    try {
       setSyncStatus('pull');
-      // Cache profil + annexe versionnés (légers — quelques rows, < 50KB).
-      // Indispensables pour le compute offline (calendrier finBase, page A81).
+      // Cache profil + annexe + A81 versionnés en parallèle (légers, < 50KB).
       void withTimeout(loadAllProfileVersions(), 5000, [])
         .then(v => cacheProfileVersions(v)).catch(() => {});
       void withTimeout(loadAllAnnexeRows(), 5000, [])
@@ -278,40 +296,50 @@ export function NavBar() {
         const months = await withTimeout(getAvailableMonths(), 8000, [] as AvailableMonth[]);
         const mode: SyncMode = (localStorage.getItem(SYNC_MODE_KEY) as SyncMode | null) ?? DEFAULT_SYNC_MODE;
         const persoRaw = localStorage.getItem(SYNC_PERSO_KEY);
-        const persoMonths: string[] = (() => {
+        const persoMonthsLs: string[] = (() => {
           try { return JSON.parse(persoRaw ?? '[]') as string[]; } catch { return []; }
         })();
-        const plan = buildSyncPlan(months, mode, persoMonths);
-        // Pour chaque mois on a besoin du planning utilisateur (drafts A/B/C)
-        // — pour les mois full ET planning_only (un mois passé planning_only
-        // n'aurait aucun sens sans les items posés).
-        const planningMonths = Array.from(new Set([...plan.full, ...plan.planningOnly]));
-        let failed = 0;
+        const plan = buildSyncPlan(months, mode, persoMonthsLs);
+        const planningMonths = new Set([...plan.full, ...plan.planningOnly]);
         const queue: Array<{ m: string; loadMode: 'full' | 'planning_only' }> = [
           ...plan.full.map(m => ({ m, loadMode: 'full' as const })),
           ...plan.planningOnly.map(m => ({ m, loadMode: 'planning_only' as const })),
         ];
-        for (let i = 0; i < queue.length; i++) {
-          const { m, loadMode } = queue[i];
-          const label = loadMode === 'planning_only' ? 'lite' : 'rot';
-          setDlProgress(`${i + 1}/${queue.length} ${label}`);
-          const rots = await withTimeout(
-            getRotationsForMonth(m, loadMode),
-            12000,
-            [] as Awaited<ReturnType<typeof getRotationsForMonth>>,
-          );
-          setDlProgress(`${i + 1}/${queue.length} scn`);
-          const scs = planningMonths.includes(m)
-            ? await withTimeout(getScenariosWithItems(m), 8000, [] as Awaited<ReturnType<typeof getScenariosWithItems>>)
-            : [];
-          if (rots.length === 0 && scs.length === 0) { failed++; continue; }
-          setDlProgress(`${i + 1}/${queue.length} db`);
-          await withTimeout(
-            Promise.all([cacheRotations(rots, m), hydrateDB(scs, m)]),
-            8000,
-            undefined,
-          );
-        }
+
+        // Compteur de progression incrémenté par chaque mois terminé.
+        let completed = 0;
+        let failed = 0;
+        setDlProgress(queue.length > 0 ? `0/${queue.length}` : '');
+
+        const results = await Promise.allSettled(queue.map(async ({ m, loadMode }) => {
+          try {
+            const [rots, scs] = await Promise.all([
+              withTimeout(
+                getRotationsForMonth(m, loadMode),
+                12000,
+                [] as Awaited<ReturnType<typeof getRotationsForMonth>>,
+              ),
+              planningMonths.has(m)
+                ? withTimeout(getScenariosWithItems(m), 8000, [] as Awaited<ReturnType<typeof getScenariosWithItems>>)
+                : Promise.resolve([] as Awaited<ReturnType<typeof getScenariosWithItems>>),
+            ]);
+            if (rots.length === 0 && scs.length === 0) {
+              failed++;
+              return;
+            }
+            await withTimeout(
+              Promise.all([cacheRotations(rots, m), hydrateDB(scs, m)]),
+              8000,
+              undefined,
+            );
+          } finally {
+            completed++;
+            setDlProgress(`${completed}/${queue.length}`);
+          }
+        }));
+        // Rejections imprévues (hors withTimeout) : compte comme failed.
+        for (const r of results) if (r.status === 'rejected') failed++;
+
         setDlProgress(queue.length > 0 ? `pages` : '');
         const urlVariants: string[] = [];
         const cachedMonths = queue.map(q => q.m);
@@ -321,7 +349,6 @@ export function NavBar() {
             for (const m of cachedMonths) urlVariants.push(`${url}?m=${m}`);
           }
         }
-        // Timeout par page (10s) — empêche un fetch qui hang de bloquer Sync.
         await Promise.all(urlVariants.map(url => withTimeout(precachePage(url), 10000, false)));
         setDlProgress('');
         if (failed > 0) {
@@ -339,9 +366,6 @@ export function NavBar() {
     } finally {
       setSyncing(false);
       setDlProgress('');
-      // Refresh du compteur — si le push a échoué (server action en erreur),
-      // les ops restent en queue et le badge doit le refléter.
-      void pendingOpsCount().then(setPendingCount);
     }
   }
 
@@ -502,47 +526,64 @@ export function NavBar() {
           </a>
         )}
         <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
+          {/* PUSH — visible uniquement s'il y a des modifs locales en queue.
+              Cloud-upload : envoie les changements locaux vers Supabase. */}
+          {pendingCount > 0 && (
+            <button
+              onClick={handlePush}
+              disabled={syncing}
+              title={
+                syncStatus === 'offline' ? 'Pas de réseau'
+                : syncStatus === 'push'  ? 'Envoi des modifications…'
+                : `${pendingCount} modification(s) en attente — envoyer maintenant`
+              }
+              className={`relative px-2 h-8 flex items-center gap-1 text-sm font-medium disabled:opacity-50 rounded hover:bg-zinc-800 transition-colors ${syncStatus === 'push' ? 'text-amber-400' : syncColor || 'text-zinc-300'}`}
+            >
+              {/* Cloud-upload : nuage + flèche vers le haut */}
+              <svg
+                className={`w-5 h-5 ${syncStatus === 'push' ? 'animate-pulse' : ''}`}
+                viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
+                <line x1="12" y1="19" x2="12" y2="11" />
+                <polyline points="9 14 12 11 15 14" />
+              </svg>
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 flex items-center justify-center rounded-full bg-amber-500 text-white text-[9px] font-bold px-1">
+                {pendingCount}
+              </span>
+            </button>
+          )}
+
+          {/* PULL — télécharge depuis Supabase + pré-cache pages. Toujours visible.
+              Icône : flèches circulaires (refresh universel). */}
           <button
-            onClick={handleSync}
+            onClick={handlePull}
             disabled={syncing}
             title={
               syncStatus === 'offline' ? 'Pas de réseau'
-              : syncStatus === 'push'  ? 'Envoi des modifications…'
               : syncStatus === 'pull'  ? 'Téléchargement…'
               : syncStatus === 'ok'    ? 'Synchronisé'
               : syncStatus === 'err'   ? 'Erreur de synchronisation'
-              : pendingCount > 0       ? `${pendingCount} modification(s) en attente — Sync pour envoyer`
-              : 'Synchroniser (envoi + téléchargement)'
+              : 'Actualiser depuis le cloud'
             }
-            className={`relative px-2 h-8 flex items-center gap-1 text-sm font-medium disabled:opacity-50 rounded hover:bg-zinc-800 transition-colors ${syncColor}`}
+            className={`relative px-2 h-8 flex items-center gap-1 text-sm font-medium disabled:opacity-50 rounded hover:bg-zinc-800 transition-colors ${syncStatus === 'pull' ? 'text-blue-400' : syncColor || 'text-zinc-300'}`}
           >
-            {/* Icône : nuage avec doubles flèches ↑↓ — symbolise sync bidirectionnel. */}
             <svg
-              className={`w-5 h-5 ${syncing ? 'animate-pulse' : ''}`}
+              className={`w-5 h-5 ${syncStatus === 'pull' ? 'animate-spin' : ''}`}
+              style={{ animationDuration: '2s' }}
               viewBox="0 0 24 24" fill="none" stroke="currentColor"
               strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
               aria-hidden="true"
             >
-              {/* Cloud outline */}
-              <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
-              {/* Flèches ↑↓ à l'intérieur */}
-              <path d="M10 17V13" />
-              <path d="M10 13l-1.5 1.5M10 13l1.5 1.5" />
-              <path d="M14 13v4" />
-              <path d="M14 17l-1.5-1.5M14 17l1.5-1.5" />
+              <polyline points="23 4 23 10 17 10" />
+              <polyline points="1 20 1 14 7 14" />
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
             </svg>
-            {/* Marqueur résultat (✓ / !) ou progression */}
             {syncStatus === 'ok' && <span className="text-xs">✓</span>}
             {(syncStatus === 'err' || syncStatus === 'offline') && <span className="text-xs">!</span>}
             {dlProgress && <span className="font-mono text-[10px]">{dlProgress}</span>}
-            {(syncStatus === 'push' || syncStatus === 'pull') && !dlProgress && (
-              <span className="text-[10px] animate-pulse">{syncStatus === 'push' ? '↑' : '↓'}</span>
-            )}
-            {pendingCount > 0 && !syncing && syncStatus === '' && (
-              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 flex items-center justify-center rounded-full bg-amber-500 text-white text-[9px] font-bold px-1">
-                {pendingCount}
-              </span>
-            )}
           </button>
           {/* Sélecteur Lite / Perso */}
           <div className="relative">
@@ -675,14 +716,16 @@ export function NavBar() {
           <button
             onClick={handleReset}
             title="Vider le cache et recharger l'app"
-            className="px-2 h-8 flex items-center text-sm text-zinc-500 hover:text-zinc-300 rounded hover:bg-zinc-800 transition-colors"
+            className="px-2 h-8 flex items-center text-sm text-zinc-500 hover:text-red-400 rounded hover:bg-zinc-800 transition-colors"
           >
-            {/* Refresh (rotation arrow) */}
+            {/* Corbeille — clarifier "delete cache" vs le bouton Pull voisin
+                qui utilise aussi des flèches circulaires. */}
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
               strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <polyline points="23 4 23 10 17 10" />
-              <polyline points="1 20 1 14 7 14" />
-              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+              <polyline points="3 6 5 6 21 6" />
+              <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6" />
+              <path d="M10 11v6M14 11v6" />
+              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
             </svg>
           </button>
         </div>
