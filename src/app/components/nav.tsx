@@ -246,6 +246,39 @@ export function NavBar() {
     return () => window.removeEventListener(PENDING_CHANGED_EVENT, onChange);
   }, []);
 
+  // ─── Détection nouvelle version (PWA update available) ─────────────────────
+  // sw.js a skipWaiting+clientsClaim → quand un nouveau SW s'installe il prend
+  // le contrôle immédiatement et `controllerchange` fire. Si l'onglet avait
+  // déjà un controller au chargement, ça signifie qu'une nouvelle version est
+  // active mais que le bundle JS en mémoire est l'ancien → on propose un
+  // reload via un bandeau (l'utilisateur n'a plus besoin de "Vider cache").
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    const hadController = !!navigator.serviceWorker.controller;
+    const onCtrlChange = () => { if (hadController) setUpdateAvailable(true); };
+    navigator.serviceWorker.addEventListener('controllerchange', onCtrlChange);
+
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    let onFocus: (() => void) | null = null;
+    void navigator.serviceWorker.getRegistration().then(reg => {
+      if (!reg) return;
+      // SW déjà en waiting au moment où le listener s'installe (cas où la
+      // détection a eu lieu avant le mount).
+      if (reg.waiting && hadController) setUpdateAvailable(true);
+      // Poll régulier (15 min) + check au focus pour détecter rapidement les
+      // déploiements quand l'app reste ouverte longtemps.
+      intervalId = setInterval(() => { void reg.update().catch(() => {}); }, 15 * 60 * 1000);
+      onFocus = () => { void reg.update().catch(() => {}); };
+      window.addEventListener('focus', onFocus);
+    });
+    return () => {
+      navigator.serviceWorker.removeEventListener('controllerchange', onCtrlChange);
+      if (intervalId) clearInterval(intervalId);
+      if (onFocus) window.removeEventListener('focus', onFocus);
+    };
+  }, []);
+
   /** PUSH seul : envoie les opérations en attente (sync_queue Dexie) vers
    *  Supabase. Rapide (1 batch). Bouton visible uniquement si pendingCount>0. */
   async function handlePush() {
@@ -483,6 +516,36 @@ export function NavBar() {
 
   return (
     <div className="bg-zinc-900 border-b border-zinc-700 flex-shrink-0" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+      {/* Bandeau "Nouvelle version disponible" — déclenché par controllerchange
+          du SW (cf. useEffect plus haut). L'utilisateur clique Recharger →
+          window.location.reload() charge le nouveau bundle déjà en cache. */}
+      {updateAvailable && (
+        <div className="flex items-center justify-between gap-2 bg-blue-600 text-white px-3 py-1.5 text-xs">
+          <span className="flex items-center gap-1.5">
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="23 4 23 10 17 10" />
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10" />
+            </svg>
+            Nouvelle version disponible
+          </span>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => window.location.reload()}
+              className="px-2 py-0.5 rounded bg-white text-blue-700 font-semibold hover:bg-blue-50"
+            >
+              Recharger
+            </button>
+            <button
+              onClick={() => setUpdateAvailable(false)}
+              className="px-1 text-white/80 hover:text-white text-base leading-none"
+              title="Plus tard"
+              aria-label="Fermer"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
       <nav className="flex items-center h-8 px-3 gap-1 overflow-x-auto">
         {TABS.map(tab => {
           const active = tab.href === '/'
