@@ -326,14 +326,17 @@ export function A81Client({
                   </td>
                 </tr>
               )}
-              {data.rows.map((r, i) => {
+              {data.rows.map(r => {
                 const monthIdx = Number(r.debut_rotation.slice(5, 7)) - 1;
                 const anyOverride = r.debut_sejour_overridden || r.fin_sejour_overridden;
                 const isM0 = r.split_part === 'm0';
                 const isM1 = r.split_part === 'm1';
+                // Alternance par MOIS (et non par ligne) : tous les rows d'un
+                // même mois ont le même fond, le mois suivant bascule. Aide à
+                // visualiser les blocs mensuels d'un coup d'œil.
                 const rowBg = r.is_fictive
                   ? 'bg-violet-50 dark:bg-violet-950/30'
-                  : (i % 2 ? 'bg-zinc-50/50 dark:bg-zinc-800/20' : '');
+                  : (monthIdx % 2 ? 'bg-zinc-50/50 dark:bg-zinc-800/20' : '');
                 return (
                   <tr key={`${r.instance_id}${r.split_part ?? ''}`} className={rowBg}>
                     <td className="px-2 py-1.5 whitespace-nowrap text-zinc-700 dark:text-zinc-200 italic">
