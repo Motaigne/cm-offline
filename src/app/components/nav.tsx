@@ -340,29 +340,42 @@ export function NavBar() {
         ];
 
         // Compteur de progression incrémenté par chaque mois terminé.
+        // En parallèle (6+ requêtes concurrentes), les timeouts par requête
+        // doivent être plus généreux qu'en série : on évite de marquer en
+        // erreur un mois juste parce qu'il a pris 9s sous charge.
         let completed = 0;
         let failed = 0;
         setDlProgress(queue.length > 0 ? `0/${queue.length}` : '');
 
         const results = await Promise.allSettled(queue.map(async ({ m, loadMode }) => {
           try {
+            // Sentinel `null` pour distinguer timeout (échec réel) de résultat
+            // vide légitime (mois sans rotations/items).
             const [rots, scs] = await Promise.all([
               withTimeout(
                 getRotationsForMonth(m, loadMode),
-                12000,
-                [] as Awaited<ReturnType<typeof getRotationsForMonth>>,
+                25000,
+                null as Awaited<ReturnType<typeof getRotationsForMonth>> | null,
               ),
               planningMonths.has(m)
-                ? withTimeout(getScenariosWithItems(m), 8000, [] as Awaited<ReturnType<typeof getScenariosWithItems>>)
+                ? withTimeout(
+                    getScenariosWithItems(m),
+                    20000,
+                    null as Awaited<ReturnType<typeof getScenariosWithItems>> | null,
+                  )
                 : Promise.resolve([] as Awaited<ReturnType<typeof getScenariosWithItems>>),
             ]);
-            if (rots.length === 0 && scs.length === 0) {
+            if (rots === null || scs === null) {
+              // Timeout sur au moins l'un des deux fetchs.
               failed++;
               return;
             }
+            // Mois légitimement vide (aucune rotation cataloguée + drafts vides) :
+            // ce n'est PAS un échec, juste rien à cacher.
+            if (rots.length === 0 && scs.length === 0) return;
             await withTimeout(
               Promise.all([cacheRotations(rots, m), hydrateDB(scs, m)]),
-              8000,
+              10000,
               undefined,
             );
           } finally {
@@ -482,23 +495,17 @@ export function NavBar() {
     }
   }
 
+  // Modale "Vider cache" — on évite confirm() natif qui ne s'affiche pas
+  // toujours en PWA iPad/iOS standalone (bug connu Safari).
+  const [resetModalOpen, setResetModalOpen] = useState(false);
+  const [resetPendingCount, setResetPendingCount] = useState(0);
   async function handleReset() {
-    // Bloque le clear si des changements locaux n'ont pas encore été syncés :
-    // le clear ne touche pas la queue Dexie mais le reload affichera l'état
-    // serveur avant que la queue ne soit rejouée — risque visuel de "revert".
     const pending = await pendingOpsCount();
-    if (pending > 0) {
-      const proceed = confirm(
-        `${pending} modification${pending > 1 ? 's' : ''} non synchronisée${pending > 1 ? 's' : ''}.\n\n` +
-        `Vider le cache maintenant peut faire réapparaître des items supprimés (l'écran sera rechargé depuis le serveur avant que la queue ne soit rejouée).\n\n` +
-        `Lance d'abord un Sync. Vider quand même ?`,
-      );
-      if (!proceed) return;
-    }
-    const offlineWarn = !navigator.onLine
-      ? '\n\n⚠ Vous êtes hors ligne : l\'app risque d\'être inutilisable jusqu\'à la prochaine connexion. Continuer quand même ?'
-      : '\n\nSi la connexion est instable, l\'app peut devenir partiellement inutilisable jusqu\'à la prochaine bonne connexion.';
-    if (!confirm(`Vider tout le cache et recharger l'app ?${offlineWarn}`)) return;
+    setResetPendingCount(pending);
+    setResetModalOpen(true);
+  }
+  async function performReset() {
+    setResetModalOpen(false);
     await clearAllCaches();
     localStorage.removeItem(DL_KEY);
     if ('serviceWorker' in navigator) {
@@ -771,6 +778,48 @@ export function NavBar() {
               />
             )}
           </button>
+
+          {/* Modale custom Vider cache — remplace confirm() natif qui ne
+              s'affiche pas fiablement en PWA iPad standalone. */}
+          {resetModalOpen && (
+            <>
+              <div className="fixed inset-0 z-[60] bg-black/40" onClick={() => setResetModalOpen(false)} />
+              <div className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-[61] max-w-sm mx-auto bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl p-5 space-y-4">
+                <h2 className="font-semibold text-sm text-zinc-900 dark:text-zinc-100">
+                  {updateAvailable ? 'Charger la nouvelle version ?' : 'Recharger l\'app ?'}
+                </h2>
+                {resetPendingCount > 0 && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 font-medium">
+                    ⚠ {resetPendingCount} modification{resetPendingCount > 1 ? 's' : ''} non synchronisée{resetPendingCount > 1 ? 's' : ''}.
+                    Lance Push d&apos;abord pour ne pas risquer de les perdre visuellement.
+                  </p>
+                )}
+                <p className="text-xs text-zinc-600 dark:text-zinc-300">
+                  Le cache local va être vidé et l&apos;app rechargée
+                  {updateAvailable ? ' avec la dernière version disponible.' : '.'}
+                </p>
+                {!online && (
+                  <p className="text-xs text-red-500">
+                    ⚠ Vous êtes hors ligne : l&apos;app risque d&apos;être inutilisable jusqu&apos;à la prochaine connexion.
+                  </p>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setResetModalOpen(false)}
+                    className="flex-1 py-2.5 rounded-xl border border-zinc-300 dark:border-zinc-700 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    onClick={performReset}
+                    className="flex-1 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-700 dark:bg-zinc-100 dark:hover:bg-zinc-300 text-white dark:text-zinc-900 text-sm font-semibold"
+                  >
+                    Confirmer
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </nav>
     </div>
