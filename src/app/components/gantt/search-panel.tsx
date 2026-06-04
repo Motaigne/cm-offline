@@ -50,8 +50,6 @@ function endDateFromArrivee(arrivee_at: string): string {
   return arrivee_at.slice(0, 10);
 }
 
-const HARD_BLOCKERS = new Set(['sol', 'sim', 'medical', 'instr', 'autre']);
-
 /** Plage corps d'un item (sans RPC) en ms.
  *  - Vol         : [depart_at, arrivee_at].
  *  - Hard blocker: fenêtre d'occupation (8h-18h Paris pour sol/medical/autre,
@@ -77,10 +75,11 @@ function rawRangeMs(item: CalendarItem): [number, number] {
 
 /** Items en conflit avec le candidat (vol) :
  *    1. Vol↔vol : overlap calendaire OU overlap RPC ↔ corps de l'autre vol.
- *    2. Vol↔hard blocker : overlap corps↔fenêtre du hard blocker (8h-18h pour
- *       sol/medical/autre, jour entier pour sim/instr). Le chevauchement RPC
- *       seul ne bloque PLUS — il sera juste rendu en rouge dans le gantt.
- *    3. Congé/TAF/CSS : jamais bloquants (RPC peut les chevaucher partiellement). */
+ *    2. Vol↔autre activité (sol/sim/medical/instr/autre/conge/conge_ss/off/taf) :
+ *       overlap corps↔fenêtre de l'item. Fenêtre = 8h-18h Paris pour
+ *       sol/medical/autre, jour entier pour sim/instr, jours pleins UTC pour
+ *       conge/conge_ss/off/taf. Le chevauchement RPC seul ne bloque pas —
+ *       il sera juste rendu en rouge dans le gantt. */
 function getConflictingItems(
   items: CalendarItem[],
   candDepartAt: string,
@@ -101,14 +100,9 @@ function getConflictingItems(
       const [iStart, iEnd] = rawRangeMs(i);
       return iStart < candRpcEndMs && candDepartMs < iEnd;
     }
-    if (HARD_BLOCKERS.has(i.kind)) {
-      // Seul l'overlap entre le CORPS du vol et la fenêtre du hard blocker
-      // bloque. L'overlap RPC↔hard blocker est désormais autorisé (signal rouge).
-      const [iStart, iEnd] = rawRangeMs(i);
-      return iStart < candArriveeMs && candDepartMs < iEnd;
-    }
-    // Soft blockers (conge / taf / conge_ss) : jamais bloquants ici.
-    return false;
+    // Toute autre activité : overlap corps du vol ↔ fenêtre de l'item.
+    const [iStart, iEnd] = rawRangeMs(i);
+    return iStart < candArriveeMs && candDepartMs < iEnd;
   });
 }
 
