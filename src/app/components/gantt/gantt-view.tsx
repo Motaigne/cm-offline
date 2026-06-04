@@ -2722,24 +2722,26 @@ export function GanttView({
                         </div>
                         <div className="flex flex-col gap-1.5">
                           <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide">Catégorie</span>
-                          {([
-                            { value: 'dda_vol',     label: 'DDA Vol' },
-                            { value: 'vol_p',       label: 'Vol P' },
-                            { value: 'elabo_suivi', label: 'Élabo/Suivi' },
-                          ] as { value: BidCategory; label: string }[]).map(opt => (
-                            <button
-                              key={opt.value}
-                              onClick={() => setEditBidCat(opt.value)}
-                              className={[
-                                'px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all min-h-[36px] text-left',
-                                editBidCat === opt.value
-                                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300'
-                                  : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-zinc-400',
-                              ].join(' ')}
-                            >
-                              {opt.label}
-                            </button>
-                          ))}
+                          <div className="flex gap-1.5">
+                            {([
+                              { value: 'dda_vol',     label: 'DDA' },
+                              { value: 'vol_p',       label: 'Vol P' },
+                              { value: 'elabo_suivi', label: 'Élabo/Suivi' },
+                            ] as { value: BidCategory; label: string }[]).map(opt => (
+                              <button
+                                key={opt.value}
+                                onClick={() => setEditBidCat(opt.value)}
+                                className={[
+                                  'flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold border transition-all min-h-[36px] text-center whitespace-nowrap',
+                                  editBidCat === opt.value
+                                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300'
+                                    : 'border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-zinc-400',
+                                ].join(' ')}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       </div>
 
