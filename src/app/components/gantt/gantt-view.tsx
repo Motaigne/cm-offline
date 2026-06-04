@@ -2495,7 +2495,8 @@ export function GanttView({
                     {/* Bouton "Rotations" (tout à gauche) — ouvre la cascade categoryPicker
                         pré-rempli (scénario + date du jour cliqué) ; après le choix de
                         catégorie on saute le scenarioPicker et on file direct au
-                        SearchPanel. Même style que le bouton "Rotations" de la barre du bas. */}
+                        SearchPanel. Bleu comme le bouton "Rotations" de la barre du
+                        bas, forme rectangulaire des boutons d'activité (congés/CSS...). */}
                     <button
                       onClick={e => {
                         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -2504,7 +2505,7 @@ export function GanttView({
                         setSheet(null);
                         setCategoryPicker({ rect, prefilledScenario: scName, prefilledDate: d });
                       }}
-                      className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors"
+                      className="px-4 py-2 rounded-lg text-sm font-medium border-2 border-transparent bg-blue-600 hover:bg-blue-500 text-white transition-all flex items-center gap-1.5"
                       title="Rechercher une rotation partant ce jour"
                     >
                       <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
@@ -2639,14 +2640,24 @@ export function GanttView({
       </div>
 
       {/* Picker catégorie — étape 1 (apparait au clic sur "Rotations") */}
-      {categoryPicker && (
+      {categoryPicker && (() => {
+        // Ancrage : on tente d'aligner le bord gauche du picker sur celui du
+        // bouton, en clampant pour ne jamais sortir du viewport (déborderait
+        // à gauche quand le bouton est à gauche du day-sheet, à droite quand
+        // il s'agit du bouton de la barre du bas). Largeur estimée ~320px.
+        const PICKER_W = 320;
+        const left = Math.max(8, Math.min(
+          categoryPicker.rect.left,
+          window.innerWidth - PICKER_W - 8,
+        ));
+        return (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setCategoryPicker(null)} />
           <div
             className="fixed z-50 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-2xl shadow-2xl p-3 flex flex-col gap-2"
             style={{
               bottom: window.innerHeight - categoryPicker.rect.top + 8,
-              right: Math.max(8, window.innerWidth - categoryPicker.rect.right),
+              left,
             }}
           >
             <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide">Catégorie</span>
@@ -2682,7 +2693,8 @@ export function GanttView({
             </div>
           </div>
         </>
-      )}
+        );
+      })()}
 
       {/* Picker scénario — étape 2 (après choix de la catégorie) */}
       {scenarioPicker && (
