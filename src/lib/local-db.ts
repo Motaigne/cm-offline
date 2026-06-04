@@ -5,6 +5,7 @@ import type { UserNote } from '@/app/actions/notes';
 import type { ProfileVersion } from '@/app/actions/profile-version';
 import type { AnnexeRow } from '@/lib/annexe';
 import type { A81OverrideLocal } from '@/lib/a81-local';
+import { computeEffectiveRpc } from '@/lib/rpc';
 
 interface StoredDraft {
   id: string;
@@ -120,9 +121,17 @@ function shiftMonthStr(m: string, delta: number): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
-/** Items du mois M-1 dont end_date déborde en M (= spillovers à afficher en M).
- *  Retourne une Map<scenarioName, items>. Items stockés sous leur draft d'origine
- *  (mois de départ) — exposés en lecture seule via _isSpillover=true. */
+/** Items de M-1 à injecter en M. 3 sous-cas :
+ *    - body-spillover : vol dont start_date < M et end_date >= M (vol à cheval) ;
+ *    - RPC-only spillover : vol dont le corps reste en M-1 mais dont le RPC
+ *      étendu (mode chevauchement) atteint M. Le client ne dessine que la
+ *      queue post-RPC en M.
+ *    - pause-spillover : congé/TAF/CSS/sol/sim/medical/instr/autre de M-1 qui
+ *      tombe dans la fenêtre RPC d'un spillover ci-dessus. Inclus uniquement
+ *      pour que `computeEffectiveRpc` puisse recalculer les pauses côté client.
+ *      Jamais rendu (clipItem renvoie null), jamais validé (filtré côté DDA).
+ *  Tous les items sont marqués `_isSpillover=true` (read-only + filtres copy/
+ *  reset existants). Les sous-cas sont distingués par les flags dédiés. */
 async function loadSpillovers(month: string): Promise<Map<string, CalendarItem[]>> {
   const prevMonth = shiftMonthStr(month, -1);
   const prevDrafts = await db.drafts.where('target_month').equals(prevMonth).toArray();
@@ -132,18 +141,69 @@ async function loadSpillovers(month: string): Promise<Map<string, CalendarItem[]
   const byId = new Map<string, string>(); // draft_id → scenario name
   for (const d of prevDrafts) byId.set(d.id, d.name);
 
-  const items = await db.items.where('draft_id').anyOf(prevDrafts.map(d => d.id)).toArray();
-  for (const it of items) {
-    if (it.kind !== 'flight') continue;
-    if (it.start_date.slice(0, 7) >= month) continue;
-    if (it.end_date.slice(0, 7) < month) continue;
-    const name = byId.get(it.draft_id);
+  const monthFirstMs = new Date(month + '-01T00:00:00Z').getTime();
+
+  const rawItems = await db.items.where('draft_id').anyOf(prevDrafts.map(d => d.id)).toArray();
+  const itemsByDraft = new Map<string, CalendarItem[]>();
+  for (const it of rawItems) {
+    const { draft_id, ...rest } = it as unknown as { draft_id: string } & CalendarItem;
+    const arr = itemsByDraft.get(draft_id) ?? [];
+    arr.push(rest as CalendarItem);
+    itemsByDraft.set(draft_id, arr);
+  }
+
+  for (const [draftId, draftItems] of itemsByDraft) {
+    const name = byId.get(draftId);
     if (!name) continue;
-    const arr = result.get(name) ?? [];
-    arr.push({ ...it, _isSpillover: true } as unknown as CalendarItem);
-    // strip draft_id pour matcher la forme CalendarItem
-    delete (arr[arr.length - 1] as unknown as { draft_id?: string }).draft_id;
-    result.set(name, arr);
+
+    const flights = draftItems.filter(i => i.kind === 'flight');
+    const spilledFlights: CalendarItem[] = [];
+    // ids des items M-1 (non-vol) à injecter comme pause-spillover.
+    const pauseIds = new Set<string>();
+
+    for (const flight of flights) {
+      const startInM   = flight.start_date.slice(0, 7) >= month;
+      if (startInM) continue;
+      const endsBeforeM = flight.end_date.slice(0, 7) < month;
+      const bodyCrosses = !endsBeforeM; // start < M && end >= M
+      if (bodyCrosses) {
+        spilledFlights.push({ ...flight, _isSpillover: true });
+      } else {
+        // Calcul du RPC max (chevauchement ON) contre tous les items du draft :
+        // si la queue atteint M, on flag _rpcOnlySpillover.
+        const eff = computeEffectiveRpc(flight, draftItems, true);
+        if (eff.endMs >= monthFirstMs) {
+          spilledFlights.push({ ...flight, _isSpillover: true, _rpcOnlySpillover: true });
+        }
+      }
+    }
+
+    // Pour chaque vol spillover (body ou RPC-only), on identifie les items
+    // M-1 (hors vol) qui tombent dans sa fenêtre RPC étendue → pause-spillovers.
+    for (const flight of spilledFlights) {
+      const meta = (flight.meta && typeof flight.meta === 'object' && !Array.isArray(flight.meta))
+        ? flight.meta as Record<string, unknown> : null;
+      const arrivee = typeof meta?.arrivee_at === 'string' ? new Date(meta.arrivee_at).getTime() : NaN;
+      if (!Number.isFinite(arrivee)) continue;
+      const eff = computeEffectiveRpc(flight, draftItems, true);
+      const winStart = arrivee;
+      const winEnd   = eff.endMs;
+      if (winEnd <= winStart) continue;
+      for (const it of draftItems) {
+        if (it.kind === 'flight') continue;
+        if (pauseIds.has(it.id)) continue;
+        const sMs = new Date(it.start_date + 'T00:00:00Z').getTime();
+        const eMs = new Date(it.end_date   + 'T00:00:00Z').getTime() + 86_400_000;
+        if (sMs < winEnd && eMs > winStart) pauseIds.add(it.id);
+      }
+    }
+
+    const pauseItems = draftItems
+      .filter(it => pauseIds.has(it.id))
+      .map(it => ({ ...it, _isSpillover: true, _isPauseSpillover: true } as CalendarItem));
+
+    const all = [...spilledFlights, ...pauseItems];
+    if (all.length > 0) result.set(name, all);
   }
   return result;
 }

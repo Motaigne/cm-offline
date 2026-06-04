@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import type { ActivityKind, BidCategory } from '@/lib/activity-meta';
 import type { CalendarItem } from '@/app/page';
+import { computeEffectiveRpc } from '@/lib/rpc';
 
 const SCENARIO_NAMES = ['A', 'B', 'C'] as const;
 export type ScenarioName = typeof SCENARIO_NAMES[number];
@@ -136,8 +137,13 @@ function shiftMonth(month: string, delta: number): string {
 }
 
 /** Charge scénarios + items pour un mois — appelable côté client pour la navigation offline.
- *  Inclut les vols « à cheval » du mois précédent (point E) : flights dont end_date est dans M
- *  alors qu'ils sont rattachés à un draft de M-1, marqués _isSpillover=true.
+ *  Inclut les items de M-1 injectés en M :
+ *    - body-spillover : vol dont start_date<M et end_date>=M ;
+ *    - RPC-only spillover : vol dont le RPC étendu (chevauchement) atteint M
+ *      (corps reste en M-1, on n'affiche que la queue post-RPC en M) ;
+ *    - pause-spillover : congé/TAF/CSS/hard-blocker de M-1 dans la fenêtre RPC
+ *      d'un spillover ci-dessus, requis pour que computeEffectiveRpc côté
+ *      client retrouve les pauses. Jamais rendu, jamais validé.
  */
 export async function getScenariosWithItems(month: string): Promise<{ name: ScenarioName; id: string; items: CalendarItem[] }[]> {
   const supabase = await createClient();
@@ -152,9 +158,10 @@ export async function getScenariosWithItems(month: string): Promise<{ name: Scen
     .select('id, kind, start_date, end_date, bid_category, pairing_instance_id, meta, draft_id')
     .in('draft_id', draftIds);
 
-  // Spillovers : drafts du mois précédent (s'ils existent) avec leurs vols se prolongeant en M
+  // Items de M-1 : on charge TOUT le draft pour pouvoir calculer le RPC max
+  // et identifier vols+pauses qui débordent en M.
   const prevMonth = shiftMonth(month, -1);
-  const monthPrefix = month; // "YYYY-MM"
+  const monthFirstMs = new Date(`${month}-01T00:00:00Z`).getTime();
   const { data: prevDrafts } = await supabase
     .from('planning_draft')
     .select('id, name')
@@ -166,16 +173,60 @@ export async function getScenariosWithItems(month: string): Promise<{ name: Scen
     if (d.name === 'A' || d.name === 'B' || d.name === 'C') prevDraftByName.set(d.name, d.id);
   }
 
-  let spillovers: (CalendarItem & { draft_id: string })[] = [];
+  const prevItemsByDraft = new Map<string, CalendarItem[]>();
   if (prevDraftByName.size > 0) {
     const { data: prevItems } = await supabase
       .from('planning_item')
       .select('id, kind, start_date, end_date, bid_category, pairing_instance_id, meta, draft_id')
-      .in('draft_id', Array.from(prevDraftByName.values()))
-      .eq('kind', 'flight')
-      .gte('end_date', `${monthPrefix}-01`);
-    spillovers = ((prevItems ?? []) as (CalendarItem & { draft_id: string })[])
-      .filter(it => it.start_date.slice(0, 7) < monthPrefix && it.end_date.slice(0, 7) >= monthPrefix);
+      .in('draft_id', Array.from(prevDraftByName.values()));
+    for (const raw of (prevItems ?? []) as (CalendarItem & { draft_id: string })[]) {
+      const { draft_id, ...rest } = raw;
+      const arr = prevItemsByDraft.get(draft_id) ?? [];
+      arr.push(rest as CalendarItem);
+      prevItemsByDraft.set(draft_id, arr);
+    }
+  }
+
+  /** Construit la liste de spillovers (vols body/RPC + pauses) pour un draft. */
+  function buildSpillover(prevDraftId: string): CalendarItem[] {
+    const draftItems = prevItemsByDraft.get(prevDraftId);
+    if (!draftItems) return [];
+    const spilledFlights: CalendarItem[] = [];
+    const pauseIds = new Set<string>();
+    for (const flight of draftItems) {
+      if (flight.kind !== 'flight') continue;
+      if (flight.start_date.slice(0, 7) >= month) continue;
+      const bodyCrosses = flight.end_date.slice(0, 7) >= month;
+      if (bodyCrosses) {
+        spilledFlights.push({ ...flight, _isSpillover: true });
+      } else {
+        const eff = computeEffectiveRpc(flight, draftItems, true);
+        if (eff.endMs >= monthFirstMs) {
+          spilledFlights.push({ ...flight, _isSpillover: true, _rpcOnlySpillover: true });
+        }
+      }
+    }
+    for (const flight of spilledFlights) {
+      const meta = (flight.meta && typeof flight.meta === 'object' && !Array.isArray(flight.meta))
+        ? flight.meta as Record<string, unknown> : null;
+      const arrivee = typeof meta?.arrivee_at === 'string' ? new Date(meta.arrivee_at).getTime() : NaN;
+      if (!Number.isFinite(arrivee)) continue;
+      const eff = computeEffectiveRpc(flight, draftItems, true);
+      const winStart = arrivee;
+      const winEnd   = eff.endMs;
+      if (winEnd <= winStart) continue;
+      for (const it of draftItems) {
+        if (it.kind === 'flight') continue;
+        if (pauseIds.has(it.id)) continue;
+        const sMs = new Date(it.start_date + 'T00:00:00Z').getTime();
+        const eMs = new Date(it.end_date   + 'T00:00:00Z').getTime() + 86_400_000;
+        if (sMs < winEnd && eMs > winStart) pauseIds.add(it.id);
+      }
+    }
+    const pauseItems = draftItems
+      .filter(it => pauseIds.has(it.id))
+      .map(it => ({ ...it, _isSpillover: true, _isPauseSpillover: true } as CalendarItem));
+    return [...spilledFlights, ...pauseItems];
   }
 
   return drafts.map(draft => {
@@ -184,11 +235,7 @@ export async function getScenariosWithItems(month: string): Promise<{ name: Scen
       .map(({ draft_id: _d, ...it }) => it as CalendarItem);
 
     const prevDraftId = prevDraftByName.get(draft.name);
-    const cross = prevDraftId
-      ? spillovers
-          .filter(it => it.draft_id === prevDraftId)
-          .map(({ draft_id: _d, ...it }) => ({ ...it, _isSpillover: true } as CalendarItem))
-      : [];
+    const cross = prevDraftId ? buildSpillover(prevDraftId) : [];
 
     return { name: draft.name, id: draft.id, items: [...own, ...cross] };
   });

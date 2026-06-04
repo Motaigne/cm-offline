@@ -235,6 +235,10 @@ export function validateScenario(
   // poseur est un spillover en vue M). Les paires both-spillover sont
   // skippées plus bas (déjà validées dans la vue de M-1).
   const sorted = [...items]
+    // Pause-spillovers (M-1 conges/TAF inclus uniquement comme contexte RPC)
+    // ne participent jamais à la validation DDA — ils auraient déjà été pris
+    // en compte dans la vue M-1.
+    .filter(it => !it._isPauseSpillover)
     .filter(it => categoryOf(it) !== null)
     .sort((a, b) => a.start_date.localeCompare(b.start_date));
 

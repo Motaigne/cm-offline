@@ -88,6 +88,8 @@ export async function computeMonthlyIrMfFromLocalCache(
     if (name !== 'A' && name !== 'B' && name !== 'C') continue;
     for (const item of scn.items) {
       if (item.kind !== 'flight') continue;
+      // RPC-only spillover : corps + IR/MF déjà comptés en M-1 (vue de départ).
+      if (item._rpcOnlySpillover) continue;
       if (!item.pairing_instance_id) continue;
       const entry = byInstance.get(item.pairing_instance_id);
       if (!entry) {

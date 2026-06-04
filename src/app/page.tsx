@@ -22,8 +22,18 @@ export type CalendarItem = {
   /** Référence vers pairing_instance — requis pour EP4 / IR-MF / Article 81. */
   pairing_instance_id?: string | null;
   meta: import('@/types/supabase').Json | null;
-  /** Flag runtime (non persisté) — vol à cheval issu du mois précédent. */
+  /** Flag runtime (non persisté) — item issu de M-1 injecté en M.
+   *  Couvre les 3 sous-cas via `_rpcOnlySpillover` / `_isPauseSpillover`. */
   _isSpillover?: boolean;
+  /** Sous-cas : vol dont le CORPS reste en M-1 mais dont le RPC étendu
+   *  (mode chevauchement) atteint M. clipItem renvoie un clip synthétique
+   *  { start:1, end:1 } pour permettre à DraggableBar de rendre la queue
+   *  post-RPC ; le corps et le pré-repos sont sautés. */
+  _rpcOnlySpillover?: boolean;
+  /** Sous-cas : congé/TAF/CSS/hard-blocker de M-1 inclus dans `scenario.items`
+   *  UNIQUEMENT pour que `computeEffectiveRpc` puisse calculer correctement
+   *  les pauses des vols spillover. Jamais rendu, jamais validé. */
+  _isPauseSpillover?: boolean;
 };
 
 export type Scenario = {

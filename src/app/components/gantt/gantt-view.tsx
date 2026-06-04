@@ -156,6 +156,11 @@ function dayFrac(isoStr: string, y: number, mo: number, dim: number): number {
 
 function clipItem(item: CalendarItem, y: number, mo: number) {
   const prefix = `${y}-${String(mo).padStart(2,'0')}`;
+  // Pause-spillover : contexte de calcul RPC uniquement, jamais rendu.
+  if (item._isPauseSpillover) return null;
+  // RPC-only spillover : corps en M-1, RPC étendu en M. Clip synthétique pour
+  // déclencher DraggableBar (qui ne rendra que les barres post-RPC).
+  if (item._rpcOnlySpillover) return { start: 1, end: 1 };
   if (item.end_date.slice(0,7) < prefix || item.start_date.slice(0,7) > prefix) return null;
   const dim = daysInMonth(y, mo);
   const start = item.start_date.slice(0,7) < prefix ? 1 : dayNum(item.start_date);
@@ -505,6 +510,9 @@ function DraggableBar({
   isFictive?: boolean;
 }) {
   const readOnly = !!item._isSpillover;
+  // RPC-only spillover : vol dont le corps est en M-1 et dont la queue RPC
+  // (mode chevauchement) atteint M. On ne dessine que les barres post-RPC.
+  const isRpcOnly = !!item._rpcOnlySpillover;
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
     id: item.id,
     data: { item, clip },
@@ -564,33 +572,39 @@ function DraggableBar({
   };
 
   if (item.kind === 'flight' && departAt && arriveeAt) {
-    const startFrac = dayFrac(departAt,  year, mo, dim);
-    const endFrac   = dayFrac(arriveeAt, year, mo, dim);
-    leftPct = Math.max(0, (startFrac - 1) / dim * 100);
-    wPct    = Math.max(0.3, (Math.min(endFrac, dim + 1) - Math.max(startFrac, 1)) / dim * 100);
+    if (isRpcOnly) {
+      // Corps + pré-repos en M-1 : non rendus en M.
+      leftPct = 0;
+      wPct = 0;
+    } else {
+      const startFrac = dayFrac(departAt,  year, mo, dim);
+      const endFrac   = dayFrac(arriveeAt, year, mo, dim);
+      leftPct = Math.max(0, (startFrac - 1) / dim * 100);
+      wPct    = Math.max(0.3, (Math.min(endFrac, dim + 1) - Math.max(startFrac, 1)) / dim * 100);
 
-    // Barre pré-activité : du début d'activité (briefing) jusqu'au block-off.
-    // Source de vérité : scheduled_begin_activity_at ; fallback sur rest_before_h
-    // (durée en heures, soustraite du block-off) si pas de timestamp.
-    const preStartIso = beginActAt
-      ?? (restBeforeH > 0 ? new Date(new Date(departAt).getTime() - restBeforeH * 3_600_000).toISOString() : null);
-    if (preStartIso) {
-      const rFrac = dayFrac(preStartIso, year, mo, dim);
-      const rLeft = Math.max(0, (rFrac - 1) / dim * 100);
-      const rW    = leftPct - rLeft;
-      if (rW > 0.05) restBeforeBar = { left: rLeft, width: rW };
-      // Chevauchement éventuel avec une fenêtre hard blocker → bandes rouges.
-      const preStartMs = new Date(preStartIso).getTime();
-      const departMs   = new Date(departAt).getTime();
-      for (const other of scenarioItems) {
-        if (other.id === item.id) continue;
-        const w = hardBlockerWindow(other);
-        if (!w) continue;
-        const a = Math.max(preStartMs, w.startMs);
-        const b = Math.min(departMs,   w.endMs);
-        if (b > a) {
-          const bar = segToBar(a, b);
-          if (bar) restBeforeHardBars.push(bar);
+      // Barre pré-activité : du début d'activité (briefing) jusqu'au block-off.
+      // Source de vérité : scheduled_begin_activity_at ; fallback sur rest_before_h
+      // (durée en heures, soustraite du block-off) si pas de timestamp.
+      const preStartIso = beginActAt
+        ?? (restBeforeH > 0 ? new Date(new Date(departAt).getTime() - restBeforeH * 3_600_000).toISOString() : null);
+      if (preStartIso) {
+        const rFrac = dayFrac(preStartIso, year, mo, dim);
+        const rLeft = Math.max(0, (rFrac - 1) / dim * 100);
+        const rW    = leftPct - rLeft;
+        if (rW > 0.05) restBeforeBar = { left: rLeft, width: rW };
+        // Chevauchement éventuel avec une fenêtre hard blocker → bandes rouges.
+        const preStartMs = new Date(preStartIso).getTime();
+        const departMs   = new Date(departAt).getTime();
+        for (const other of scenarioItems) {
+          if (other.id === item.id) continue;
+          const w = hardBlockerWindow(other);
+          if (!w) continue;
+          const a = Math.max(preStartMs, w.startMs);
+          const b = Math.min(departMs,   w.endMs);
+          if (b > a) {
+            const bar = segToBar(a, b);
+            if (bar) restBeforeHardBars.push(bar);
+          }
         }
       }
     }
@@ -742,48 +756,51 @@ function DraggableBar({
         </span>
       )}
 
-      {/* Main bar */}
-      <div
-        ref={setNodeRef}
-        style={{
-          position: 'absolute',
-          left: `${leftPct}%`,
-          width: `${wPct}%`,
-          top: '50%',
-          marginTop: -(BAR_H / 2),
-          height: BAR_H,
-          // Projection : fond violet clair, sinon couleur kind standard.
-          backgroundColor: isFictive ? '#DDD6FE' : actMeta.color,
-          color: isFictive ? '#5B21B6' : actMeta.textColor,
-          opacity: isDragSource ? 0.35 : (readOnly ? 0.7 : 1),
-          zIndex: 10,
-          transform: transform ? CSS.Translate.toString(transform) : undefined,
-          cursor: readOnly ? 'default' : 'grab',
-          touchAction: readOnly ? 'auto' : 'none',
-          fontStyle: readOnly ? 'italic' : 'normal',
-          outline: readOnly ? '1px dashed rgba(255,255,255,0.6)' : 'none',
-          outlineOffset: -2,
-        }}
-        className="flex items-center px-2 rounded-md select-none overflow-hidden"
-        {...(readOnly ? {} : attributes)}
-        {...(readOnly ? {} : listeners)}
-        onClick={readOnly ? undefined : (e) => { e.stopPropagation(); onEdit(item); }}
-        title={readOnly ? 'Vol à cheval (mois précédent) — modifiable depuis le mois de départ' : undefined}
-      >
-        <div className="flex flex-col min-w-0 flex-1 gap-px">
-          <span className="text-[11px] font-semibold truncate leading-none">{label}</span>
-          {euroVal !== null && (
-            <span className="text-[10px] font-mono leading-none opacity-95">
-              {Math.round(euroVal)}€{isProrated ? '*' : ''}
-            </span>
-          )}
-          {hcrDisplay !== null && (
-            <span className="text-[9px] leading-none opacity-60">
-              {hcrDisplay.toFixed(2)}h{prime > 0 ? ` +${prime}P` : ''}
-            </span>
-          )}
+      {/* Main bar — masquée si _rpcOnlySpillover (corps en M-1, seule la
+          queue RPC est rendue en M). */}
+      {!isRpcOnly && (
+        <div
+          ref={setNodeRef}
+          style={{
+            position: 'absolute',
+            left: `${leftPct}%`,
+            width: `${wPct}%`,
+            top: '50%',
+            marginTop: -(BAR_H / 2),
+            height: BAR_H,
+            // Projection : fond violet clair, sinon couleur kind standard.
+            backgroundColor: isFictive ? '#DDD6FE' : actMeta.color,
+            color: isFictive ? '#5B21B6' : actMeta.textColor,
+            opacity: isDragSource ? 0.35 : (readOnly ? 0.7 : 1),
+            zIndex: 10,
+            transform: transform ? CSS.Translate.toString(transform) : undefined,
+            cursor: readOnly ? 'default' : 'grab',
+            touchAction: readOnly ? 'auto' : 'none',
+            fontStyle: readOnly ? 'italic' : 'normal',
+            outline: readOnly ? '1px dashed rgba(255,255,255,0.6)' : 'none',
+            outlineOffset: -2,
+          }}
+          className="flex items-center px-2 rounded-md select-none overflow-hidden"
+          {...(readOnly ? {} : attributes)}
+          {...(readOnly ? {} : listeners)}
+          onClick={readOnly ? undefined : (e) => { e.stopPropagation(); onEdit(item); }}
+          title={readOnly ? 'Vol à cheval (mois précédent) — modifiable depuis le mois de départ' : undefined}
+        >
+          <div className="flex flex-col min-w-0 flex-1 gap-px">
+            <span className="text-[11px] font-semibold truncate leading-none">{label}</span>
+            {euroVal !== null && (
+              <span className="text-[10px] font-mono leading-none opacity-95">
+                {Math.round(euroVal)}€{isProrated ? '*' : ''}
+              </span>
+            )}
+            {hcrDisplay !== null && (
+              <span className="text-[9px] leading-none opacity-60">
+                {hcrDisplay.toFixed(2)}h{prime > 0 ? ` +${prime}P` : ''}
+              </span>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </>
   );
 }
