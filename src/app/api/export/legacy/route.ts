@@ -261,6 +261,14 @@ export async function GET(req: Request) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return new Response('Unauthorized', { status: 401 });
+  // Export reserve admin (UI deja conditionnee, on enforce cote serveur
+  // pour empecher un user logge de deviner l'URL).
+  const { data: profile } = await supabase
+    .from('user_profile')
+    .select('is_admin')
+    .eq('user_id', user.id)
+    .single();
+  if (!profile?.is_admin) return new Response('Forbidden', { status: 403 });
 
   const url = new URL(req.url);
   const month  = url.searchParams.get('month');
