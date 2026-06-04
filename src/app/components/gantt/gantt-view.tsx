@@ -2483,11 +2483,20 @@ export function GanttView({
               className="fixed bottom-0 left-0 right-0 z-30 bg-white dark:bg-zinc-900 rounded-t-2xl shadow-xl overflow-y-auto"
               style={editSheetTop != null ? { top: editSheetTop } : undefined}
             >
+              {/* Edit-flight : X positionné en absolu en haut-droite pour
+                  libérer le flux et coller le contenu en haut de la zone. */}
+              {sheet.mode === 'edit' && sheet.item?.kind === 'flight' && (
+                <button
+                  onClick={() => setSheet(null)}
+                  className="absolute top-2 right-3 z-10 text-zinc-400 hover:text-zinc-600 text-2xl leading-none"
+                  aria-label="Fermer"
+                >×</button>
+              )}
               <div className="p-5 space-y-4 h-full flex flex-col">
 
-                {/* Sheet header — en mode edit-flight le scénario+date sont
-                    déplacés dans la colonne de gauche du layout 2 colonnes. */}
-                {!(sheet.mode === 'edit' && sheet.item?.kind === 'flight') ? (
+                {/* Sheet header — masqué en edit-flight (X est en absolu et
+                    scn+date sont dans la colonne gauche du layout 2 cols). */}
+                {!(sheet.mode === 'edit' && sheet.item?.kind === 'flight') && (
                   <div className="flex items-center justify-between">
                     <div>
                       <span className="text-xs font-medium text-zinc-400 uppercase tracking-wide">
@@ -2502,10 +2511,6 @@ export function GanttView({
                     <div className="flex items-center gap-2">
                       <button onClick={() => setSheet(null)} className="text-zinc-400 hover:text-zinc-600 text-2xl leading-none">×</button>
                     </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-end">
-                    <button onClick={() => setSheet(null)} className="text-zinc-400 hover:text-zinc-600 text-2xl leading-none">×</button>
                   </div>
                 )}
 
