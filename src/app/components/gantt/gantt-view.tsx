@@ -1125,7 +1125,13 @@ export function GanttView({
   const [searchDate,     setSearchDate]     = useState<string | null>(null);
   const [searchPanelTop, setSearchPanelTop] = useState<number | undefined>(undefined);
   // Pickers en cascade : Rotations → catégorie → scénario → SearchPanel.
-  const [categoryPicker, setCategoryPicker] = useState<{ rect: DOMRect } | null>(null);
+  // `prefilledScenario` + `prefilledDate` permettent au flow "clic jour → Rotations"
+  // de sauter l'étape scénario (déjà connue) et d'aller direct au SearchPanel.
+  const [categoryPicker, setCategoryPicker] = useState<{
+    rect: DOMRect;
+    prefilledScenario?: ScenarioName;
+    prefilledDate?: string;
+  } | null>(null);
   const [scenarioPicker, setScenarioPicker] = useState<{ rect: DOMRect; category: BidCategory } | null>(null);
   const scenarioRowsRef = useRef<Map<ScenarioName, HTMLDivElement>>(new Map());
 
@@ -2501,23 +2507,25 @@ export function GanttView({
                     >
                       📝 Note
                     </button>
-                    {/* Bouton "Rotation" — ouvre SearchPanel pré-filtré sur ce
-                        jour + ce scénario (catégorie reste à choisir dans le panel). */}
+                    {/* Bouton "Rotations" — ouvre la cascade categoryPicker pré-rempli
+                        (scénario + date du jour cliqué) ; après le choix de catégorie
+                        on saute le scenarioPicker et on file direct au SearchPanel.
+                        Même style que le bouton "Rotations" de la barre du bas. */}
                     <button
-                      onClick={() => {
+                      onClick={e => {
+                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
                         const d = sheet.date;
                         const scName = sheet.scenarioName;
                         setSheet(null);
-                        setSearchScenario(scName);
-                        setSearchCategory(null);
-                        setSearchDate(d);
-                        setSearchPanelTop(undefined);
-                        setSearchOpen(true);
+                        setCategoryPicker({ rect, prefilledScenario: scName, prefilledDate: d });
                       }}
-                      className="px-4 py-2 rounded-lg text-sm font-medium border-2 border-dashed border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:border-blue-400 hover:text-blue-600 transition-all"
+                      className="ml-auto flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors"
                       title="Rechercher une rotation partant ce jour"
                     >
-                      ✈ Rotation
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                        <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+                      </svg>
+                      Rotations
                     </button>
                   </div>
                 )}
@@ -2634,8 +2642,20 @@ export function GanttView({
                 <button
                   key={opt.value}
                   onClick={() => {
-                    setScenarioPicker({ rect: categoryPicker.rect, category: opt.value });
-                    setCategoryPicker(null);
+                    const pre = categoryPicker.prefilledScenario;
+                    if (pre) {
+                      // Day-sheet flow : scénario déjà connu → skip scenarioPicker
+                      const rowEl = scenarioRowsRef.current.get(pre);
+                      setSearchCategory(opt.value);
+                      setSearchScenario(pre);
+                      setSearchDate(categoryPicker.prefilledDate ?? null);
+                      setSearchPanelTop(rowEl?.getBoundingClientRect().bottom);
+                      setCategoryPicker(null);
+                      setSearchOpen(true);
+                    } else {
+                      setScenarioPicker({ rect: categoryPicker.rect, category: opt.value });
+                      setCategoryPicker(null);
+                    }
                   }}
                   className="px-4 h-12 text-sm font-bold rounded-xl bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:bg-zinc-700 dark:hover:bg-zinc-300 active:scale-95 transition-all whitespace-nowrap"
                 >
