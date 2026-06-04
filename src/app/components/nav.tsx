@@ -516,36 +516,6 @@ export function NavBar() {
 
   return (
     <div className="bg-zinc-900 border-b border-zinc-700 flex-shrink-0" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
-      {/* Bandeau "Nouvelle version disponible" — déclenché par controllerchange
-          du SW (cf. useEffect plus haut). L'utilisateur clique Recharger →
-          window.location.reload() charge le nouveau bundle déjà en cache. */}
-      {updateAvailable && (
-        <div className="flex items-center justify-between gap-2 bg-blue-600 text-white px-3 py-1.5 text-xs">
-          <span className="flex items-center gap-1.5">
-            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <polyline points="23 4 23 10 17 10" />
-              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10" />
-            </svg>
-            Nouvelle version disponible
-          </span>
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => window.location.reload()}
-              className="px-2 py-0.5 rounded bg-white text-blue-700 font-semibold hover:bg-blue-50"
-            >
-              Recharger
-            </button>
-            <button
-              onClick={() => setUpdateAvailable(false)}
-              className="px-1 text-white/80 hover:text-white text-base leading-none"
-              title="Plus tard"
-              aria-label="Fermer"
-            >
-              ×
-            </button>
-          </div>
-        </div>
-      )}
       <nav className="flex items-center h-8 px-3 gap-1 overflow-x-auto">
         {TABS.map(tab => {
           const active = tab.href === '/'
@@ -778,8 +748,10 @@ export function NavBar() {
           )}
           <button
             onClick={handleReset}
-            title="Vider le cache et recharger l'app"
-            className="px-2 h-8 flex items-center text-sm text-zinc-500 hover:text-red-400 rounded hover:bg-zinc-800 transition-colors"
+            title={updateAvailable
+              ? 'Nouvelle version disponible — recharger l\'app'
+              : 'Vider le cache et recharger l\'app'}
+            className="relative px-2 h-8 flex items-center text-sm text-zinc-500 hover:text-red-400 rounded hover:bg-zinc-800 transition-colors"
           >
             {/* Corbeille — clarifier "delete cache" vs le bouton Pull voisin
                 qui utilise aussi des flèches circulaires. */}
@@ -790,6 +762,14 @@ export function NavBar() {
               <path d="M10 11v6M14 11v6" />
               <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
             </svg>
+            {/* Point bleu discret = nouvelle version disponible. Cliquer la
+                corbeille (wipe + reload) charge la nouvelle version. */}
+            {updateAvailable && (
+              <span
+                className="absolute top-1 right-1 w-2 h-2 rounded-full bg-blue-500 ring-2 ring-zinc-900"
+                aria-label="Nouvelle version disponible"
+              />
+            )}
           </button>
         </div>
       </nav>
