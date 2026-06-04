@@ -1330,6 +1330,8 @@ export function GanttView({
 
   // propagation feedback
   const [propagateMsg, setPropagateMsg] = useState<string | null>(null);
+  // popup "X → Y" : null = fermé, sinon { source, target } avec source possiblement === target (validation à l'OK)
+  const [copyModal, setCopyModal] = useState<{ source: ScenarioName; target: ScenarioName } | null>(null);
 
   // ── Init : hydrate IndexedDB ou charge depuis le cache local ────────────────
   useEffect(() => {
@@ -1635,29 +1637,25 @@ export function GanttView({
     void enqueueDelete(itemId);
   }
 
-  // ── propagation A → B / A → C ───────────────────────────────────────────────
-  // Écrase tout le contenu de la ligne cible et le remplace par celui de A.
+  // ── propagation X → Y ───────────────────────────────────────────────────────
+  // Écrase tout le contenu de la ligne cible et le remplace par celui de la source.
 
-  function propagateFlights(target: 'B' | 'C') {
-    const sourceA = localScenarios.find(s => s.name === 'A');
+  function propagateFlights(source: ScenarioName, target: ScenarioName) {
+    if (source === target) return;
+    const sourceScenario = localScenarios.find(s => s.name === source);
     const targetScenario = localScenarios.find(s => s.name === target);
-    if (!sourceA || !targetScenario) return;
+    if (!sourceScenario || !targetScenario) return;
 
-    // Spillovers (vols à cheval venus du mois précédent) ne sont pas propre à A → on les ignore
-    const sourceItems = sourceA.items.filter(it => !it._isSpillover);
+    // Spillovers (vols à cheval venus du mois précédent) sont rattachés à un
+    // scénario par les vols sources → on les ignore lors de la copie.
+    const sourceItems = sourceScenario.items.filter(it => !it._isSpillover);
     const targetExisting = targetScenario.items.filter(it => !it._isSpillover);
 
     if (sourceItems.length === 0 && targetExisting.length === 0) {
-      setPropagateMsg(`A est vide — rien à propager`);
+      setPropagateMsg(`${source} est vide — rien à propager`);
       setTimeout(() => setPropagateMsg(null), 3000);
       return;
     }
-
-    const confirmMsg = targetExisting.length > 0
-      ? `Écraser la ligne ${target} (${targetExisting.length} activité${targetExisting.length > 1 ? 's' : ''}) et la remplacer par le contenu de A (${sourceItems.length}) ?`
-      : `Copier le contenu de A (${sourceItems.length} activité${sourceItems.length > 1 ? 's' : ''}) vers la ligne ${target} ?`;
-
-    if (!window.confirm(confirmMsg)) return;
 
     const newItems: CalendarItem[] = sourceItems.map(it => ({
       id: crypto.randomUUID(),
@@ -1683,7 +1681,7 @@ export function GanttView({
       for (const it of newItems) await enqueueAdd(it, targetScenario.id);
     })();
 
-    setPropagateMsg(`A → ${target} : ${newItems.length} activité${newItems.length > 1 ? 's' : ''} copiée${newItems.length > 1 ? 's' : ''}`);
+    setPropagateMsg(`${source} → ${target} : ${newItems.length} activité${newItems.length > 1 ? 's' : ''} copiée${newItems.length > 1 ? 's' : ''}`);
     setTimeout(() => setPropagateMsg(null), 3500);
   }
 
@@ -2265,21 +2263,14 @@ export function GanttView({
             onClose={() => setPrimeMenuOpen(null)}
           />
 
-          {/* Propagation A → B / A → C */}
+          {/* Propagation X → Y */}
           <div className="flex-shrink-0 flex items-center gap-1.5 ml-2 pl-2 border-l border-zinc-200 dark:border-zinc-700">
             <button
-              onClick={() => propagateFlights('B')}
+              onClick={() => setCopyModal({ source: 'A', target: 'B' })}
               className="px-2.5 py-1 rounded-full bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-zinc-700 dark:text-zinc-200 text-xs font-semibold transition-colors"
-              title="Propage les vols de A vers B"
+              title="Copier le contenu d'un scénario vers un autre"
             >
-              A → B
-            </button>
-            <button
-              onClick={() => propagateFlights('C')}
-              className="px-2.5 py-1 rounded-full bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-zinc-700 dark:text-zinc-200 text-xs font-semibold transition-colors"
-              title="Propage les vols de A vers C"
-            >
-              A → C
+              X → Y
             </button>
             {propagateMsg && (
               <span className="text-[10px] text-zinc-500 dark:text-zinc-400 ml-1 whitespace-nowrap">
@@ -2381,6 +2372,69 @@ export function GanttView({
             </div>
           </>
         )}
+
+        {/* Modale copie X → Y */}
+        {copyModal && (() => {
+          const { source, target } = copyModal;
+          const sameSel = source === target;
+          const sourceItems = localScenarios.find(s => s.name === source)?.items.filter(it => !it._isSpillover) ?? [];
+          const targetItems = localScenarios.find(s => s.name === target)?.items.filter(it => !it._isSpillover) ?? [];
+          const nothingToDo = !sameSel && sourceItems.length === 0 && targetItems.length === 0;
+          return (
+            <>
+              <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setCopyModal(null)} />
+              <div className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-50 max-w-sm mx-auto bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl p-5 space-y-4">
+                <h2 className="font-semibold text-sm">Copier un scénario</h2>
+                <div className="flex items-center justify-center gap-3">
+                  <select
+                    value={source}
+                    onChange={e => setCopyModal(c => c ? { ...c, source: e.target.value as ScenarioName } : c)}
+                    className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm font-semibold"
+                  >
+                    {(['A', 'B', 'C'] as ScenarioName[]).map(n => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                  <span className="text-zinc-400">→</span>
+                  <select
+                    value={target}
+                    onChange={e => setCopyModal(c => c ? { ...c, target: e.target.value as ScenarioName } : c)}
+                    className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm font-semibold"
+                  >
+                    {(['A', 'B', 'C'] as ScenarioName[]).map(n => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                </div>
+                {sameSel ? (
+                  <p className="text-xs text-red-500">Source et cible doivent être différentes.</p>
+                ) : nothingToDo ? (
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    {source} est vide — rien à propager.
+                  </p>
+                ) : (
+                  <p className="text-sm text-zinc-600 dark:text-zinc-300">
+                    {targetItems.length > 0
+                      ? <>Écraser la ligne <strong>{target}</strong> ({targetItems.length} activité{targetItems.length > 1 ? 's' : ''}) et la remplacer par le contenu de <strong>{source}</strong> ({sourceItems.length}) ?</>
+                      : <>Copier le contenu de <strong>{source}</strong> ({sourceItems.length} activité{sourceItems.length > 1 ? 's' : ''}) vers la ligne <strong>{target}</strong> ?</>}
+                  </p>
+                )}
+                <div className="flex gap-2">
+                  <button onClick={() => setCopyModal(null)}
+                    className="flex-1 py-2.5 rounded-xl border border-zinc-300 dark:border-zinc-700 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
+                    Annuler
+                  </button>
+                  <button
+                    onClick={() => { propagateFlights(source, target); setCopyModal(null); }}
+                    disabled={sameSel || nothingToDo}
+                    className="flex-1 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-700 dark:bg-zinc-100 dark:hover:bg-zinc-300 text-white dark:text-zinc-900 text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed">
+                    OK
+                  </button>
+                </div>
+              </div>
+            </>
+          );
+        })()}
 
         {/* Sheet */}
         {sheet && (
