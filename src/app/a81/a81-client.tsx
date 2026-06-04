@@ -336,7 +336,7 @@ export function A81Client({
                 // visualiser les blocs mensuels d'un coup d'œil.
                 const rowBg = r.is_fictive
                   ? 'bg-violet-50 dark:bg-violet-950/30'
-                  : (monthIdx % 2 ? 'bg-zinc-50/50 dark:bg-zinc-800/20' : '');
+                  : (monthIdx % 2 ? 'bg-zinc-200/70 dark:bg-zinc-800/60' : '');
                 return (
                   <tr key={`${r.instance_id}${r.split_part ?? ''}`} className={rowBg}>
                     <td className="px-2 py-1.5 whitespace-nowrap text-zinc-700 dark:text-zinc-200 italic">
