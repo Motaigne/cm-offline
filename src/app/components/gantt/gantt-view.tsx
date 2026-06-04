@@ -2484,12 +2484,6 @@ export function GanttView({
                     </h2>
                   </div>
                   <div className="flex items-center gap-2">
-                    {sheet.mode === 'edit' && (
-                      <button onClick={handleDelete}
-                        className="px-3 py-1.5 rounded-lg border border-red-200 text-red-500 text-sm hover:bg-red-50">
-                        Supprimer
-                      </button>
-                    )}
                     <button onClick={() => setSheet(null)} className="text-zinc-400 hover:text-zinc-600 text-2xl leading-none">×</button>
                   </div>
                 </div>
@@ -2664,6 +2658,73 @@ export function GanttView({
                   </div>
                 )}
 
+                {/* Edit flight: récap chiffres (HC/HCr/PVnuit/PV/prime/A81). 100%
+                    offline : meta du vol + signaturesByInstId (cache IDB) +
+                    finBaseState/article81Data (annexe cachée). Aucun fetch. */}
+                {sheet.mode === 'edit' && sheet.item && sheet.item.kind === 'flight' && (() => {
+                  const m = sheet.item.meta && typeof sheet.item.meta === 'object' && !Array.isArray(sheet.item.meta)
+                    ? sheet.item.meta as Record<string, unknown> : null;
+                  if (!m) return null;
+                  const hcM       = typeof m.hc          === 'number' ? m.hc          : null;
+                  const hcrCrewM  = typeof m.hcr_crew    === 'number' ? m.hcr_crew    : null;
+                  const tsvNuitM  = typeof m.tsv_nuit    === 'number' ? m.tsv_nuit    : 0;
+                  const primeM    = typeof m.prime       === 'number' ? m.prime       : 0;
+                  const tempsSejM = typeof m.temps_sej   === 'number' ? m.temps_sej   : null;
+                  const zoneM     = typeof m.zone        === 'string' ? m.zone        : null;
+                  const instId    = sheet.item.pairing_instance_id;
+                  const sig       = instId ? signaturesByInstId.get(instId) : null;
+                  const isMep     = sig?.dead_head === true;
+                  const mepFlight = sig?.mep_flight ?? '';
+
+                  const pveiUse = finBaseState?.pvei ?? PVEI;
+                  const kspUse  = finBaseState?.ksp  ?? KSP;
+
+                  const pvNuitH = tsvNuitM / 2;
+                  const pvH     = (hcrCrewM ?? 0) + pvNuitH;
+                  const pvEur   = pvH * pveiUse * kspUse;
+                  const primeEur = primeM * 2.5 * pveiUse;
+
+                  const a81 = tempsSejM != null && zoneM
+                    ? computeArticle81({
+                        tSej: tempsSejM + TAXI_TSEJ_ADJUST_H,
+                        zone: zoneM,
+                        valeurJour: effValeurJour,
+                        data: article81Data,
+                      })
+                    : null;
+
+                  const Info = ({ label, value }: { label: string; value: string }) => (
+                    <div className="flex flex-col">
+                      <span className="text-[9px] text-zinc-400 uppercase tracking-wide leading-tight">{label}</span>
+                      <span className="font-mono text-xs text-zinc-700 dark:text-zinc-200">{value}</span>
+                    </div>
+                  );
+
+                  return (
+                    <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800 space-y-2">
+                      {isMep && (
+                        <p className="text-[11px] text-orange-500 font-semibold">
+                          MEP{mepFlight ? ` · ${mepFlight}` : ''}
+                        </p>
+                      )}
+                      <div className="grid grid-cols-3 gap-2">
+                        {hcM !== null      && <Info label="HC"           value={`${hcM.toFixed(2)} h`} />}
+                        {hcrCrewM !== null && <Info label="HCr"          value={`${hcrCrewM.toFixed(2)} h`} />}
+                        <Info                       label="PV nuit"      value={`${pvNuitH.toFixed(2)} h`} />
+                        <Info                       label="HCr + nuit"   value={`${pvH.toFixed(2)} h`} />
+                        <Info                       label="PV"           value={`${Math.round(pvEur)} €`} />
+                        {primeM > 0 && <Info        label="Prime bi-tr." value={`×${primeM} · ${Math.round(primeEur)} €`} />}
+                        {a81 && a81.montantPrimeSej > 0 && (
+                          <Info label="A81 / jour" value={`${Math.round(a81.montantPrimeSejJour)} €`} />
+                        )}
+                        {a81 && a81.montantPrimeSej > 0 && (
+                          <Info label="A81 total"  value={`${Math.round(a81.montantPrimeSej)} €`} />
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* Overlap error */}
                 {overlapErr && (
                   <p className="text-sm text-red-500 font-medium">
@@ -2671,11 +2732,25 @@ export function GanttView({
                   </p>
                 )}
 
-                {/* Submit */}
-                <button onClick={handleSubmit} disabled={isPending || ((addKind === 'conge' || addKind === 'conge_ss') && !nbJours)}
-                  className="w-full rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-zinc-700 disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900">
-                  {sheet.mode === 'edit' ? 'Mettre à jour' : 'Placer'}
-                </button>
+                {/* Submit (+ Supprimer en mode edit) — full-width en add,
+                    splittés 50/50 en edit avec Supprimer rouge à droite. */}
+                {sheet.mode === 'edit' ? (
+                  <div className="flex gap-2">
+                    <button onClick={handleSubmit} disabled={isPending}
+                      className="flex-1 rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-zinc-700 disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900">
+                      Mettre à jour
+                    </button>
+                    <button onClick={handleDelete} disabled={isPending}
+                      className="flex-1 rounded-lg bg-red-600 hover:bg-red-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">
+                      Supprimer
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={handleSubmit} disabled={isPending || ((addKind === 'conge' || addKind === 'conge_ss') && !nbJours)}
+                    className="w-full rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-zinc-700 disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900">
+                    Placer
+                  </button>
+                )}
                 </>}
               </div>
             </div>
