@@ -44,17 +44,6 @@ function monthDiff(from: string, to: string): number {
   return (yt - yf) * 12 + (mt - mf);
 }
 
-/** Décale 'YYYY-MM-DD' de n mois en clampant le jour au dernier jour du mois cible
- *  (évite Aug 31 → Sep 31 = Oct 1 via le rollover JS). */
-function shiftDateByMonths(dateStr: string, n: number): string {
-  const [y, mo, d] = dateStr.split('-').map(Number);
-  const targetY = y + Math.floor((mo - 1 + n) / 12);
-  const targetM = ((mo - 1 + n) % 12 + 12) % 12;            // 0..11
-  const lastDay = new Date(Date.UTC(targetY, targetM + 1, 0)).getUTCDate();
-  const day = Math.min(d, lastDay);
-  return `${targetY}-${String(targetM + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-}
-
 /** Décale un timestamp ISO de n mois en clampant le jour. */
 function shiftIsoByMonths(iso: string, n: number): string {
   const dt = new Date(iso);
@@ -205,12 +194,20 @@ export async function generateFictiveSnapshots(args: {
     const { error: e6 } = await supabase.from('pairing_signature').insert(sigsToInsert);
     if (e6) return { error: `cloneSigs ${targetMonth}: ${e6.message}` };
 
-    // Clone instances : shift de N mois, nouveau UUID, relink signature_id
+    // Clone instances : shift de N mois, nouveau UUID, relink signature_id.
+    // On shift depart_at avec clamp jour-de-mois ; toutes les autres timestamps
+    // (arrivee, scheduled_*) sont rebasées par OFFSET en ms vs depart_at original
+    // — sinon le clamp jour s'applique indépendamment et compresse la durée
+    // (ex: vol 4ON mai 30→jun 2 devient 3ON sept 30→oct 2 car sept n'a pas 31).
     const monthsShift = monthDiff(canonicalMonth, targetMonth);
     const instancesToInsert: InstanceRow[] = (canonInstances ?? [])
       .map((inst): InstanceRow | null => {
         const newSigId = sigIdMap.get(inst.signature_id);
         if (!newSigId) return null;
+        const newDepartAt = shiftIsoByMonths(inst.depart_at, monthsShift);
+        const dtMs = new Date(newDepartAt).getTime() - new Date(inst.depart_at).getTime();
+        const shiftByOffset = (iso: string): string =>
+          new Date(new Date(iso).getTime() + dtMs).toISOString();
         return {
           ...inst,
           id: crypto.randomUUID(),
@@ -218,13 +215,13 @@ export async function generateFictiveSnapshots(args: {
           // Préfixe activity_id pour éviter toute collision même si la contrainte
           // unique est (signature_id, activity_id) — on s'évite l'incident.
           activity_id: `fic-${newSnap.id.slice(0, 8)}-${inst.activity_id}`,
-          depart_date: shiftDateByMonths(inst.depart_date, monthsShift),
-          depart_at:   shiftIsoByMonths(inst.depart_at,   monthsShift),
-          arrivee_at:  shiftIsoByMonths(inst.arrivee_at,  monthsShift),
+          depart_date: newDepartAt.slice(0, 10),
+          depart_at:   newDepartAt,
+          arrivee_at:  shiftByOffset(inst.arrivee_at),
           scheduled_begin_activity_at: inst.scheduled_begin_activity_at
-            ? shiftIsoByMonths(inst.scheduled_begin_activity_at, monthsShift) : null,
+            ? shiftByOffset(inst.scheduled_begin_activity_at) : null,
           scheduled_end_activity_at: inst.scheduled_end_activity_at
-            ? shiftIsoByMonths(inst.scheduled_end_activity_at, monthsShift) : null,
+            ? shiftByOffset(inst.scheduled_end_activity_at) : null,
         };
       })
       .filter((x): x is InstanceRow => x !== null);
