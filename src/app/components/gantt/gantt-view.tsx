@@ -309,10 +309,18 @@ function computeStats(
   // 2e passe : Article 81 avec plafond annuel — sort chronologique pour appliquer
   // le cap "tant que cumulJours ≤ plafond". Cumul = tSej24 entier de la rotation
   // (pas proratisé), montant = montantPrimeSej proratisé au mois.
+  //
+  // Les spillovers (rotations parties en M-1 visibles en M) sont EXCLUS : leur
+  // tSej24 entier est déjà comptabilisé dans le mois de départ (M-1), et
+  // a81CumulBefore les inclut déjà — sinon double-comptage qui fait monter le
+  // cumul affiché en M puis "redescendre" au mois M+1 (qui voit la cumul réelle
+  // sans le doublon).
   const plafondJours = getPlafondJours(regime);
   let cumulJoursRunning = a81CumulBefore;
   let totalA81 = 0;
-  const sortedFlights = [...flightItems].sort((a, b) => a.start_date.localeCompare(b.start_date));
+  const sortedFlights = [...flightItems]
+    .filter(f => !f._isSpillover)
+    .sort((a, b) => a.start_date.localeCompare(b.start_date));
   for (const item of sortedFlights) {
     const m = item.meta && typeof item.meta === 'object' && !Array.isArray(item.meta)
       ? item.meta as Record<string, unknown> : null;
