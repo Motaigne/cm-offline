@@ -162,6 +162,25 @@ function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   });
 }
 
+/** Pool de workers à concurrence bornée — sans cette borne, un Pull avec 12+
+ *  mois lance autant de requêtes en parallèle, sature la bande passante mobile
+ *  et déclenche des timeouts silencieux (mois jamais hydratés → écran 📵 hors
+ *  ligne). 4 simultanées = compromis débit / fiabilité. */
+async function runPool<T>(tasks: Array<() => Promise<T>>, limit: number): Promise<T[]> {
+  const out: T[] = new Array(tasks.length);
+  let cursor = 0;
+  async function worker(): Promise<void> {
+    while (cursor < tasks.length) {
+      const i = cursor++;
+      try { out[i] = await tasks[i](); }
+      catch { /* erreurs gérées dans la task elle-même (failed++) */ }
+    }
+  }
+  const n = Math.max(1, Math.min(limit, tasks.length));
+  await Promise.all(Array.from({ length: n }, () => worker()));
+  return out;
+}
+
 export function NavBar() {
   const path = usePathname();
   const router = useRouter();
@@ -339,15 +358,14 @@ export function NavBar() {
           ...plan.planningOnly.map(m => ({ m, loadMode: 'planning_only' as const })),
         ];
 
-        // Compteur de progression incrémenté par chaque mois terminé.
-        // En parallèle (6+ requêtes concurrentes), les timeouts par requête
-        // doivent être plus généreux qu'en série : on évite de marquer en
-        // erreur un mois juste parce qu'il a pris 9s sous charge.
+        // Concurrence bornée : 12 mois en parallèle saturent le mobile et
+        // déclenchent des timeouts silencieux → mois jamais hydratés.
         let completed = 0;
         let failed = 0;
+        const cachedMonths: string[] = [];
         setDlProgress(queue.length > 0 ? `0/${queue.length}` : '');
 
-        const results = await Promise.allSettled(queue.map(async ({ m, loadMode }) => {
+        const tasks = queue.map(({ m, loadMode }) => async () => {
           try {
             // Sentinel `null` pour distinguer timeout (échec réel) de résultat
             // vide légitime (mois sans rotations/items).
@@ -371,37 +389,48 @@ export function NavBar() {
               return;
             }
             // Mois légitimement vide (aucune rotation cataloguée + drafts vides) :
-            // ce n'est PAS un échec, juste rien à cacher.
-            if (rots.length === 0 && scs.length === 0) return;
-            await withTimeout(
-              Promise.all([cacheRotations(rots, m), hydrateDB(scs, m)]),
+            // ce n'est PAS un échec, mais on ne le marque pas non plus cached.
+            if (rots.length === 0 && scs.length === 0) {
+              cachedMonths.push(m);
+              return;
+            }
+            const writeOk = await withTimeout(
+              Promise.all([cacheRotations(rots, m), hydrateDB(scs, m)])
+                .then(() => true),
               10000,
-              undefined,
+              false,
             );
+            if (writeOk) cachedMonths.push(m);
+            else failed++;
           } finally {
             completed++;
             setDlProgress(`${completed}/${queue.length}`);
           }
-        }));
-        // Rejections imprévues (hors withTimeout) : compte comme failed.
-        for (const r of results) if (r.status === 'rejected') failed++;
+        });
+        await runPool(tasks, 4);
 
         setDlProgress(queue.length > 0 ? `pages` : '');
+        // On ne précache l'URL ?m=YYYY-MM que pour les mois effectivement
+        // hydratés — sinon l'utilisateur clique offline sur un onglet, voit
+        // l'écran s'afficher (HTML précaché) mais le calendrier reste vide.
         const urlVariants: string[] = [];
-        const cachedMonths = queue.map(q => q.m);
         for (const url of PAGES) {
           urlVariants.push(url);
           if (PAGES_MONTH.includes(url)) {
             for (const m of cachedMonths) urlVariants.push(`${url}?m=${m}`);
           }
         }
-        await Promise.all(urlVariants.map(url => withTimeout(precachePage(url), 10000, false)));
-        setDlProgress('');
+        const precacheTasks = urlVariants.map(url => () => withTimeout(precachePage(url), 10000, false));
+        await runPool(precacheTasks, 6);
         if (failed > 0) {
+          // Affiche le nombre de mois en échec — sinon le user voit juste un
+          // "!" fugace et croit que tout est OK alors qu'il y a des trous.
+          setDlProgress(`${failed} échec${failed > 1 ? 's' : ''}`);
           setSyncStatus('err');
-          setTimeout(() => setSyncStatus(''), 4000);
+          setTimeout(() => { setSyncStatus(''); setDlProgress(''); }, 5000);
           return;
         }
+        setDlProgress('');
         localStorage.setItem(DL_KEY, String(Date.now()));
       }
       setSyncStatus('ok');
