@@ -1107,6 +1107,18 @@ export function GanttView({
     return () => { cancelled = true; };
   }, [localScenarios, currentMonth]);
 
+  // Cumul A81 (Jan→M-1) recalculé client-side depuis Dexie. Sans cet effet,
+  // l'offline (et la navigation client-side) garde a81CumulBeforeState à 0,
+  // ce qui affiche seulement la valeur du mois courant sans la cumul annuelle.
+  useEffect(() => {
+    let cancelled = false;
+    const [yy, mm] = currentMonth.split('-').map(Number);
+    void computeA81CumulBeforeLocal(yy, mm)
+      .then(a81 => { if (!cancelled) setA81CumulBeforeState(a81.byScenarioBefore); })
+      .catch(() => { /* erreur Dexie : on garde l'état courant */ });
+    return () => { cancelled = true; };
+  }, [localScenarios, currentMonth]);
+
   // sheet
   const [sheet, setSheet]         = useState<SheetState | null>(null);
   const [addKind, setAddKind]     = useState<ActivityKind>('off');
@@ -1506,22 +1518,10 @@ export function GanttView({
       // Pré-cache silencieux des mois adjacents
       void preCacheMonthBg(shiftMonth(newMonth, 1));
       void preCacheMonthBg(shiftMonth(newMonth, -1));
-      // A81 cumul : recalculé client-side depuis Dexie — fonctionne offline
-      // et évite un round-trip serveur à chaque changeMonth. Les drafts +
-      // rotations sont déjà en cache (re-hydratés au-dessus).
-      const [yy, mm] = newMonth.split('-').map(Number);
-      void computeA81CumulBeforeLocal(yy, mm).then(a81 => {
-        if (myToken === navTokenRef.current) setA81CumulBeforeState(a81.byScenarioBefore);
-      });
       // FinBase : calculé client-side via useMemo(currentMonth) à partir de
       // annexeRows + financeProfile (passés en props). Aucun fetch ici.
-      // IR/MF : recalculé client à partir du cache rotations fraîchement mis à jour.
-      // (Le useEffect [localScenarios,currentMonth] est déjà déclenché par le setState
-      //  plus haut, mais à ce moment-là cacheRotations n'avait pas encore tourné.)
-      void computeMonthlyIrMfFromLocalCache(display, newMonth).then(res => {
-        if (myToken !== navTokenRef.current) return;
-        setIrMfState({ byScenario: res.byScenario, perFlightByScenario: res.perFlightByScenario });
-      });
+      // IR/MF + A81 cumul : recalculés par les useEffect dédiés sur
+      // [localScenarios, currentMonth] — fonctionnent online ET offline.
     } catch {
       if (myToken !== navTokenRef.current) return;
       if (!cached) { setNoCache(true); setLocalScenarios([]); }
