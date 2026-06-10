@@ -3,6 +3,7 @@ import { fetchAllPaginated } from '@/lib/supabase/paginate';
 import { fetchAllPairings, fetchPairingDetail, type CrewBiddConfig } from './crewbidd';
 import { getZone } from './zone-lookup';
 import { computeTsvNuit } from './tsv-nuit';
+import { computeNbOnDays } from '@/lib/rotation-days';
 import type { PairingSummary, PairingDetail, ScrapeEvent } from './types';
 import type { Json } from '@/types/supabase';
 
@@ -19,21 +20,6 @@ function msToTimeStr(ms: number): string {
   const hh = String(d.getUTCHours()).padStart(2, '0');
   const mm = String(d.getUTCMinutes()).padStart(2, '0');
   return `${hh}:${mm}:00`;
-}
-
-/**
- * nb_on_days = nombre de jours calendaires couverts par la rotation, du
- * premier block-off au dernier block-on (UTC). Plus fiable que
- * pairingDetail.nbOnDays renvoyé par CrewBidd, qui peut être incohérent entre
- * instances d'une même rotation (probablement un cache stale côté AF).
- */
-function computeNbOnDays(beginBlockDateMs: number, endBlockDateMs: number): number {
-  if (!beginBlockDateMs || !endBlockDateMs || endBlockDateMs < beginBlockDateMs) return 0;
-  const begin = new Date(beginBlockDateMs);
-  const end   = new Date(endBlockDateMs);
-  const beginDay = Date.UTC(begin.getUTCFullYear(), begin.getUTCMonth(), begin.getUTCDate());
-  const endDay   = Date.UTC(end.getUTCFullYear(),   end.getUTCMonth(),   end.getUTCDate());
-  return Math.round((endDay - beginDay) / 86_400_000) + 1;
 }
 
 function buildRotationCode(s: PairingSummary, nbOnDays: number): string {

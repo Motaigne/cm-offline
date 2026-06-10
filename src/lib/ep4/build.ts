@@ -12,6 +12,7 @@ import type { Ep4Leg, Ep4Service, Ep4Rotation, TauxAppRow } from './types';
 import { tsvNuitJ, tsvNuitJ1 } from './night';
 import { computeIRandMF } from './ir';
 import { getPlanPrestation } from '@/lib/plan-prestation';
+import { computeNbOnDays } from '@/lib/rotation-days';
 
 const HOUR_MS = 3_600_000;
 const EXCLUDE_PRIME_AIRPORTS = new Set(['TLV', 'BEY']);
@@ -84,13 +85,16 @@ function prorateHcvMoisM(
   dep_ms: number, arr_ms: number, hcv: number,
   monthStart: number, monthEnd: number,
 ): number {
-  if (dep_ms > monthStart && arr_ms < monthEnd) return hcv;
-  if (dep_ms < monthStart && arr_ms < monthStart) return 0;
+  // Bornes inclusives (>= / <=) pour gérer le cas pathologique d'un leg
+  // qui décolle/atterrit pile à 00:00:00.000 UTC d'un changement de mois.
+  // Le Python 8_ep4_V7.py:91-109 utilise des strict <, hérite du bug.
+  if (dep_ms >= monthStart && arr_ms <= monthEnd) return hcv;
+  if (arr_ms <= monthStart) return 0;
   if (dep_ms < monthStart && arr_ms > monthStart) {
     return r2((arr_ms - monthStart) / (arr_ms - dep_ms) * hcv);
   }
-  if (arr_ms > monthEnd && dep_ms > monthEnd) return 0;
-  if (arr_ms > monthEnd && dep_ms < monthEnd) {
+  if (dep_ms >= monthEnd) return 0;
+  if (dep_ms < monthEnd && arr_ms > monthEnd) {
     return r2((monthEnd - dep_ms) / (arr_ms - dep_ms) * hcv);
   }
   return 0;
@@ -199,8 +203,16 @@ export function buildEp4Rotation(
 
   const HDV       = pv0?.flightTime ?? 0;
   const HC        = pv0?.creditedHour ?? 0;
-  const ON        = pv0?.nbOnDays ?? 0;
   const TDV_total = pv0?.workedFlightTime ?? 0;
+  // ON recalculé depuis les bornes block (cf. `lib/rotation-days.ts`).
+  // `pv0.nbOnDays` peut être stale côté CrewBidd (cache AF) — observé sur
+  // signatures JFK pré-mig 0033. Source de vérité = jours calendaires UTC.
+  const debut_block_ms = rawServices[0]?.legs[0]?.dep_ms ?? 0;
+  const fin_block_ms   = (() => {
+    const last = rawServices[rawServices.length - 1];
+    return last?.legs[last.legs.length - 1]?.arr_ms ?? 0;
+  })();
+  const ON        = computeNbOnDays(debut_block_ms, fin_block_ms);
 
   // Bornes block (PAS briefing/closeout — cf. `lib/scraper/types.ts::FlightDuty`).
   // L'override par instance fournit en revanche les bornes `scheduled_*_activity_at`
