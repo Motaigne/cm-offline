@@ -52,7 +52,7 @@ export default async function ComparatifPage({
   const { data: sigs } = snapshot
     ? await supabase
         .from('pairing_signature')
-        .select('id, rotation_code, zone, aircraft_code, hc, hcr_crew, tsv_nuit, prime, nb_on_days, first_layover, layovers, rest_before_h, rest_after_h, a81, temps_sej, dead_head, mep_flight, peq')
+        .select('id, rotation_code, zone, aircraft_code, hc, hcr_crew, hdv, tsv_nuit, prime, nb_on_days, first_layover, layovers, rest_before_h, rest_after_h, a81, temps_sej, dead_head, mep_flight, peq')
         .eq('snapshot_id', snapshot.id)
         .order('rotation_code')
     : { data: null };

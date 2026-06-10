@@ -30,6 +30,7 @@ type Sig = {
   aircraft_code: string;
   hc: number;
   hcr_crew: number;
+  hdv: number | null;
   tsv_nuit: number | null;
   prime: number | null;
   nb_on_days: number;
@@ -91,6 +92,7 @@ function rotToSig(s: RotationSignature): Sig {
   return {
     id: s.id, rotation_code: s.rotation_code, zone: s.zone,
     aircraft_code: s.aircraft_code, hc: s.hc, hcr_crew: s.hcr_crew,
+    hdv: s.hdv,
     tsv_nuit: s.tsv_nuit, prime: s.prime, nb_on_days: s.nb_on_days,
     first_layover: s.first_layover, layovers: s.layovers,
     rest_before_h: s.rest_before_h, rest_after_h: s.rest_after_h,
@@ -418,6 +420,28 @@ export function ComparatifClient({
                 <Row label="Zone"             db={sig.zone ?? '—'}             calc={sig.zone ?? '—'}                formula="Article 81 zone" />
                 <Row label="A81"              db={sig.a81 ? 'Oui' : 'Non'}    calc={sig.a81 ? 'Oui' : 'Non'}       formula="TSV escale ≥ 24h" />
                 <Row label="Temps séjour"     db={fmt(sig.temps_sej, 1)}       calc={fmt(sig.temps_sej, 1)}          formula="Durée entre 1er atterrissage et dernier décollage (h)" />
+                {(() => {
+                  // Vérification par instance : (arrivee_at − depart_at) − HDV
+                  // = block-off 1er leg → block-on dernier leg, moins temps de vol.
+                  // Détecte les signatures legacy splittées (mig 0033) dont le
+                  // temps_sej stocké provient du raw_detail d'une AUTRE durée.
+                  const inst = sig.instances[0];
+                  if (!inst || sig.hdv == null) return null;
+                  const totalBlock = (new Date(inst.arrivee_at).getTime() - new Date(inst.depart_at).getTime()) / 3_600_000;
+                  const tSejFormula = totalBlock - sig.hdv;
+                  const dbVal = sig.temps_sej ?? 0;
+                  const delta = tSejFormula - dbVal;
+                  const warn  = Math.abs(delta) > 0.25;
+                  return (
+                    <Row
+                      label="Temps séjour (formule)"
+                      db={fmt(dbVal, 1)}
+                      calc={`${fmt(tSejFormula, 1)}${warn ? `  ⚠ Δ ${delta > 0 ? '+' : ''}${delta.toFixed(1)}h` : ''}`}
+                      formula="(arrivee_at − depart_at) / 1h − HDV — par instance"
+                      warn={warn}
+                    />
+                  );
+                })()}
                 <Row label="Repos avant"      db={fmt(sig.rest_before_h, 1)}   calc={fmt(sig.rest_before_h, 1)}      formula="Rest before haul (h)" />
                 <Row label="Repos après"      db={fmt(sig.rest_after_h, 1)}    calc={fmt(sig.rest_after_h, 1)}       formula="Rest after haul (h)" />
                 {(() => {
@@ -435,6 +459,10 @@ export function ComparatifClient({
                   const restAfterCalc  = (endAct && endBlock)
                     ? ((new Date(endAct).getTime() - new Date(endBlock).getTime()) / 3_600_000)
                     : null;
+                  const taCalc = (beginAct && endAct)
+                    ? ((new Date(endAct).getTime() - new Date(beginAct).getTime()) / 3_600_000)
+                    : null;
+                  const hcaCalc = taCalc != null ? (taCalc * 5) / 24 : null;
                   const fmtIso = (s: string | null | undefined) => s ? new Date(s).toISOString().replace('T', ' ').slice(0, 16) : '—';
                   return (
                     <>
@@ -443,7 +471,9 @@ export function ComparatifClient({
                       <Row label="scheduledEndBlockDate"      db={fmtIso(endBlock)}   calc={fmtIso(endBlock)}   formula="arrivée (block-on) — pairing_instance.arrivee_at" />
                       <Row label="scheduledEndActivityDate"   db={fmtIso(endAct)}     calc={fmtIso(endAct)}     formula="fin d'activité (closeout) — pairing_instance.scheduled_end_activity_at" />
                       <Row label="rest_before_h (formule)" db={fmt(sig.rest_before_h, 1)} calc={restBeforeCalc != null ? fmt(restBeforeCalc, 1) : '—'} formula="(scheduledBeginBlockDate − scheduledBeginActivityDate) / 1h" />
-                      <Row label="rest_after_h (formule)"  db={fmt(sig.rest_after_h, 1)}  calc={restAfterCalc != null  ? fmt(restAfterCalc, 1)  : '—'} formula="(scheduledEndActivityDate − scheduledEndBlockDate) / 1h" highlight />
+                      <Row label="rest_after_h (formule)"  db={fmt(sig.rest_after_h, 1)}  calc={restAfterCalc != null  ? fmt(restAfterCalc, 1)  : '—'} formula="(scheduledEndActivityDate − scheduledEndBlockDate) / 1h" />
+                      <Row label="TA"  db="—" calc={taCalc  != null ? fmt(taCalc,  2) + ' h' : '—'} formula="(scheduledEndActivityDate − scheduledBeginActivityDate) / 1h — temps d'absence (durée totale rotation)" />
+                      <Row label="HCA" db="—" calc={hcaCalc != null ? fmt(hcaCalc, 2) + ' h' : '—'} formula="TA × 5/24 — heures créditées absence" highlight />
                     </>
                   );
                 })()}
@@ -487,6 +517,8 @@ export function ComparatifClient({
             zone={sig.zone}
             year={year}
             month={mo}
+            instanceBeginActivityAt={sig.instances[0]?.scheduled_begin_activity_at ?? null}
+            instanceEndActivityAt={sig.instances[0]?.scheduled_end_activity_at ?? null}
           />
         </div>
       )}
@@ -495,19 +527,23 @@ export function ComparatifClient({
 }
 
 function Row({
-  label, db, calc, formula, highlight,
+  label, db, calc, formula, highlight, warn,
 }: {
   label: string;
   db: string | null | undefined;
   calc: string | null | undefined;
   formula: string;
   highlight?: boolean;
+  warn?: boolean;
 }) {
+  const rowBg  = warn ? 'bg-red-50/50 dark:bg-red-950/20' : (highlight ? 'bg-blue-50/50 dark:bg-blue-950/20' : '');
+  const labelC = warn ? 'text-red-700 dark:text-red-300' : (highlight ? 'text-zinc-900 dark:text-zinc-50' : 'text-zinc-700 dark:text-zinc-300');
+  const calcC  = warn ? 'text-red-600 dark:text-red-400' : (highlight ? 'text-blue-600 dark:text-blue-400' : 'text-zinc-800 dark:text-zinc-200');
   return (
-    <tr className={highlight ? 'bg-blue-50/50 dark:bg-blue-950/20' : ''}>
-      <td className={`px-4 py-2 font-medium ${highlight ? 'text-zinc-900 dark:text-zinc-50' : 'text-zinc-700 dark:text-zinc-300'}`}>{label}</td>
+    <tr className={rowBg}>
+      <td className={`px-4 py-2 font-medium ${labelC}`}>{label}</td>
       <td className="px-4 py-2 text-right font-mono text-zinc-600 dark:text-zinc-400">{db ?? '—'}</td>
-      <td className={`px-4 py-2 text-right font-mono font-semibold ${highlight ? 'text-blue-600 dark:text-blue-400' : 'text-zinc-800 dark:text-zinc-200'}`}>{calc ?? '—'}</td>
+      <td className={`px-4 py-2 text-right font-mono font-semibold ${calcC}`}>{calc ?? '—'}</td>
       <td className="px-4 py-2 text-xs text-zinc-400 max-w-xs">{formula}</td>
     </tr>
   );

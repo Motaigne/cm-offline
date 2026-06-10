@@ -180,6 +180,12 @@ export function buildEp4Rotation(
   month: number,
   taux: TauxAppRow[],
   irRates: IrMfRate[] = [],
+  /** Override des bornes briefing/closeout (timestamps ms UTC) avec celles de
+   *  l'instance affichée. Sans override, on utilise les bornes du `raw_detail`,
+   *  qui peut venir d'une AUTRE durée pour les signatures legacy splittées
+   *  (mig 0033) — d'où une TA et un ONm faux. Quand l'appelant a accès à
+   *  `pairing_instance.scheduled_*_activity_at`, il les passe ici. */
+  instanceOverride?: { beginActivityMs: number; endActivityMs: number },
 ): Ep4Rotation {
   const rawServices = extractServices(detail);
   const pv0 = detail.pairingValue?.[0];
@@ -189,8 +195,8 @@ export function buildEp4Rotation(
   const ON        = pv0?.nbOnDays ?? 0;
   const TDV_total = pv0?.workedFlightTime ?? 0;
 
-  const debut_vol_ms = rawServices[0]?.begin_ms ?? 0;
-  const fin_vol_ms   = rawServices[rawServices.length - 1]?.end_ms ?? 0;
+  const debut_vol_ms = instanceOverride?.beginActivityMs ?? (rawServices[0]?.begin_ms ?? 0);
+  const fin_vol_ms   = instanceOverride?.endActivityMs   ?? (rawServices[rawServices.length - 1]?.end_ms ?? 0);
   const TA  = (fin_vol_ms - debut_vol_ms) / HOUR_MS;
   const HCA = r2(TA * 5 / 24);
 

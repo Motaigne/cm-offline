@@ -8,12 +8,17 @@ import { Ep4Tables } from '@/app/components/ep4-tables';
 
 export function Ep4Detail({
   sigId, rotationCode, zone, year, month,
+  instanceBeginActivityAt, instanceEndActivityAt,
 }: {
   sigId: string;
   rotationCode: string;
   zone: string | null;
   year: number;
   month: number;
+  /** Bornes briefing/closeout de l'instance affichée — override les bornes du
+   *  raw_detail (potentiellement issu d'une autre durée pour les sigs splittées). */
+  instanceBeginActivityAt?: string | null;
+  instanceEndActivityAt?:   string | null;
 }) {
   const [ep4, setEp4]         = useState<Ep4Rotation | null>(null);
   const [loading, setLoading] = useState(true);
@@ -22,16 +27,22 @@ export function Ep4Detail({
   useEffect(() => {
     let cancelled = false;
     setLoading(true); setError(null); setEp4(null);
+    const override = (instanceBeginActivityAt && instanceEndActivityAt)
+      ? {
+          beginActivityMs: new Date(instanceBeginActivityAt).getTime(),
+          endActivityMs:   new Date(instanceEndActivityAt).getTime(),
+        }
+      : undefined;
     getEp4Detail(sigId)
       .then(res => {
         if (cancelled) return;
         if ('error' in res) { setError(res.error); return; }
-        setEp4(buildEp4Rotation(res.raw_detail, rotationCode, zone, year, month, res.taux, res.irRates));
+        setEp4(buildEp4Rotation(res.raw_detail, rotationCode, zone, year, month, res.taux, res.irRates, override));
       })
       .catch(e => { if (!cancelled) setError(String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [sigId, rotationCode, zone, year, month]);
+  }, [sigId, rotationCode, zone, year, month, instanceBeginActivityAt, instanceEndActivityAt]);
 
   if (loading) return <p className="px-4 py-6 text-sm text-zinc-400">Chargement EP4…</p>;
   if (error)   return <p className="px-4 py-6 text-sm text-red-500">Erreur EP4 : {error}</p>;

@@ -110,10 +110,11 @@ export async function getEp4ForMonth(month: string): Promise<Ep4MonthResponse | 
   });
 
   // 3. Récupère les pairing_instance pour mapper instance_id → signature_id
+  //    et capter les bornes briefing/closeout par instance (override TA / debut/fin_vol_ms).
   const instanceIds = [...new Set(filteredItems.map(it => it.pairing_instance_id as string))];
   const { data: instances } = await supabase
     .from('pairing_instance')
-    .select('id, signature_id, activity_id')
+    .select('id, signature_id, activity_id, scheduled_begin_activity_at, scheduled_end_activity_at')
     .in('id', instanceIds);
   const instanceById = new Map((instances ?? []).map(i => [i.id, i]));
 
@@ -153,11 +154,17 @@ export async function getEp4ForMonth(month: string): Promise<Ep4MonthResponse | 
     const sig = sigById.get(inst.signature_id);
     if (!sig?.raw_detail) continue;
 
+    const override = (inst.scheduled_begin_activity_at && inst.scheduled_end_activity_at)
+      ? {
+          beginActivityMs: new Date(inst.scheduled_begin_activity_at).getTime(),
+          endActivityMs:   new Date(inst.scheduled_end_activity_at).getTime(),
+        }
+      : undefined;
     const ep4 = buildEp4Rotation(
       sig.raw_detail as unknown as PairingDetail,
       sig.rotation_code ?? '',
       sig.zone,
-      y, m, tauxRows, irRates,
+      y, m, tauxRows, irRates, override,
     );
 
     result.scenarios.find(s => s.name === scenarioName)!.flights.push({
