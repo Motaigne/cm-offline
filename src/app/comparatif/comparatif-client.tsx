@@ -6,6 +6,9 @@ import { getRotationsForMonth } from '@/app/actions/search';
 import { cacheRotations, loadRotationsFromDB, getCachedMonths } from '@/lib/local-db';
 import type { RotationSignature } from '@/app/actions/search';
 import { Ep4Detail } from './ep4-detail';
+import { getEp4Detail } from '@/app/actions/ep4';
+import { buildEp4Rotation } from '@/lib/ep4';
+import type { Ep4Rotation } from '@/lib/ep4';
 import { computeArticle81, TAXI_TSEJ_ADJUST_H } from '@/lib/article81';
 import type { Article81Data } from '@/lib/article81';
 import { getPveiKspForMonth, getValeurJourForMonth, VALEUR_JOUR_DEFAULT, type AnnexeRow } from '@/lib/annexe';
@@ -219,6 +222,50 @@ export function ComparatifClient({
     });
   }, [sig, valeurJour, article81Data]);
 
+  // EP4 calculé pour la rotation sélectionnée — alimente les nouvelles lignes
+  // (HV real, Tme, CMT, HCV, HCT, HCA, H1, H2HC, etc.) du tableau champ/valeur.
+  // Override des bornes briefing/closeout avec celles de la 1ère instance pour
+  // que TA/HCA/ONm reflètent l'instance affichée et pas le raw_detail figé.
+  const [ep4, setEp4]           = useState<Ep4Rotation | null>(null);
+  const [ep4Loading, setEp4Ld]  = useState(false);
+  const sigId        = sig?.id ?? null;
+  const sigRot       = sig?.rotation_code ?? '';
+  const sigZone      = sig?.zone ?? null;
+  const inst0Begin   = sig?.instances[0]?.scheduled_begin_activity_at ?? null;
+  const inst0End     = sig?.instances[0]?.scheduled_end_activity_at ?? null;
+  useEffect(() => {
+    if (!sigId) { setEp4(null); return; }
+    let cancelled = false;
+    setEp4Ld(true); setEp4(null);
+    const override = (inst0Begin && inst0End)
+      ? { beginActivityMs: new Date(inst0Begin).getTime(), endActivityMs: new Date(inst0End).getTime() }
+      : undefined;
+    getEp4Detail(sigId)
+      .then(res => {
+        if (cancelled || 'error' in res) return;
+        setEp4(buildEp4Rotation(res.raw_detail, sigRot, sigZone, year, mo, res.taux, res.irRates, override));
+      })
+      .catch(() => { /* silencieux : les lignes EP4 afficheront '—' */ })
+      .finally(() => { if (!cancelled) setEp4Ld(false); });
+    return () => { cancelled = true; };
+  }, [sigId, sigRot, sigZone, year, mo, inst0Begin, inst0End]);
+
+  // Agrégats rotation depuis EP4 (sum across services/legs).
+  const ep4Agg = useMemo(() => {
+    if (!ep4) return null;
+    const sumHV100  = ep4.services.reduce((s, svc) => s + svc.legs.reduce((ss, l) => ss + l.hv100,  0), 0);
+    const sumHV100r = ep4.services.reduce((s, svc) => s + svc.legs.reduce((ss, l) => ss + l.hv100r, 0), 0);
+    const sumHCV    = ep4.services.reduce((s, svc) => s + svc.HCV,  0);
+    const sumHCVr   = ep4.services.reduce((s, svc) => s + svc.HCVr, 0);
+    const sumHCT    = ep4.services.reduce((s, svc) => s + svc.HCT,  0);
+    const sumH1     = ep4.services.reduce((s, svc) => s + svc.H1,   0);
+    const sumH1r    = ep4.services.reduce((s, svc) => s + svc.H1r,  0);
+    const sumTSVn   = ep4.services.reduce((s, svc) => s + svc.tsv_nuit, 0);
+    const tmePerSvc = ep4.services.map(s => s.TME.toFixed(2).replace('.', ',')).join(' / ');
+    const cmtPerSvc = ep4.services.map(s => s.CMT.toFixed(2).replace('.', ',')).join(' / ');
+    return { sumHV100, sumHV100r, sumHCV, sumHCVr, sumHCT, sumH1, sumH1r, sumTSVn, tmePerSvc, cmtPerSvc };
+  }, [ep4]);
+
   return (
     <div className="max-w-4xl mx-auto p-4 space-y-4">
 
@@ -407,6 +454,41 @@ export function ComparatifClient({
               </thead>
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
                 <Row label="Rotation"         db={sig.rotation_code}           calc={sig.rotation_code}              formula="—" />
+
+                {/* ───── Section EP4 (nouvelle hiérarchie) ───── */}
+                {(() => {
+                  if (ep4Loading) return <Row label="EP4" db="—" calc="Chargement…" formula="(en attente du raw_detail)" />;
+                  if (!ep4 || !ep4Agg) return null;
+                  const sumPV  = ep4.H2HCr;
+                  const montantHCr  = Math.round(sumPV * pvei * ksp);
+                  const pvNuitEp4   = ep4Agg.sumTSVn / 2;
+                  const montantNuit = Math.round(pvNuitEp4 * pvei * ksp);
+                  const hcrPlusPVn  = sumPV + pvNuitEp4;
+                  return (
+                    <>
+                      <Row label="HV real"           db={fmt(ep4.HDV)}                 calc={fmt(ep4.HDV)}                      formula="HDV = flightTime (somme block des legs)" />
+                      <Row label="Tme"               db="—"                            calc={ep4Agg.tmePerSvc || '—'}            formula="max(1, ΣTDV_troncon / nbLegs) — par service" />
+                      <Row label="CMT"               db="—"                            calc={ep4Agg.cmtPerSvc || '—'}            formula="TME≤2 : 70/(21×TME+30) ; sinon 1 — par service" />
+                      <Row label="HV100"             db="—"                            calc={fmt(ep4Agg.sumHV100)}               formula="Σ legs.hv100 (= TDV troncon)" />
+                      <Row label="HCV"               db="—"                            calc={fmt(ep4Agg.sumHCV)}                 formula="Σ services (ΣTDV × CMT × (deadHead?0.5:1))" />
+                      <Row label="HCT"               db="—"                            calc={fmt(ep4Agg.sumHCT)}                 formula="Σ services (TSV / 1,75)" />
+                      <Row label="HCA"               db="—"                            calc={fmt(ep4.HCA)}                       formula="TA × 5/24 — heures créditées absence" />
+                      <Row label="H1"                db="—"                            calc={fmt(ep4Agg.sumH1)}                  formula="Σ services max(HCV, HCT)" />
+                      <Row label="H2/HC"             db="—"                            calc={fmt(ep4.H2HC)}                      formula="rtHDV × max(HCA, ΣH1)" />
+                      <Row label="HV100r"            db="—"                            calc={fmt(ep4Agg.sumHV100r)}              formula="Σ legs.hv100r (= TDV troncon + 0,58)" />
+                      <Row label="HCVr"              db="—"                            calc={fmt(ep4Agg.sumHCVr)}                formula="Σ services (Σhv100r × CMT × (deadHead?0.5:1))" />
+                      <Row label="H1r"               db="—"                            calc={fmt(ep4Agg.sumH1r)}                 formula="Σ services max(HCVr, HCT)" />
+                      <Row label="H2HCr (HCr)"       db="—"                            calc={fmt(ep4.H2HCr)}                     formula="rtHDV × max(HCA, ΣH1r)" highlight />
+                      <Row label="Montant HCr"       db="—"                            calc={`${montantHCr.toLocaleString('fr-FR')} €`} formula="H2HCr × PVEI × KSP" highlight />
+                      <Row label="TSVnuit"           db={fmt(sig.tsv_nuit)}            calc={fmt(ep4Agg.sumTSVn)}                formula="Σ services tsv_nuit (18h–6h locale dép.)" />
+                      <Row label="Majo Nuit (PVnuit)" db="—"                          calc={fmt(pvNuitEp4)}                      formula="TSVnuit / 2" />
+                      <Row label="Montant Nuit"      db="—"                            calc={`${montantNuit.toLocaleString('fr-FR')} €`} formula="PVnuit × PVEI × KSP" />
+                      <Row label="HCr + PVnuit"      db="—"                            calc={fmt(hcrPlusPVn)}                    formula="H2HCr + PVnuit" highlight />
+                    </>
+                  );
+                })()}
+
+                {/* ───── Existant ci-dessous ───── */}
                 <Row label="Hc"               db={fmt(sig.hc)}                 calc={fmt(sig.hc)}                    formula="Heures créditées" />
                 <Row label="Hcr"              db={fmt(sig.hcr_crew)}           calc={fmt(sig.hcr_crew)}              formula="Hcr crew (rotation entière)" />
                 <Row label="TSVnuit (h)"      db={fmt(computed.tsvNuit)}       calc={fmt(computed.tsvNuit)}          formula="TSV entre 18h–6h locale départ" />
