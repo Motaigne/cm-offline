@@ -199,18 +199,6 @@ export function ComparatifClient({
     [profileVersions, annexeRows, currentMonth],
   );
 
-  const computed = useMemo(() => {
-    if (!sig) return null;
-    const tsvNuit   = sig.tsv_nuit ?? 0;
-    const prime     = sig.prime ?? 0;
-    const pvNuit    = tsvNuit / 2;
-    const pvTotal   = sig.hcr_crew + pvNuit;
-    const montantPv = pvTotal * pvei * ksp;
-    const primeBT   = prime * 2.5 * pvei;
-    const pvPrime   = montantPv + primeBT;
-    return { tsvNuit, pvNuit, pvTotal, montantPv, primeBT, pvPrime };
-  }, [sig, pvei, ksp]);
-
   const a81 = useMemo(() => {
     if (!sig?.temps_sej || !sig.zone) return null;
     // sig.temps_sej = block-to-block (scraper, sans taxi) — cf TAXI_TSEJ_ADJUST_H.
@@ -249,6 +237,24 @@ export function ComparatifClient({
       .finally(() => { if (!cancelled) setEp4Ld(false); });
     return () => { cancelled = true; };
   }, [sigId, sigRot, sigZone, year, mo, inst0Begin, inst0End]);
+
+  const computed = useMemo(() => {
+    if (!sig) return null;
+    const tsvNuit   = sig.tsv_nuit ?? 0;
+    const prime     = sig.prime ?? 0;
+    const pvNuit    = tsvNuit / 2;
+    // HCr canonique = ep4.H2HCr (= rtHDV × max(HCA, ΣH1r), basé sur les bornes
+    // briefing/closeout de l'instance affichée via override). Fallback à
+    // sig.hcr_crew (DB) tant que EP4 n'est pas chargé — pour les sigs splittées
+    // ce fallback est faux (valeur héritée du raw_detail original) mais limité
+    // à la fenêtre de chargement.
+    const hcr       = ep4?.H2HCr ?? sig.hcr_crew;
+    const pvTotal   = hcr + pvNuit;
+    const montantPv = pvTotal * pvei * ksp;
+    const primeBT   = prime * 2.5 * pvei;
+    const pvPrime   = montantPv + primeBT;
+    return { tsvNuit, pvNuit, pvTotal, montantPv, primeBT, pvPrime, hcr };
+  }, [sig, pvei, ksp, ep4]);
 
   // Agrégats rotation depuis EP4 (sum across services/legs).
   const ep4Agg = useMemo(() => {
@@ -406,11 +412,15 @@ export function ComparatifClient({
                 </thead>
                 <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
                   {sig.instances.map(inst => {
-                    const hcrMois = prorateForMonth(sig.hcr_crew, inst.depart_at, inst.arrivee_at, year, mo);
-                    const tsvMois = prorateForMonth(sig.tsv_nuit ?? 0, inst.depart_at, inst.arrivee_at, year, mo);
-                    const pvMois  = (hcrMois + tsvMois / 2) * pvei * ksp;
-                    const eurMois = Math.round(pvMois + (sig.prime ?? 0) * 2.5 * pvei);
-                    const isProrated = hcrMois < sig.hcr_crew - 0.01;
+                    // HCr canonique = ep4.H2HCr (fallback sig.hcr_crew tant que EP4
+                    // pas chargé). Critique pour les sigs splittées dont sig.hcr_crew
+                    // est hérité du raw_detail original (durée différente).
+                    const hcrTotal = ep4?.H2HCr ?? sig.hcr_crew;
+                    const hcrMois  = prorateForMonth(hcrTotal, inst.depart_at, inst.arrivee_at, year, mo);
+                    const tsvMois  = prorateForMonth(sig.tsv_nuit ?? 0, inst.depart_at, inst.arrivee_at, year, mo);
+                    const pvMois   = (hcrMois + tsvMois / 2) * pvei * ksp;
+                    const eurMois  = Math.round(pvMois + (sig.prime ?? 0) * 2.5 * pvei);
+                    const isProrated = hcrMois < hcrTotal - 0.01;
                     return (
                       <tr key={inst.id}>
                         <td className="px-4 py-1.5 font-mono text-zinc-700 dark:text-zinc-300">
@@ -470,13 +480,13 @@ export function ComparatifClient({
                       <Row label="Tme"               db="—"                            calc={ep4Agg.tmePerSvc || '—'}            formula="max(1, ΣTDV_troncon / nbLegs) — par service" />
                       <Row label="CMT"               db="—"                            calc={ep4Agg.cmtPerSvc || '—'}            formula="TME≤2 : 70/(21×TME+30) ; sinon 1 — par service" />
                       <Row label="HV100"             db="—"                            calc={fmt(ep4Agg.sumHV100)}               formula="Σ legs.hv100 (= TDV troncon)" />
-                      <Row label="HCV"               db="—"                            calc={fmt(ep4Agg.sumHCV)}                 formula="Σ services (ΣTDV × CMT × (deadHead?0.5:1))" />
+                      <Row label="HCV"               db="—"                            calc={fmt(ep4Agg.sumHCV)}                 formula="Σ services (Σ TDV_norm × CMT + Σ TDV_MEP / 2)" />
                       <Row label="HCT"               db="—"                            calc={fmt(ep4Agg.sumHCT)}                 formula="Σ services (TSV / 1,75)" />
                       <Row label="HCA"               db="—"                            calc={fmt(ep4.HCA)}                       formula="TA × 5/24 — heures créditées absence" />
                       <Row label="H1"                db="—"                            calc={fmt(ep4Agg.sumH1)}                  formula="Σ services max(HCV, HCT)" />
                       <Row label="H2/HC"             db="—"                            calc={fmt(ep4.H2HC)}                      formula="rtHDV × max(HCA, ΣH1)" />
                       <Row label="HV100r"            db="—"                            calc={fmt(ep4Agg.sumHV100r)}              formula="Σ legs.hv100r (= TDV troncon + 0,58)" />
-                      <Row label="HCVr"              db="—"                            calc={fmt(ep4Agg.sumHCVr)}                formula="Σ services (Σhv100r × CMT × (deadHead?0.5:1))" />
+                      <Row label="HCVr"              db="—"                            calc={fmt(ep4Agg.sumHCVr)}                formula="Σ services (Σ HV100r_norm × CMT + Σ HV100r_MEP / 2)" />
                       <Row label="H1r"               db="—"                            calc={fmt(ep4Agg.sumH1r)}                 formula="Σ services max(HCVr, HCT)" />
                       <Row label="H2HCr (HCr)"       db="—"                            calc={fmt(ep4.H2HCr)}                     formula="rtHDV × max(HCA, ΣH1r)" highlight />
                       <Row label="Montant HCr"       db="—"                            calc={`${montantHCr.toLocaleString('fr-FR')} €`} formula="H2HCr × PVEI × KSP" highlight />
@@ -493,8 +503,8 @@ export function ComparatifClient({
                 <Row label="Hcr"              db={fmt(sig.hcr_crew)}           calc={fmt(sig.hcr_crew)}              formula="Hcr crew (rotation entière)" />
                 <Row label="TSVnuit (h)"      db={fmt(computed.tsvNuit)}       calc={fmt(computed.tsvNuit)}          formula="TSV entre 18h–6h locale départ" />
                 <Row label="PVnuit"           db="—"                           calc={fmt(computed.pvNuit)}           formula="TSVnuit / 2" />
-                <Row label="Hcr + PVnuit"     db="—"                           calc={fmt(computed.pvTotal)}          formula="Hcr + TSVnuit/2" />
-                <Row label="Montant PV"       db="—"                           calc={`${Math.round(computed.montantPv)} €`} formula="(Hcr+PVnuit) × PVEI × KSP" highlight />
+                <Row label="Hcr + PVnuit"     db={fmt(sig.hcr_crew + computed.pvNuit)} calc={fmt(computed.pvTotal)}   formula="HCr + TSVnuit/2 (HCr = ep4.H2HCr, fallback sig.hcr_crew)" />
+                <Row label="Montant PV"       db="—"                                   calc={`${Math.round(computed.montantPv)} €`} formula="(HCr + PVnuit) × PVEI × KSP — HCr = max(HCA, ΣH1r) × rtHDV" highlight />
                 <Row label="Prime bi-tronçon" db={sig.prime != null ? `×${sig.prime}` : '—'} calc={`${Math.round(computed.primeBT)} €`} formula={`${sig.prime ?? 0} × 2,5 × PVEI`} />
                 <Row label="PV + Prime"       db="—"                           calc={`${Math.round(computed.pvPrime)} €`} formula="Montant PV + Prime" highlight />
                 <Row label="ON"               db={String(sig.nb_on_days)}      calc={String(sig.nb_on_days)}         formula="nb_on_days" />
