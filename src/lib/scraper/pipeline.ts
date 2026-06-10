@@ -41,6 +41,11 @@ function buildRotationCode(s: PairingSummary, nbOnDays: number): string {
   return `${nbOnDays}ON ${dest}`;
 }
 
+// tempsSej = block-off (1er leg du dernier service) − block-on (dernier leg du
+// 1er service). FlightDuty.schBeginDate/schEndDate sont **block-off/block-on**
+// (PAS briefing/closeout — cf. `types.ts::FlightDuty`). Aligné Python `8b_ep4_81.py:48-59`
+// et `lib/ep4/build.ts:307-309`. Le +15min taxi (5min + 10min, cf. optiP_DEF.md:62-66)
+// est ajouté par les consommateurs via `TAXI_TSEJ_ADJUST_H`.
 function computeTempsSej(detail: PairingDetail): number {
   const duties = detail.flightDuty;
   if (!duties || duties.length < 2) return 0;
@@ -74,14 +79,21 @@ function computeA81Meta(detail: PairingDetail | null, firstLayoverFallback: stri
   };
 }
 
+// Exclusion ROTATION-LEVEL : si TLV ou BEY est touché à un moment de la rotation
+// (DEP ou ARR sur n'importe quel leg), aucune prime bi-tronçon. Aligné avec
+// `lib/ep4/build.ts::computePrime` et conforme à la règle métier (« les rotations
+// dont l'escale est TLV ou BEY n'ouvrent pas droit à la prime bi-tronçon »).
 function computePrime(detail: PairingDetail): number {
+  const allLegs = detail.flightDuty.flatMap(fd => fd.dutyLegAssociation.flatMap(d => d.legs));
+  const touchesExcluded = allLegs.some(l =>
+    l.arrivalStationCode === 'TLV' || l.arrivalStationCode === 'BEY' ||
+    l.departureStationCode === 'TLV' || l.departureStationCode === 'BEY',
+  );
+  if (touchesExcluded) return 0;
   let prime = 0;
   for (const fd of detail.flightDuty) {
     const legs = fd.dutyLegAssociation.flatMap(d => d.legs);
-    if (legs.length >= 2) {
-      const hasExcluded = legs.some(l => l.arrivalStationCode === 'TLV' || l.arrivalStationCode === 'BEY');
-      if (!hasExcluded) prime++;
-    }
+    if (legs.length >= 2) prime++;
   }
   return prime;
 }

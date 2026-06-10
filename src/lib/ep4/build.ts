@@ -125,15 +125,22 @@ function computeOnM(
 // que le Python 8_ep4_V7.py:197-242 qui ne gérait que l'escale principale).
 
 // ─── Prime bi-tronçon (Python 8_ep4_V7.py:166-191) ───────────────────────────
+//
+// Règle : 1 par service ≥ 2 legs. Exclusion ROTATION-LEVEL si TLV ou BEY est
+// touché à un moment de la rotation (= « les rotations dont l'escale est
+// TLV ou BEY n'ouvrent pas droit à la prime bi-tronçon »). Le Python et la
+// version pre-fix excluaient par service, ce qui donnait le même résultat sur
+// les rotations 2 legs (CDG-TLV-CDG : chaque service touche TLV donc exclu),
+// mais pouvait diverger sur les exotiques (TLV intermédiaire).
 
 function computePrime(services: RawService[]): number {
+  const touchesExcluded = services.some(svc =>
+    svc.legs.some(l => EXCLUDE_PRIME_AIRPORTS.has(l.dep) || EXCLUDE_PRIME_AIRPORTS.has(l.arr)),
+  );
+  if (touchesExcluded) return 0;
   let total = 0;
   for (const svc of services) {
-    if (svc.legs.length < 2) continue;
-    const hasExcluded = svc.legs.some(l =>
-      EXCLUDE_PRIME_AIRPORTS.has(l.dep) || EXCLUDE_PRIME_AIRPORTS.has(l.arr),
-    );
-    if (!hasExcluded) total += 1;
+    if (svc.legs.length >= 2) total += 1;
   }
   return total;
 }
@@ -195,6 +202,10 @@ export function buildEp4Rotation(
   const ON        = pv0?.nbOnDays ?? 0;
   const TDV_total = pv0?.workedFlightTime ?? 0;
 
+  // Bornes block (PAS briefing/closeout — cf. `lib/scraper/types.ts::FlightDuty`).
+  // L'override par instance fournit en revanche les bornes `scheduled_*_activity_at`
+  // (= briefing/closeout) → quand utilisé, TA inclut briefing+closeout. Note
+  // cohérente avec la spec optiP_DEF.md:164 (« durée totale rotation »).
   const debut_vol_ms = instanceOverride?.beginActivityMs ?? (rawServices[0]?.begin_ms ?? 0);
   const fin_vol_ms   = instanceOverride?.endActivityMs   ?? (rawServices[rawServices.length - 1]?.end_ms ?? 0);
   const TA  = (fin_vol_ms - debut_vol_ms) / HOUR_MS;
@@ -240,18 +251,27 @@ export function buildEp4Rotation(
       };
     });
 
-    const tot_tdv = legs.reduce((s, l) => s + l.tdv_troncon, 0);
-    const nb       = legs.length || 1;
-    const TME      = r2(Math.max(1, tot_tdv / nb));
-    const CMT      = TME <= 2 ? r2(70 / (21 * TME + 30)) : 1;
-    const has_dead_head = legs.some(l => l.dead_head);
-    const HCV      = r2(tot_tdv * CMT * (has_dead_head ? 0.5 : 1));
-    const HCT      = r2(svc.tsv / 1.75);
-    const H1       = r2(Math.max(HCV, HCT));
+    // HCV/HCVr : partition normal vs MEP (dead-head).
+    //   Hcv  = (Σ HV100%)   × CMT + Σ HV100%mep   / 2
+    //   Hcvr = (Σ HV100%r)  × CMT + Σ HV100%mep_r / 2
+    // Cf. CSV AF_Paie_V6_APR26 (lignes 50 et 63). Le port Python 8_ep4_V7.py:54-72
+    // appliquait à tort le facteur 0.5 sur TOUT le service dès qu'un MEP était
+    // présent — sous-estimait les services mixtes (MEP aller + vol normal).
+    const tdv_normal     = legs.filter(l => !l.dead_head).reduce((s, l) => s + l.tdv_troncon, 0);
+    const tdv_mep        = legs.filter(l =>  l.dead_head).reduce((s, l) => s + l.tdv_troncon, 0);
+    const tot_tdv        = tdv_normal + tdv_mep;
+    const nb             = legs.length || 1;
+    const TME            = r2(Math.max(1, tot_tdv / nb));
+    const CMT            = TME <= 2 ? r2(70 / (21 * TME + 30)) : 1;
+    const has_dead_head  = legs.some(l => l.dead_head);
+    const HCV            = r2(tdv_normal * CMT + tdv_mep / 2);
+    const HCT            = r2(svc.tsv / 1.75);
+    const H1             = r2(Math.max(HCV, HCT));
 
-    const sumHv100r = legs.reduce((s, l) => s + l.hv100r, 0);
-    const HCVr     = r2(sumHv100r * CMT * (has_dead_head ? 0.5 : 1));
-    const H1r      = r2(Math.max(HCVr, HCT));
+    const hv100r_normal  = legs.filter(l => !l.dead_head).reduce((s, l) => s + l.hv100r, 0);
+    const hv100r_mep     = legs.filter(l =>  l.dead_head).reduce((s, l) => s + l.hv100r, 0);
+    const HCVr           = r2(hv100r_normal * CMT + hv100r_mep / 2);
+    const H1r            = r2(Math.max(HCVr, HCT));
 
     for (const leg of legs) {
       leg.hcv_mois_m = prorateHcvMoisM(leg.begin_ms, leg.end_ms, HCV, monthStart, monthEnd);

@@ -44,7 +44,15 @@ export interface LegDetail {
 }
 
 export interface FlightDuty {
+  /** **block-off du premier leg du service** (≠ briefing). Cf.
+   *  `optiP_CREWBIDD_PAYRINGSEARCH.md:38`. Piège classique : dans `PairingSummary`
+   *  (endpoint pairingsearch) `beginDutyDate` = briefing (TSV Manex, ~1h45 avant
+   *  block) ; ici dans `PairingDetail.flightDuty` la sémantique est **block**, pas
+   *  TSV. Ne pas confondre. */
   schBeginDate: number;
+  /** **block-on du dernier leg du service** (≠ closeout). Cf.
+   *  `optiP_CREWBIDD_PAYRINGSEARCH.md:39`. Idem note sur `schBeginDate` :
+   *  attention au nom ambigu vs `endDutyDate` du PairingSummary. */
   schEndDate: number;
   sequenceNumber: number;
   flightDutyValue: Array<{
