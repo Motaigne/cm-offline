@@ -191,12 +191,18 @@ export function buildEp4Rotation(
   month: number,
   taux: TauxAppRow[],
   irRates: IrMfRate[] = [],
-  /** Override des bornes briefing/closeout (timestamps ms UTC) avec celles de
-   *  l'instance affichée. Sans override, on utilise les bornes du `raw_detail`,
-   *  qui peut venir d'une AUTRE durée pour les signatures legacy splittées
-   *  (mig 0033) — d'où une TA et un ONm faux. Quand l'appelant a accès à
-   *  `pairing_instance.scheduled_*_activity_at`, il les passe ici. */
-  instanceOverride?: { beginActivityMs: number; endActivityMs: number },
+  /** Override des bornes par instance affichée. Sans override, on retombe sur
+   *  les bornes du `raw_detail`, qui peut venir d'une AUTRE durée pour les
+   *  signatures legacy splittées (mig 0033) — d'où TA, ONm et ON faux.
+   *  - `beginActivityMs` / `endActivityMs` = briefing / closeout (= TA).
+   *  - `beginBlockMs`    / `endBlockMs`    = block-off 1er leg / block-on dernier leg
+   *    (= bornes pour `ON = nb_on_days` recalculé). */
+  instanceOverride?: {
+    beginActivityMs: number;
+    endActivityMs: number;
+    beginBlockMs?: number;
+    endBlockMs?: number;
+  },
 ): Ep4Rotation {
   const rawServices = extractServices(detail);
   const pv0 = detail.pairingValue?.[0];
@@ -205,10 +211,11 @@ export function buildEp4Rotation(
   const HC        = pv0?.creditedHour ?? 0;
   const TDV_total = pv0?.workedFlightTime ?? 0;
   // ON recalculé depuis les bornes block (cf. `lib/rotation-days.ts`).
-  // `pv0.nbOnDays` peut être stale côté CrewBidd (cache AF) — observé sur
-  // signatures JFK pré-mig 0033. Source de vérité = jours calendaires UTC.
-  const debut_block_ms = rawServices[0]?.legs[0]?.dep_ms ?? 0;
-  const fin_block_ms   = (() => {
+  // Pour les sigs splittées (mig 0033), les bornes raw_detail viennent d'une
+  // autre durée — d'où l'override par instance (depart_at / arrivee_at).
+  // `pv0.nbOnDays` peut aussi être stale (cache AF).
+  const debut_block_ms = instanceOverride?.beginBlockMs ?? (rawServices[0]?.legs[0]?.dep_ms ?? 0);
+  const fin_block_ms   = instanceOverride?.endBlockMs ?? (() => {
     const last = rawServices[rawServices.length - 1];
     return last?.legs[last.legs.length - 1]?.arr_ms ?? 0;
   })();
@@ -263,12 +270,11 @@ export function buildEp4Rotation(
       };
     });
 
-    // HCV/HCVr : partition normal vs MEP (dead-head).
-    //   Hcv  = (Σ HV100%)   × CMT + Σ HV100%mep   / 2
-    //   Hcvr = (Σ HV100%r)  × CMT + Σ HV100%mep_r / 2
-    // Cf. CSV AF_Paie_V6_APR26 (lignes 50 et 63). Le port Python 8_ep4_V7.py:54-72
-    // appliquait à tort le facteur 0.5 sur TOUT le service dès qu'un MEP était
-    // présent — sous-estimait les services mixtes (MEP aller + vol normal).
+    // HCV/HCVr : facteur 0,5 par tronçon en MEP, puis × CMT global.
+    //   HCV  = Σ(tdv_troncon  × (0,5 si DH))  × CMT
+    //   HCVr = Σ(hv100r       × (0,5 si DH))  × CMT
+    // = (tdv_normal  + tdv_mep    / 2) × CMT
+    // = (hv100r_norm + hv100r_mep / 2) × CMT
     const tdv_normal     = legs.filter(l => !l.dead_head).reduce((s, l) => s + l.tdv_troncon, 0);
     const tdv_mep        = legs.filter(l =>  l.dead_head).reduce((s, l) => s + l.tdv_troncon, 0);
     const tot_tdv        = tdv_normal + tdv_mep;
@@ -276,13 +282,13 @@ export function buildEp4Rotation(
     const TME            = r2(Math.max(1, tot_tdv / nb));
     const CMT            = TME <= 2 ? r2(70 / (21 * TME + 30)) : 1;
     const has_dead_head  = legs.some(l => l.dead_head);
-    const HCV            = r2(tdv_normal * CMT + tdv_mep / 2);
+    const HCV            = r2((tdv_normal + tdv_mep / 2) * CMT);
     const HCT            = r2(svc.tsv / 1.75);
     const H1             = r2(Math.max(HCV, HCT));
 
     const hv100r_normal  = legs.filter(l => !l.dead_head).reduce((s, l) => s + l.hv100r, 0);
     const hv100r_mep     = legs.filter(l =>  l.dead_head).reduce((s, l) => s + l.hv100r, 0);
-    const HCVr           = r2(hv100r_normal * CMT + hv100r_mep / 2);
+    const HCVr           = r2((hv100r_normal + hv100r_mep / 2) * CMT);
     const H1r            = r2(Math.max(HCVr, HCT));
 
     for (const leg of legs) {

@@ -163,8 +163,10 @@ export async function getEp4ForMonth(month: string): Promise<Ep4MonthResponse | 
                    : inst.depart_at  ? new Date(inst.depart_at).getTime()  - MANEX_BRIEF_MS : null;
     const closeMs = inst.scheduled_end_duty_at   ? new Date(inst.scheduled_end_duty_at).getTime()
                    : inst.arrivee_at ? new Date(inst.arrivee_at).getTime() + MANEX_CLOSE_MS : null;
+    const blockOffMs = inst.depart_at  ? new Date(inst.depart_at).getTime()  : undefined;
+    const blockOnMs  = inst.arrivee_at ? new Date(inst.arrivee_at).getTime() : undefined;
     const override = (briefMs != null && closeMs != null)
-      ? { beginActivityMs: briefMs, endActivityMs: closeMs }
+      ? { beginActivityMs: briefMs, endActivityMs: closeMs, beginBlockMs: blockOffMs, endBlockMs: blockOnMs }
       : undefined;
     const ep4 = buildEp4Rotation(
       sig.raw_detail as unknown as PairingDetail,

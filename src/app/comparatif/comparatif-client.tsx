@@ -244,8 +244,10 @@ export function ComparatifClient({
                    : inst0Depart  ? new Date(inst0Depart).getTime()  - MANEX_BRIEF_MS : null;
     const closeMs = inst0Close ? new Date(inst0Close).getTime()
                    : inst0Arrivee ? new Date(inst0Arrivee).getTime() + MANEX_CLOSE_MS : null;
+    const blockOffMs = inst0Depart  ? new Date(inst0Depart).getTime()  : undefined;
+    const blockOnMs  = inst0Arrivee ? new Date(inst0Arrivee).getTime() : undefined;
     const override = (briefMs != null && closeMs != null)
-      ? { beginActivityMs: briefMs, endActivityMs: closeMs }
+      ? { beginActivityMs: briefMs, endActivityMs: closeMs, beginBlockMs: blockOffMs, endBlockMs: blockOnMs }
       : undefined;
     getEp4Detail(sigId)
       .then(res => {

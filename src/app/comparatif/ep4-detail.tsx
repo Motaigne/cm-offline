@@ -38,8 +38,10 @@ export function Ep4Detail({
                    : instanceDepartAt   ? new Date(instanceDepartAt).getTime()  - MANEX_BRIEF_MS : null;
     const closeMs = instanceCloseoutAt ? new Date(instanceCloseoutAt).getTime()
                    : instanceArriveeAt  ? new Date(instanceArriveeAt).getTime() + MANEX_CLOSE_MS : null;
+    const blockOffMs = instanceDepartAt  ? new Date(instanceDepartAt).getTime()  : undefined;
+    const blockOnMs  = instanceArriveeAt ? new Date(instanceArriveeAt).getTime() : undefined;
     const override = (briefMs != null && closeMs != null)
-      ? { beginActivityMs: briefMs, endActivityMs: closeMs }
+      ? { beginActivityMs: briefMs, endActivityMs: closeMs, beginBlockMs: blockOffMs, endBlockMs: blockOnMs }
       : undefined;
     getEp4Detail(sigId)
       .then(res => {
