@@ -31,6 +31,12 @@ export type RotationInstance = {
   scheduled_begin_duty_at: string | null;
   /** **scheduledEndDutyDate** = closeout (~30min après block-on). */
   scheduled_end_duty_at: string | null;
+  /** Payload PairingSummary brut (JSONB). Après mig `_raw` capture, contient
+   *  tous les champs documentés dans optiP_CREWBIDD_V1.md (activityKey,
+   *  activityCode, populationType, pairingArrivalStationCode, etc.).
+   *  Embarqué avec l'instance pour permettre le panneau Metadata complète
+   *  (admin) en offline-first — pas de fetch live à la sélection. */
+  raw_summary?: unknown;
   /** Début / fin séjour A81 calculés PAR INSTANCE (depart_at + offsets de la
    *  signature). Null si raw_detail absent ou flightDuty < 2. Doivent être
    *  utilisés à la place de signature.debut_sejour_at, qui est l'absolu d'UNE
@@ -193,10 +199,11 @@ export async function getRotationsForMonth(
     rest_before_h: number | null; rest_after_h: number | null;
     scheduled_begin_activity_at: string | null; scheduled_end_activity_at: string | null;
     scheduled_begin_duty_at: string | null;     scheduled_end_duty_at: string | null;
+    raw_summary: unknown;
   }>((from, to) =>
     supabase
       .from('pairing_instance')
-      .select('id, activity_id, signature_id, depart_date, depart_at, arrivee_at, rest_before_h, rest_after_h, scheduled_begin_activity_at, scheduled_end_activity_at, scheduled_begin_duty_at, scheduled_end_duty_at')
+      .select('id, activity_id, signature_id, depart_date, depart_at, arrivee_at, rest_before_h, rest_after_h, scheduled_begin_activity_at, scheduled_end_activity_at, scheduled_begin_duty_at, scheduled_end_duty_at, raw_summary')
       .in('signature_id', sigIds)
       .order('depart_date')
       .range(from, to),
@@ -249,6 +256,7 @@ export async function getRotationsForMonth(
       scheduled_end_activity_at:   inst.scheduled_end_activity_at,
       scheduled_begin_duty_at:     inst.scheduled_begin_duty_at,
       scheduled_end_duty_at:       inst.scheduled_end_duty_at,
+      raw_summary:                 inst.raw_summary,
       debut_sejour_at: off ? new Date(departMs + off.debutSejourOffsetMs).toISOString() : null,
       fin_sejour_at:   off ? new Date(departMs + off.finSejourOffsetMs).toISOString()   : null,
     });

@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef } from 'react';
 import type { ScrapeEvent } from '@/lib/scraper/types';
 import { getCurrentUserScrapeRights } from '@/app/actions/auth';
-import { refreshRawSummaryForMonth } from '@/app/actions/admin-refresh';
 import { wipeSnapshotForMonth } from '@/app/actions/admin-wipe';
 import { useLocalStorageState } from '@/hooks/use-local-storage-state';
 
@@ -34,8 +33,6 @@ export function ScrapeDialog({
   const [phase,  setPhase]  = useState<Phase>({ name: 'idle' });
   const [maxRotations, setMaxRotations] = useState<string>(''); // vide = tout (cappé serveur)
   const [isAdmin, setIsAdmin] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [refreshResult, setRefreshResult] = useState<string | null>(null);
   const [wiping, setWiping] = useState(false);
   const [wipeResult, setWipeResult] = useState<string | null>(null);
 
@@ -113,24 +110,6 @@ export function ScrapeDialog({
       setWipeResult(`❌ ${String(err)}`);
     } finally {
       setWiping(false);
-    }
-  }
-
-  async function refresh() {
-    setRefreshing(true); setRefreshResult(null);
-    try {
-      const r = await refreshRawSummaryForMonth(month, cookie, sn, userId);
-      if ('error' in r) {
-        setRefreshResult(`❌ ${r.error}`);
-      } else {
-        setRefreshResult(
-          `✓ ${r.updated_instances}/${r.total_summaries} instances refresh — duty_at populé sur ${r.updated_duty_dates}`
-        );
-      }
-    } catch (err) {
-      setRefreshResult(`❌ ${String(err)}`);
-    } finally {
-      setRefreshing(false);
     }
   }
 
@@ -307,33 +286,18 @@ export function ScrapeDialog({
                     ✓ Tout est déjà en DB ({phase.in_db}/{phase.unique_sigs} rotations · {phase.total_instances} dates)
                   </p>
                   {isAdmin && (
-                    <div className="pt-2 mt-2 border-t border-zinc-200 dark:border-zinc-700 space-y-2">
-                      <div className="space-y-1">
-                        <p className="text-[10px] text-zinc-500">
-                          <strong>Wipe + re-scrape</strong> : supprime le snapshot et toutes ses sigs/instances, puis re-scrape de zéro avec migrations 0033/0034/0039 propres. ~287 calls détail CrewBidd (~5-10 min).
-                        </p>
-                        <button
-                          onClick={wipe}
-                          disabled={wiping || refreshing}
-                          className="text-xs px-2 py-1 rounded bg-red-100 hover:bg-red-200 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-700 dark:text-red-300 disabled:opacity-50"
-                        >
-                          {wiping ? 'Wipe en cours…' : '🗑 Wipe snapshot'}
-                        </button>
-                        {wipeResult && <p className="text-[11px] text-zinc-600 dark:text-zinc-300 font-mono">{wipeResult}</p>}
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-[10px] text-zinc-500">
-                          <strong>Refresh raw_summary</strong> : juste rafraîchir <code className="font-mono">raw_summary</code> + <code className="font-mono">scheduled_*_duty_at</code> depuis 1 call <code>pairingsearch</code> (~3 min, sans re-fetch détails). N'aide pas pour le bug split-sig.
-                        </p>
-                        <button
-                          onClick={refresh}
-                          disabled={refreshing || wiping}
-                          className="text-xs px-2 py-1 rounded bg-amber-100 hover:bg-amber-200 dark:bg-amber-900/30 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 disabled:opacity-50"
-                        >
-                          {refreshing ? 'Refresh en cours…' : '🔄 Refresh raw_summary'}
-                        </button>
-                        {refreshResult && <p className="text-[11px] text-zinc-600 dark:text-zinc-300 font-mono">{refreshResult}</p>}
-                      </div>
+                    <div className="pt-2 mt-2 border-t border-zinc-200 dark:border-zinc-700 space-y-1">
+                      <p className="text-[10px] text-zinc-500">
+                        Admin : <strong>Wipe + re-scrape</strong>. Supprime le snapshot existant et toutes ses sigs/instances, puis re-scrape de zéro avec migrations 0033/0034/0039 propres et fixes formules à jour. ~287 calls détail CrewBidd (~5-10 min).
+                      </p>
+                      <button
+                        onClick={wipe}
+                        disabled={wiping}
+                        className="text-xs px-2 py-1 rounded bg-red-100 hover:bg-red-200 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-700 dark:text-red-300 disabled:opacity-50"
+                      >
+                        {wiping ? 'Wipe en cours…' : '🗑 Wipe snapshot'}
+                      </button>
+                      {wipeResult && <p className="text-[11px] text-zinc-600 dark:text-zinc-300 font-mono">{wipeResult}</p>}
                     </div>
                   )}
                 </>

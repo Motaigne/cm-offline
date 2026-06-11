@@ -6,8 +6,7 @@ import { getRotationsForMonth } from '@/app/actions/search';
 import { cacheRotations, loadRotationsFromDB, getCachedMonths } from '@/lib/local-db';
 import type { RotationSignature } from '@/app/actions/search';
 import { Ep4Detail } from './ep4-detail';
-import { getEp4Detail, getRawMetadataForSig } from '@/app/actions/ep4';
-import type { AdminRawMetadata } from '@/app/actions/ep4';
+import { getEp4Detail } from '@/app/actions/ep4';
 import { buildEp4Rotation } from '@/lib/ep4';
 import type { Ep4Rotation } from '@/lib/ep4';
 import { computeArticle81, TAXI_TSEJ_ADJUST_H } from '@/lib/article81';
@@ -29,6 +28,9 @@ type SigInstance = {
   scheduled_end_duty_at?: string | null;
   rest_before_h?: number | null;
   rest_after_h?: number | null;
+  /** Payload PairingSummary brut (JSONB) — chargé avec l'instance pour le
+   *  panneau Metadata complète offline-first (pas de fetch online). */
+  raw_summary?: unknown;
 };
 
 type Sig = {
@@ -115,6 +117,7 @@ function rotToSig(s: RotationSignature): Sig {
       scheduled_end_activity_at:   (i as { scheduled_end_activity_at?:   string | null }).scheduled_end_activity_at   ?? null,
       scheduled_begin_duty_at:     (i as { scheduled_begin_duty_at?:     string | null }).scheduled_begin_duty_at     ?? null,
       scheduled_end_duty_at:       (i as { scheduled_end_duty_at?:       string | null }).scheduled_end_duty_at       ?? null,
+      raw_summary:                 (i as { raw_summary?: unknown }).raw_summary ?? null,
     })),
   };
 }
@@ -223,8 +226,9 @@ export function ComparatifClient({
   // (HV real, Tme, CMT, HCV, HCT, HCA, H1, H2HC, etc.) du tableau champ/valeur.
   // Override des bornes briefing/closeout avec celles de la 1ère instance pour
   // que TA/HCA/ONm reflètent l'instance affichée et pas le raw_detail figé.
-  const [ep4, setEp4]           = useState<Ep4Rotation | null>(null);
-  const [ep4Loading, setEp4Ld]  = useState(false);
+  const [ep4, setEp4]               = useState<Ep4Rotation | null>(null);
+  const [ep4RawDetail, setEp4Raw]   = useState<unknown>(null);
+  const [ep4Loading, setEp4Ld]      = useState(false);
   const sigId        = sig?.id ?? null;
   const sigRot       = sig?.rotation_code ?? '';
   const sigZone      = sig?.zone ?? null;
@@ -252,10 +256,12 @@ export function ComparatifClient({
     const override = (briefMs != null && closeMs != null)
       ? { beginActivityMs: briefMs, endActivityMs: closeMs, beginBlockMs: blockOffMs, endBlockMs: blockOnMs }
       : undefined;
+    setEp4Raw(null);
     getEp4Detail(sigId)
       .then(res => {
         if (cancelled || 'error' in res) return;
         setEp4(buildEp4Rotation(res.raw_detail, sigRot, sigZone, year, mo, res.taux, res.irRates, override));
+        setEp4Raw(res.raw_detail);
       })
       .catch(() => { /* silencieux : les lignes EP4 afficheront '—' */ })
       .finally(() => { if (!cancelled) setEp4Ld(false); });
@@ -279,17 +285,6 @@ export function ComparatifClient({
     const pvPrime   = montantPv + primeBT;
     return { tsvNuit, pvNuit, pvTotal, montantPv, primeBT, pvPrime, hcr };
   }, [sig, pvei, ksp, ep4]);
-
-  // Admin only : raw_summary + raw_detail bruts CrewBidd pour le panneau metadata.
-  const [adminMeta, setAdminMeta] = useState<AdminRawMetadata | null>(null);
-  useEffect(() => {
-    if (!isAdmin || !sigId) { setAdminMeta(null); return; }
-    let cancelled = false;
-    getRawMetadataForSig(sigId)
-      .then(res => { if (!cancelled) setAdminMeta(res); })
-      .catch(() => { /* silencieux */ });
-    return () => { cancelled = true; };
-  }, [isAdmin, sigId]);
 
   // Agrégats rotation depuis EP4 (sum across services/legs).
   const ep4Agg = useMemo(() => {
@@ -701,9 +696,14 @@ export function ComparatifClient({
             </table>
           </div>
 
-          {/* Metadata complète admin — raw_summary + raw_detail bruts CrewBidd */}
-          {isAdmin && adminMeta && !('error' in adminMeta) && (
-            <AdminMetadataPanel meta={adminMeta} />
+          {/* Metadata complète admin — raw_summary (offline, depuis sig) +
+              raw_detail (online via EP4, exempté offline). */}
+          {isAdmin && (
+            <AdminMetadataPanel
+              instances={sig.instances}
+              rawDetail={ep4RawDetail}
+              rawDetailLoading={ep4Loading}
+            />
           )}
 
           {/* Détail EP4 — feuille horaire + feuille décompte (port du pipeline Python) */}
@@ -748,15 +748,20 @@ function Row({
 }
 
 // ─── Panneau admin : raw_summary + raw_detail bruts CrewBidd ────────────────
-// Affichage flat key/value pour permettre de voir tous les champs documentés
-// dans optiP_CREWBIDD_V1.md / PAYRINGSEARCH.md sans re-scraper.
-function AdminMetadataPanel({ meta }: { meta: Exclude<AdminRawMetadata, { error: string }> }) {
+// raw_summary vient directement de sig.instances[].raw_summary (chargé avec
+// la sig → offline-first, dispo sans connexion). raw_detail vient de l'EP4
+// fetch (exempté offline par la règle de base).
+function AdminMetadataPanel({ instances, rawDetail, rawDetailLoading }: {
+  instances: SigInstance[];
+  rawDetail: unknown;
+  rawDetailLoading: boolean;
+}) {
   const [openInst, setOpenInst]   = useState<number>(0);
   const [openDetail, setOpenDetail] = useState<boolean>(false);
-  const insts = meta.instances ?? [];
+  const insts = instances ?? [];
   const inst  = insts[openInst] ?? null;
   const rawSummary = inst?.raw_summary as Record<string, unknown> | null;
-  const rawDetail  = meta.raw_detail as Record<string, unknown> | null;
+  const rawDetailObj = rawDetail as Record<string, unknown> | null;
   return (
     <div className="bg-white dark:bg-zinc-900 rounded-xl border border-amber-200 dark:border-amber-900/50 overflow-hidden">
       <div className="px-4 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-100 dark:border-amber-900/40">
@@ -797,26 +802,27 @@ function AdminMetadataPanel({ meta }: { meta: Exclude<AdminRawMetadata, { error:
           className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1 hover:text-zinc-600 dark:hover:text-zinc-300"
         >
           {openDetail ? '▼' : '▶'} raw_detail (PairingDetail signature){' '}
-          <span className="text-[9px] text-zinc-300 dark:text-zinc-500 normal-case font-normal">— volumineux, click pour afficher</span>
+          <span className="text-[9px] text-zinc-300 dark:text-zinc-500 normal-case font-normal">— online uniquement (exempté offline)</span>
         </button>
-        {openDetail && rawDetail && (
+        {openDetail && rawDetailLoading && <p className="mt-2 text-xs text-zinc-400 italic">Chargement…</p>}
+        {openDetail && !rawDetailLoading && rawDetailObj && (
           <div className="mt-2 space-y-2">
             <div>
               <p className="text-[10px] font-semibold text-zinc-400 mb-1">Niveau rotation (clés top + pairingValue[0])</p>
               <FlatJsonTable obj={{
-                ...Object.fromEntries(Object.entries(rawDetail).filter(([k]) => k !== 'flightDuty' && k !== 'pairingValue' && k !== 'serviceRest')),
-                ...((rawDetail.pairingValue as Array<Record<string, unknown>>)?.[0] ?? {}),
+                ...Object.fromEntries(Object.entries(rawDetailObj).filter(([k]) => k !== 'flightDuty' && k !== 'pairingValue' && k !== 'serviceRest')),
+                ...((rawDetailObj.pairingValue as Array<Record<string, unknown>>)?.[0] ?? {}),
               }} />
             </div>
             <div>
               <p className="text-[10px] font-semibold text-zinc-400 mb-1">flightDuty[] (résumé par service)</p>
               <pre className="text-[10px] font-mono bg-zinc-50 dark:bg-zinc-800/60 rounded p-2 overflow-x-auto max-h-64">
-                {JSON.stringify(rawDetail.flightDuty, null, 2)}
+                {JSON.stringify(rawDetailObj.flightDuty, null, 2)}
               </pre>
             </div>
           </div>
         )}
-        {openDetail && !rawDetail && <p className="mt-2 text-xs text-zinc-400 italic">raw_detail absent en DB</p>}
+        {openDetail && !rawDetailLoading && !rawDetailObj && <p className="mt-2 text-xs text-zinc-400 italic">raw_detail non chargé (offline ? ou erreur EP4)</p>}
       </div>
     </div>
   );
