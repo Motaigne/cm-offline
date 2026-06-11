@@ -44,8 +44,26 @@ export async function wipeSnapshotForMonth(month: string): Promise<WipeResult> {
     .in('snapshot_id', snapshotIds);
   const sigIds = (sigs ?? []).map(s => s.id);
 
+  // Instances à supprimer
+  const { data: instsToDelete } = await supabase
+    .from('pairing_instance')
+    .select('id')
+    .in('signature_id', sigIds);
+  const instanceIds = (instsToDelete ?? []).map(i => i.id);
+
+  // Nullify les refs planning_item.pairing_instance_id qui pointent sur ces
+  // instances — sinon FK constraint planning_item_pairing_instance_id_fkey
+  // bloque le DELETE. Les planning_items survivent (les vols utilisateur)
+  // mais perdent leur lien. À ré-binder après re-scrape (par activity_id).
+  if (instanceIds.length > 0) {
+    const { error: nullifyErr } = await supabase
+      .from('planning_item')
+      .update({ pairing_instance_id: null })
+      .in('pairing_instance_id', instanceIds);
+    if (nullifyErr) return { error: `Nullify planning_item refs : ${nullifyErr.message}` };
+  }
+
   // DELETE en ordre dépendance : instances → sigs → snapshot.
-  // Si les FK ont ON DELETE CASCADE c'est redondant, mais explicit > implicit.
   let deletedInstances = 0;
   if (sigIds.length > 0) {
     const { count, error } = await supabase

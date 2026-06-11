@@ -95,6 +95,8 @@ export function ScrapeDialog({
       `Cela supprime ~${inDb} rotations et ~${dates} dates.\n` +
       `Le scrape suivant repart de zéro avec migrations 0033 (split par durée) ` +
       `+ 0034 (raw_summary) + 0039 (duty_at) propres.\n\n` +
+      `⚠ Les vols utilisateur (planning_item) qui pointent sur ces instances ` +
+      `perdent leur lien. À ré-attribuer après le scrape (pas de re-bind auto).\n\n` +
       `Continuer ?`
     )) return;
     setWiping(true); setWipeResult(null);
