@@ -1394,14 +1394,20 @@ export function GanttView({
   }, [month]);
 
   // ── Mise à jour depuis le serveur après le bouton Sync (router.refresh) ────
-  // Quand `scenarios` change (nouveau RSC depuis le cache mis à jour par Sync),
-  // on met à jour localScenarios si la queue est vide.
+  // Quand `scenarios` change (nouveau RSC remonté par router.refresh post-Sync),
+  // on resync localScenarios — MAIS depuis Dexie, pas depuis les props serveur :
+  // après un push, Next.js peut servir un RSC cached (revalidatePath ne purge
+  // pas toujours sub-routes ?m=...) ou Supabase peut avoir un lag réplication
+  // sur le SELECT, donc `scenarios` props peut encore contenir l'item qu'on
+  // vient juste de supprimer. Dexie, elle, a l'optimistic delete appliqué via
+  // applyDelete → c'est la source de vérité pour les items du user.
   useEffect(() => {
     if (currentMonth !== month) return;
     async function maybeRefresh() {
       const count = await pendingOpsCount();
       if (count === 0) {
-        setLocalScenarios(scenarios);
+        const fromDb = await loadFromDB(scenarios, month);
+        setLocalScenarios(fromDb);
         setPendingCount(0);
       }
     }
