@@ -5,10 +5,10 @@ import { PVEI as PVEI_DEFAULT, KSP as KSP_DEFAULT } from '@/lib/finance';
 import { getRotationsForMonth } from '@/app/actions/search';
 import { cacheRotations, loadRotationsFromDB, getCachedMonths } from '@/lib/local-db';
 import type { RotationSignature } from '@/app/actions/search';
-import { Ep4Detail } from './ep4-detail';
 import { getEp4Detail } from '@/app/actions/ep4';
 import { buildEp4Rotation } from '@/lib/ep4';
-import type { Ep4Rotation } from '@/lib/ep4';
+import type { Ep4Rotation, PairingDetail, TauxAppRow } from '@/lib/ep4';
+import type { IrMfRate } from '@/lib/ir-rates';
 import { computeArticle81, TAXI_TSEJ_ADJUST_H } from '@/lib/article81';
 import type { Article81Data } from '@/lib/article81';
 import { getPveiKspForMonth, getValeurJourForMonth, VALEUR_JOUR_DEFAULT, type AnnexeRow } from '@/lib/annexe';
@@ -144,6 +144,7 @@ export function ComparatifClient({
   const [noCache, setNoCache]     = useState(false);
   const [query, setQuery]         = useState('');
   const [selected, setSelected]   = useState<string | null>(null);
+  const [selectedInstanceIdx, setSelectedInstanceIdx] = useState(0);
 
   const [year, mo] = currentMonth.split('-').map(Number);
 
@@ -158,7 +159,7 @@ export function ComparatifClient({
 
   async function loadMonth(m: string) {
     setMonth(m);
-    setFromCache(false); setNoCache(false); setSelected(null);
+    setFromCache(false); setNoCache(false); setSelected(null); setSelectedInstanceIdx(0);
     window.history.replaceState(null, '', `/comparatif?m=${m}`);
     setLoading(true);
     try {
@@ -197,6 +198,10 @@ export function ComparatifClient({
   }, [sigs, query]);
 
   const sig = useMemo(() => sigs.find(s => s.id === selected), [sigs, selected]);
+  // Instance affichée dans le tableau EP4 / Metadata / A81 — alimente l'override
+  // briefing/closeout passé à buildEp4Rotation. selectedInstanceIdx doit être
+  // remis à 0 partout où on change `selected` (sélection sig / retour liste).
+  const selectedInst = sig?.instances[selectedInstanceIdx] ?? sig?.instances[0] ?? null;
 
   // PVEI/KSP dérivés du profil utilisateur applicable au mois courant.
   // Fallback aux constantes par défaut si profil incomplet ou annexe absente.
@@ -224,49 +229,53 @@ export function ComparatifClient({
 
   // EP4 calculé pour la rotation sélectionnée — alimente les nouvelles lignes
   // (HV real, Tme, CMT, HCV, HCT, HCA, H1, H2HC, etc.) du tableau champ/valeur.
-  // Override des bornes briefing/closeout avec celles de la 1ère instance pour
-  // que TA/HCA/ONm reflètent l'instance affichée et pas le raw_detail figé.
-  const [ep4, setEp4]               = useState<Ep4Rotation | null>(null);
-  const [ep4RawDetail, setEp4Raw]   = useState<unknown>(null);
-  const [ep4Loading, setEp4Ld]      = useState(false);
-  const sigId        = sig?.id ?? null;
-  const sigRot       = sig?.rotation_code ?? '';
-  const sigZone      = sig?.zone ?? null;
-  const inst0Depart  = sig?.instances[0]?.depart_at ?? null;
-  const inst0Arrivee = sig?.instances[0]?.arrivee_at ?? null;
-  const inst0Brief   = sig?.instances[0]?.scheduled_begin_duty_at ?? null;
-  const inst0Close   = sig?.instances[0]?.scheduled_end_duty_at   ?? null;
+  // Le raw_detail est fetché 1 seule fois par sig ; ep4 est rebuilt en mémoire
+  // quand selectedInst change (override bornes briefing/closeout par instance).
+  const [ep4Data, setEp4Data] = useState<{
+    raw_detail: PairingDetail; taux: TauxAppRow[]; irRates: IrMfRate[];
+  } | null>(null);
+  const [ep4Loading, setEp4Ld] = useState(false);
+  const sigId   = sig?.id ?? null;
+  const sigRot  = sig?.rotation_code ?? '';
+  const sigZone = sig?.zone ?? null;
+
   useEffect(() => {
-    if (!sigId) { setEp4(null); return; }
+    if (!sigId) { setEp4Data(null); return; }
     let cancelled = false;
-    setEp4Ld(true); setEp4(null);
-    // TA = briefing → closeout (DutyDate AF). Priorité aux valeurs DB exactes
-    // (mig 0039) ; fallback Manex (1h45 avant block-off / 30min après block-on)
-    // pour les instances sans raw_summary (pre-mig 0034).
-    // NB : `scheduled_*_activity_at` = bornes du repos pré/post-courrier — pas
-    // utilisable pour TA.
-    const MANEX_BRIEF_MS = 1.75 * 3_600_000;
-    const MANEX_CLOSE_MS = 0.5  * 3_600_000;
-    const briefMs = inst0Brief ? new Date(inst0Brief).getTime()
-                   : inst0Depart  ? new Date(inst0Depart).getTime()  - MANEX_BRIEF_MS : null;
-    const closeMs = inst0Close ? new Date(inst0Close).getTime()
-                   : inst0Arrivee ? new Date(inst0Arrivee).getTime() + MANEX_CLOSE_MS : null;
-    const blockOffMs = inst0Depart  ? new Date(inst0Depart).getTime()  : undefined;
-    const blockOnMs  = inst0Arrivee ? new Date(inst0Arrivee).getTime() : undefined;
-    const override = (briefMs != null && closeMs != null)
-      ? { beginActivityMs: briefMs, endActivityMs: closeMs, beginBlockMs: blockOffMs, endBlockMs: blockOnMs }
-      : undefined;
-    setEp4Raw(null);
+    setEp4Ld(true); setEp4Data(null);
     getEp4Detail(sigId)
       .then(res => {
         if (cancelled || 'error' in res) return;
-        setEp4(buildEp4Rotation(res.raw_detail, sigRot, sigZone, year, mo, res.taux, res.irRates, override));
-        setEp4Raw(res.raw_detail);
+        setEp4Data({ raw_detail: res.raw_detail, taux: res.taux, irRates: res.irRates });
       })
       .catch(() => { /* silencieux : les lignes EP4 afficheront '—' */ })
       .finally(() => { if (!cancelled) setEp4Ld(false); });
     return () => { cancelled = true; };
-  }, [sigId, sigRot, sigZone, year, mo, inst0Depart, inst0Arrivee, inst0Brief, inst0Close]);
+  }, [sigId]);
+
+  // Build EP4 en mémoire quand selectedInst change. TA = briefing → closeout
+  // (mig 0039) ; fallback Manex (1h45 / 30min) pour les instances sans
+  // scheduled_*_duty_at. NB : `scheduled_*_activity_at` = bornes du repos
+  // pré/post-courrier, PAS utilisable pour TA.
+  const ep4: Ep4Rotation | null = useMemo(() => {
+    if (!ep4Data || !selectedInst) return null;
+    const MANEX_BRIEF_MS = 1.75 * 3_600_000;
+    const MANEX_CLOSE_MS = 0.5  * 3_600_000;
+    const depMs   = selectedInst.depart_at  ? new Date(selectedInst.depart_at).getTime()  : null;
+    const arrMs   = selectedInst.arrivee_at ? new Date(selectedInst.arrivee_at).getTime() : null;
+    const briefMs = selectedInst.scheduled_begin_duty_at ? new Date(selectedInst.scheduled_begin_duty_at).getTime()
+                   : depMs != null ? depMs - MANEX_BRIEF_MS : null;
+    const closeMs = selectedInst.scheduled_end_duty_at   ? new Date(selectedInst.scheduled_end_duty_at).getTime()
+                   : arrMs != null ? arrMs + MANEX_CLOSE_MS : null;
+    if (briefMs == null || closeMs == null) return null;
+    const override = {
+      beginActivityMs: briefMs, endActivityMs: closeMs,
+      beginBlockMs: depMs ?? undefined, endBlockMs: arrMs ?? undefined,
+    };
+    return buildEp4Rotation(ep4Data.raw_detail, sigRot, sigZone, year, mo, ep4Data.taux, ep4Data.irRates, override);
+  }, [ep4Data, selectedInst, sigRot, sigZone, year, mo]);
+
+  const ep4RawDetail: unknown = ep4Data?.raw_detail ?? null;
 
   const computed = useMemo(() => {
     if (!sig) return null;
@@ -354,7 +363,7 @@ export function ComparatifClient({
             return (
               <button
                 key={s.id}
-                onClick={() => setSelected(s.id)}
+                onClick={() => { setSelected(s.id); setSelectedInstanceIdx(0); }}
                 className="w-full flex items-center justify-between gap-3 px-4 py-2.5 border-b border-zinc-100 dark:border-zinc-800 hover:bg-blue-50 dark:hover:bg-blue-950/20 text-left transition-colors"
               >
                 <div className="flex flex-col gap-0.5 min-w-0">
@@ -415,20 +424,25 @@ export function ComparatifClient({
               )}
             </div>
             <button
-              onClick={() => setSelected(null)}
+              onClick={() => { setSelected(null); setSelectedInstanceIdx(0); }}
               className="text-xs text-zinc-400 hover:text-zinc-600 px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700"
             >
               ← Autre rotation
             </button>
           </div>
 
-          {/* Disponibilités + HCr mois */}
+          {/* Disponibilités + HCr mois — lignes cliquables = sélecteur d'instance
+              pour les blocs EP4 / Metadata / A81 ci-dessous (multi-instances avec
+              briefing/closeout différents → TA, HCA, H2HCr propres à l'instance). */}
           {sig.instances.length > 0 && (
             <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-              <div className="px-4 py-2 bg-zinc-50 dark:bg-zinc-800/60 border-b border-zinc-100 dark:border-zinc-800">
+              <div className="px-4 py-2 bg-zinc-50 dark:bg-zinc-800/60 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
                 <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide">
                   Disponibilités — {monthLabel(currentMonth)}
                 </p>
+                {sig.instances.length > 1 && (
+                  <p className="text-[10px] text-zinc-400 italic">Cliquer une ligne pour la sélectionner</p>
+                )}
               </div>
               <table className="w-full text-xs">
                 <thead>
@@ -441,19 +455,33 @@ export function ComparatifClient({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                  {sig.instances.map(inst => {
+                  {sig.instances.map((inst, idx) => {
                     // HCr canonique = ep4.H2HCr (fallback sig.hcr_crew tant que EP4
                     // pas chargé). Critique pour les sigs splittées dont sig.hcr_crew
                     // est hérité du raw_detail original (durée différente).
+                    // NB : ep4.H2HCr est calculé pour l'instance sélectionnée — les
+                    // autres lignes utilisent cette même valeur proratisée à leurs
+                    // dates. Pour la "vraie" valeur d'une autre instance, cliquer
+                    // dessus (sélecteur).
                     const hcrTotal = ep4?.H2HCr ?? sig.hcr_crew;
                     const hcrMois  = prorateForMonth(hcrTotal, inst.depart_at, inst.arrivee_at, year, mo);
                     const tsvMois  = prorateForMonth(sig.tsv_nuit ?? 0, inst.depart_at, inst.arrivee_at, year, mo);
                     const pvMois   = (hcrMois + tsvMois / 2) * pvei * ksp;
                     const eurMois  = Math.round(pvMois + (sig.prime ?? 0) * 2.5 * pvei);
                     const isProrated = hcrMois < hcrTotal - 0.01;
+                    const isSelected = idx === selectedInstanceIdx && sig.instances.length > 1;
                     return (
-                      <tr key={inst.id}>
+                      <tr
+                        key={inst.id}
+                        onClick={() => setSelectedInstanceIdx(idx)}
+                        className={`cursor-pointer transition-colors ${
+                          isSelected
+                            ? 'bg-blue-50 dark:bg-blue-950/30'
+                            : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/40'
+                        }`}
+                      >
                         <td className="px-4 py-1.5 font-mono text-zinc-700 dark:text-zinc-300">
+                          {isSelected && <span className="text-blue-500 mr-1">▸</span>}
                           {new Date(inst.depart_date + 'T00:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
                           <span className="text-zinc-400 ml-1">{fmtLocalTime(inst.depart_at)}</span>
                         </td>
@@ -617,7 +645,7 @@ export function ComparatifClient({
                 <Row label="Zone"         db={sig.zone ?? '—'}                                      calc="—"                                                  formula="Article 81 zone" />
                 <Row label="A81"          db={sig.a81 ? 'Oui' : 'Non'}                              calc="—"                                                  formula="TSV escale ≥ 24h" />
                 {(() => {
-                  const inst = sig.instances[0];
+                  const inst = selectedInst;
                   if (!inst || sig.hdv == null) return (
                     <Row label="Temps séjour" db={fmt(sig.temps_sej, 1) + ' h'} calc="—" formula="(arrivee_at − depart_at) / 1h − HDV (par instance)" />
                   );
@@ -658,7 +686,7 @@ export function ComparatifClient({
             <table className="w-full text-sm">
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
                 {(() => {
-                  const inst    = sig.instances[0];
+                  const inst    = selectedInst;
                   const fmtIso  = (s: string | null | undefined) => s ? new Date(s).toISOString().replace('T', ' ').slice(0, 16) : '—';
                   const restBeforeCalc = inst?.scheduled_begin_activity_at && inst.depart_at
                     ? (new Date(inst.depart_at).getTime() - new Date(inst.scheduled_begin_activity_at).getTime()) / 3_600_000
@@ -705,19 +733,6 @@ export function ComparatifClient({
               rawDetailLoading={ep4Loading}
             />
           )}
-
-          {/* Détail EP4 — feuille horaire + feuille décompte (port du pipeline Python) */}
-          <Ep4Detail
-            sigId={sig.id}
-            rotationCode={sig.rotation_code ?? ''}
-            zone={sig.zone}
-            year={year}
-            month={mo}
-            instanceDepartAt={sig.instances[0]?.depart_at ?? null}
-            instanceArriveeAt={sig.instances[0]?.arrivee_at ?? null}
-            instanceBriefingAt={sig.instances[0]?.scheduled_begin_duty_at ?? null}
-            instanceCloseoutAt={sig.instances[0]?.scheduled_end_duty_at   ?? null}
-          />
         </div>
       )}
     </div>
