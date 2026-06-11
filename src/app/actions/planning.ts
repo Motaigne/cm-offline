@@ -85,7 +85,17 @@ export async function addPlanningItem(data: {
 }) {
   const supabase = await createClient();
   const { error } = await supabase.from('planning_item').insert(data);
-  if (error) return { error: error.message };
+  if (error) {
+    // 23505 = duplicate PK. L'UUID est généré côté client → une collision
+    // signifie que l'op a déjà été appliquée (crash après INSERT serveur mais
+    // avant suppression de l'op dans la sync_queue Dexie). On traite comme un
+    // succès pour vider la queue et stopper le retry infini.
+    if (error.code === '23505') {
+      revalidatePath('/');
+      return;
+    }
+    return { error: error.message };
+  }
   revalidatePath('/');
 }
 
