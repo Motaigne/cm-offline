@@ -2,7 +2,25 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
-import { headers } from 'next/headers';
+import { headers, cookies } from 'next/headers';
+
+/** Cookie posé après chaque signin réussi → permet au proxy de remonter un
+ *  email last-known dans auth_log.session_lost si la session est perdue.
+ *  Pas httpOnly volontairement : c'est juste un marqueur diagnostic, non
+ *  sensible (l'email est déjà visible à l'écran de login). */
+const LAST_EMAIL_COOKIE = 'cm-last-email';
+async function persistLastEmail(email: string): Promise<void> {
+  const store = await cookies();
+  try {
+    store.set(LAST_EMAIL_COOKIE, email.toLowerCase(), {
+      maxAge: 60 * 60 * 24 * 60,  // 60 jours (longer que le refresh_token Supabase, sert juste à identifier)
+      sameSite: 'lax',
+      secure: true,
+      httpOnly: false,
+      path: '/',
+    });
+  } catch { /* Server Component : ignoré, proxy refreshera */ }
+}
 
 async function siteUrl() {
   const h = await headers();
@@ -73,6 +91,7 @@ export async function signInWithPassword(email: string, password: string) {
   if (error) return { error: error.message };
 
   await logAuthEvent(trimmed, 'signin_success', data.user?.id ?? null, { method: 'password' });
+  await persistLastEmail(trimmed);
   redirect('/');
 }
 

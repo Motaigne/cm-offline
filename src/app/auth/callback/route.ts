@@ -25,12 +25,22 @@ export async function GET(request: NextRequest) {
         .select('user_id')
         .eq('user_id', data.user.id)
         .maybeSingle();
-      if (!profile) {
-        const setupUrl = new URL('/setup-password', request.url);
-        if (next !== '/') setupUrl.searchParams.set('next', next);
-        return NextResponse.redirect(setupUrl);
+      const target = profile
+        ? new URL(next, request.url)
+        : (() => { const u = new URL('/setup-password', request.url); if (next !== '/') u.searchParams.set('next', next); return u; })();
+      const response = NextResponse.redirect(target);
+      // Cookie diagnostic posé sur la response pour que proxy.ts puisse remonter
+      // un email last-known en cas de session_lost ultérieur.
+      if (data?.user?.email) {
+        response.cookies.set('cm-last-email', data.user.email.toLowerCase(), {
+          maxAge: 60 * 60 * 24 * 60,
+          sameSite: 'lax',
+          secure: true,
+          httpOnly: false,
+          path: '/',
+        });
       }
-      return NextResponse.redirect(new URL(next, request.url));
+      return response;
     }
   }
 

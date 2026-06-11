@@ -340,13 +340,13 @@ export type Database = {
           id: string;
           user_id: string | null;
           email: string;
-          kind: 'signin_denied' | 'signin_requested' | 'signin_success' | 'signout' | 'db_download' | 'release_published' | 'release_downloaded';
+          kind: 'signin_denied' | 'signin_requested' | 'signin_success' | 'signout' | 'db_download' | 'release_published' | 'release_downloaded' | 'session_lost';
           meta: Json | null;
           created_at: string;
         };
         Insert: {
           email: string;
-          kind: 'signin_denied' | 'signin_requested' | 'signin_success' | 'signout' | 'db_download' | 'release_published' | 'release_downloaded';
+          kind: 'signin_denied' | 'signin_requested' | 'signin_success' | 'signout' | 'db_download' | 'release_published' | 'release_downloaded' | 'session_lost';
           user_id?: string | null;
           meta?: Json | null;
         };

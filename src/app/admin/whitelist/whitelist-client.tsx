@@ -22,6 +22,7 @@ const KIND_LABELS: Record<AuthLog['kind'], { label: string; cls: string }> = {
   db_download:        { label: 'Download',   cls: 'text-blue-500' },
   release_published:  { label: 'Publication', cls: 'text-violet-500' },
   release_downloaded: { label: 'Release ↓',  cls: 'text-cyan-500' },
+  session_lost:       { label: 'Session ✗',  cls: 'text-amber-600' },
 };
 
 export function WhitelistClient({ emails, logs, profiles }: { emails: AllowedEmail[]; logs: AuthLog[]; profiles: UserProfile[] }) {
