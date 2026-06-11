@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import type { ScrapeEvent } from '@/lib/scraper/types';
 import { getCurrentUserScrapeRights } from '@/app/actions/auth';
 import { refreshRawSummaryForMonth } from '@/app/actions/admin-refresh';
+import { wipeSnapshotForMonth } from '@/app/actions/admin-wipe';
 import { useLocalStorageState } from '@/hooks/use-local-storage-state';
 
 const NON_ADMIN_CAP = 50;
@@ -35,6 +36,8 @@ export function ScrapeDialog({
   const [isAdmin, setIsAdmin] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshResult, setRefreshResult] = useState<string | null>(null);
+  const [wiping, setWiping] = useState(false);
+  const [wipeResult, setWipeResult] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -84,6 +87,32 @@ export function ScrapeDialog({
       });
     } catch (err) {
       setPhase({ name: 'error', message: String(err) });
+    }
+  }
+
+  async function wipe() {
+    const inDb = phase.name === 'ready' ? phase.in_db : '?';
+    const dates = phase.name === 'ready' ? phase.total_instances : '?';
+    if (!confirm(
+      `⚠ WIPE du snapshot ${month}\n\n` +
+      `Cela supprime ~${inDb} rotations et ~${dates} dates.\n` +
+      `Le scrape suivant repart de zéro avec migrations 0033 (split par durée) ` +
+      `+ 0034 (raw_summary) + 0039 (duty_at) propres.\n\n` +
+      `Continuer ?`
+    )) return;
+    setWiping(true); setWipeResult(null);
+    try {
+      const r = await wipeSnapshotForMonth(month);
+      if ('error' in r) {
+        setWipeResult(`❌ ${r.error}`);
+      } else {
+        setWipeResult(`✓ Wipe : ${r.deleted_snapshots} snapshots, ${r.deleted_sigs} sigs, ${r.deleted_instances} instances supprimés. Relance Analyse.`);
+        setPhase({ name: 'idle' });
+      }
+    } catch (err) {
+      setWipeResult(`❌ ${String(err)}`);
+    } finally {
+      setWiping(false);
     }
   }
 
@@ -278,18 +307,33 @@ export function ScrapeDialog({
                     ✓ Tout est déjà en DB ({phase.in_db}/{phase.unique_sigs} rotations · {phase.total_instances} dates)
                   </p>
                   {isAdmin && (
-                    <div className="pt-2 mt-2 border-t border-zinc-200 dark:border-zinc-700 space-y-1">
-                      <p className="text-[10px] text-zinc-500">
-                        Admin : rafraîchir <code className="font-mono">raw_summary</code> + <code className="font-mono">scheduled_*_duty_at</code> depuis un nouveau fetch <code>pairingsearch</code> (sans re-fetch des détails — léger).
-                      </p>
-                      <button
-                        onClick={refresh}
-                        disabled={refreshing}
-                        className="text-xs px-2 py-1 rounded bg-amber-100 hover:bg-amber-200 dark:bg-amber-900/30 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 disabled:opacity-50"
-                      >
-                        {refreshing ? 'Refresh en cours…' : '🔄 Refresh raw_summary'}
-                      </button>
-                      {refreshResult && <p className="text-[11px] text-zinc-600 dark:text-zinc-300 font-mono">{refreshResult}</p>}
+                    <div className="pt-2 mt-2 border-t border-zinc-200 dark:border-zinc-700 space-y-2">
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-zinc-500">
+                          <strong>Wipe + re-scrape</strong> : supprime le snapshot et toutes ses sigs/instances, puis re-scrape de zéro avec migrations 0033/0034/0039 propres. ~287 calls détail CrewBidd (~5-10 min).
+                        </p>
+                        <button
+                          onClick={wipe}
+                          disabled={wiping || refreshing}
+                          className="text-xs px-2 py-1 rounded bg-red-100 hover:bg-red-200 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-700 dark:text-red-300 disabled:opacity-50"
+                        >
+                          {wiping ? 'Wipe en cours…' : '🗑 Wipe snapshot'}
+                        </button>
+                        {wipeResult && <p className="text-[11px] text-zinc-600 dark:text-zinc-300 font-mono">{wipeResult}</p>}
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-zinc-500">
+                          <strong>Refresh raw_summary</strong> : juste rafraîchir <code className="font-mono">raw_summary</code> + <code className="font-mono">scheduled_*_duty_at</code> depuis 1 call <code>pairingsearch</code> (~3 min, sans re-fetch détails). N'aide pas pour le bug split-sig.
+                        </p>
+                        <button
+                          onClick={refresh}
+                          disabled={refreshing || wiping}
+                          className="text-xs px-2 py-1 rounded bg-amber-100 hover:bg-amber-200 dark:bg-amber-900/30 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 disabled:opacity-50"
+                        >
+                          {refreshing ? 'Refresh en cours…' : '🔄 Refresh raw_summary'}
+                        </button>
+                        {refreshResult && <p className="text-[11px] text-zinc-600 dark:text-zinc-300 font-mono">{refreshResult}</p>}
+                      </div>
                     </div>
                   )}
                 </>
