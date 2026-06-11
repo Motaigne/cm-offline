@@ -55,25 +55,31 @@ export async function wipeSnapshotForMonth(month: string): Promise<WipeResult> {
   // instances — sinon FK constraint planning_item_pairing_instance_id_fkey
   // bloque le DELETE. Les planning_items survivent (les vols utilisateur)
   // mais perdent leur lien. À ré-binder après re-scrape (par activity_id).
-  if (instanceIds.length > 0) {
+  // Batché par chunks de 200 pour éviter la limite URL Supabase REST (~8KB).
+  const CHUNK = 200;
+  for (let i = 0; i < instanceIds.length; i += CHUNK) {
+    const chunk = instanceIds.slice(i, i + CHUNK);
     const { error: nullifyErr } = await supabase
       .from('planning_item')
       .update({ pairing_instance_id: null })
-      .in('pairing_instance_id', instanceIds);
-    if (nullifyErr) return { error: `Nullify planning_item refs : ${nullifyErr.message}` };
+      .in('pairing_instance_id', chunk);
+    if (nullifyErr) return { error: `Nullify planning_item refs (chunk ${i / CHUNK + 1}) : ${nullifyErr.message}` };
   }
 
   // DELETE en ordre dépendance : instances → sigs → snapshot.
+  // Idem : batché par chunks de 200.
   let deletedInstances = 0;
-  if (sigIds.length > 0) {
+  for (let i = 0; i < sigIds.length; i += CHUNK) {
+    const chunk = sigIds.slice(i, i + CHUNK);
     const { count, error } = await supabase
       .from('pairing_instance')
       .delete({ count: 'exact' })
-      .in('signature_id', sigIds);
-    if (error) return { error: `Suppression instances : ${error.message}` };
-    deletedInstances = count ?? 0;
+      .in('signature_id', chunk);
+    if (error) return { error: `Suppression instances (chunk ${i / CHUNK + 1}) : ${error.message}` };
+    deletedInstances += count ?? 0;
   }
 
+  // Pour les sigs et snapshots, les listes sont petites (≤ qq centaines) → 1 call OK.
   const { count: sigCount, error: sigErr } = await supabase
     .from('pairing_signature')
     .delete({ count: 'exact' })
