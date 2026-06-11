@@ -341,13 +341,30 @@ export function NavBar() {
       return;
     }
     setSyncing(true);
+    // Collecte des erreurs par op pour affichage in-app (dropdown debug).
+    const collectedErrors: Array<{ label: string; kind: 'timeout' | 'reject'; msg: string }> = [];
     try {
       setSyncStatus('push');
-      await syncNow();
+      await syncNow({
+        onOpError: (op, e) => {
+          collectedErrors.push({
+            label: `${op.op}#${op.id ?? '?'}`,
+            kind: 'reject',
+            msg: String((e as Error)?.message ?? e),
+          });
+        },
+      });
       setPendingCount(0);
       setSyncStatus('ok');
+      persistSyncErrors(collectedErrors);
       setTimeout(() => { setSyncStatus(''); router.refresh(); }, 1200);
-    } catch {
+    } catch (e) {
+      // syncNow throw uniquement si au moins 1 op a échoué — l'erreur a déjà
+      // été captée via onOpError. On garde la trace au cas où.
+      if (collectedErrors.length === 0) {
+        collectedErrors.push({ label: 'syncNow', kind: 'reject', msg: String((e as Error)?.message ?? e) });
+      }
+      persistSyncErrors(collectedErrors);
       setSyncStatus('err');
       setTimeout(() => setSyncStatus(''), 3000);
     } finally {

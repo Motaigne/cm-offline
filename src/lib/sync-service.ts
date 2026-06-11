@@ -389,8 +389,14 @@ async function runWithLimit<T>(
  *  pour signaler au caller (NavBar affiche statut 'err').
  *
  *  Les server actions retournent `{ error: string }` sur échec — runSingleOp
- *  inspecte et throw, sinon l'op serait supprimée alors qu'elle a échoué. */
-export async function syncNow(): Promise<void> {
+ *  inspecte et throw, sinon l'op serait supprimée alors qu'elle a échoué.
+ *
+ *  `opts.onOpError` est appelé pour chaque op échouée (avant le throw) — sert
+ *  à la NavBar pour collecter les détails et les afficher in-app (diagnostic
+ *  iPad sans Web Inspector). */
+export async function syncNow(opts?: {
+  onOpError?: (op: SyncOp, err: unknown) => void;
+}): Promise<void> {
   const ops = await db.sync_queue.orderBy('created_at').toArray();
   if (ops.length === 0) return;
 
@@ -409,6 +415,7 @@ export async function syncNow(): Promise<void> {
         await runSingleOp(op);
       } catch (e) {
         console.error('[sync] op failed:', op.op, e);
+        opts?.onOpError?.(op, e);
         // Op échouée + suivantes du groupe restent en queue pour retry.
         throw e;
       }
