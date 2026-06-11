@@ -110,15 +110,13 @@ export async function getEp4ForMonth(month: string): Promise<Ep4MonthResponse | 
   });
 
   // 3. Récupère les pairing_instance pour mapper instance_id → signature_id
-  //    et capter les bornes block par instance (depart_at / arrivee_at) — utilisées
-  //    pour dériver briefing/closeout (Manex : block-off −1h45, block-on +30min)
-  //    et override TA / debut/fin_vol_ms.
+  //    et capter briefing/closeout (mig 0039) ou fallback bornes block + Manex.
   //    NB : `scheduled_*_activity_at` est le repos pré/post-courrier, pas
-  //    briefing/closeout — d'où usage des bornes block + offsets Manex.
+  //    briefing/closeout — on ne s'en sert pas pour TA.
   const instanceIds = [...new Set(filteredItems.map(it => it.pairing_instance_id as string))];
   const { data: instances } = await supabase
     .from('pairing_instance')
-    .select('id, signature_id, activity_id, depart_at, arrivee_at')
+    .select('id, signature_id, activity_id, depart_at, arrivee_at, scheduled_begin_duty_at, scheduled_end_duty_at')
     .in('id', instanceIds);
   const instanceById = new Map((instances ?? []).map(i => [i.id, i]));
 
@@ -158,14 +156,15 @@ export async function getEp4ForMonth(month: string): Promise<Ep4MonthResponse | 
     const sig = sigById.get(inst.signature_id);
     if (!sig?.raw_detail) continue;
 
-    // Manex : briefing 1h45 avant block-off, closeout 30min après block-on.
-    const BRIEFING_MS = 1.75 * 3_600_000;
-    const CLOSEOUT_MS = 0.5  * 3_600_000;
-    const override = (inst.depart_at && inst.arrivee_at)
-      ? {
-          beginActivityMs: new Date(inst.depart_at).getTime()  - BRIEFING_MS,
-          endActivityMs:   new Date(inst.arrivee_at).getTime() + CLOSEOUT_MS,
-        }
+    // Priorité aux valeurs AF exactes (mig 0039) ; fallback Manex (1h45 / 30min).
+    const MANEX_BRIEF_MS = 1.75 * 3_600_000;
+    const MANEX_CLOSE_MS = 0.5  * 3_600_000;
+    const briefMs = inst.scheduled_begin_duty_at ? new Date(inst.scheduled_begin_duty_at).getTime()
+                   : inst.depart_at  ? new Date(inst.depart_at).getTime()  - MANEX_BRIEF_MS : null;
+    const closeMs = inst.scheduled_end_duty_at   ? new Date(inst.scheduled_end_duty_at).getTime()
+                   : inst.arrivee_at ? new Date(inst.arrivee_at).getTime() + MANEX_CLOSE_MS : null;
+    const override = (briefMs != null && closeMs != null)
+      ? { beginActivityMs: briefMs, endActivityMs: closeMs }
       : undefined;
     const ep4 = buildEp4Rotation(
       sig.raw_detail as unknown as PairingDetail,

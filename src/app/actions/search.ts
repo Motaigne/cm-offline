@@ -20,10 +20,17 @@ export type RotationInstance = {
   rest_before_h: number | null;
   /** Repos après la rotation (h), spécifique à cette instance. */
   rest_after_h: number | null;
-  /** scheduledBeginActivityDate — début d'activité (briefing). Null si pas backfilled. */
+  /** **scheduledBeginActivityDate** — début du REPOS pré-courrier (≠ briefing).
+   *  Bornes du repos, pas du TSV. À ne pas utiliser pour TA — préférer
+   *  `scheduled_begin_duty_at`. Null si pas backfilled. */
   scheduled_begin_activity_at: string | null;
-  /** scheduledEndActivityDate — fin d'activité (closeout). Null si pas backfilled. */
+  /** **scheduledEndActivityDate** — fin du REPOS post-courrier. Idem. */
   scheduled_end_activity_at: string | null;
+  /** **scheduledBeginDutyDate** = briefing (TSV start, ~1h45 avant block-off).
+   *  Source canonique pour TA. Null si raw_summary absent (sigs pre-mig 0034). */
+  scheduled_begin_duty_at: string | null;
+  /** **scheduledEndDutyDate** = closeout (~30min après block-on). */
+  scheduled_end_duty_at: string | null;
   /** Début / fin séjour A81 calculés PAR INSTANCE (depart_at + offsets de la
    *  signature). Null si raw_detail absent ou flightDuty < 2. Doivent être
    *  utilisés à la place de signature.debut_sejour_at, qui est l'absolu d'UNE
@@ -185,10 +192,11 @@ export async function getRotationsForMonth(
     depart_date: string; depart_at: string; arrivee_at: string;
     rest_before_h: number | null; rest_after_h: number | null;
     scheduled_begin_activity_at: string | null; scheduled_end_activity_at: string | null;
+    scheduled_begin_duty_at: string | null;     scheduled_end_duty_at: string | null;
   }>((from, to) =>
     supabase
       .from('pairing_instance')
-      .select('id, activity_id, signature_id, depart_date, depart_at, arrivee_at, rest_before_h, rest_after_h, scheduled_begin_activity_at, scheduled_end_activity_at')
+      .select('id, activity_id, signature_id, depart_date, depart_at, arrivee_at, rest_before_h, rest_after_h, scheduled_begin_activity_at, scheduled_end_activity_at, scheduled_begin_duty_at, scheduled_end_duty_at')
       .in('signature_id', sigIds)
       .order('depart_date')
       .range(from, to),
@@ -239,6 +247,8 @@ export async function getRotationsForMonth(
       rest_after_h:  inst.rest_after_h,
       scheduled_begin_activity_at: inst.scheduled_begin_activity_at,
       scheduled_end_activity_at:   inst.scheduled_end_activity_at,
+      scheduled_begin_duty_at:     inst.scheduled_begin_duty_at,
+      scheduled_end_duty_at:       inst.scheduled_end_duty_at,
       debut_sejour_at: off ? new Date(departMs + off.debutSejourOffsetMs).toISOString() : null,
       fin_sejour_at:   off ? new Date(departMs + off.finSejourOffsetMs).toISOString()   : null,
     });

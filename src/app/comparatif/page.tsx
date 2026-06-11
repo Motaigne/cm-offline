@@ -65,10 +65,11 @@ export default async function ComparatifPage({
         depart_date: string; depart_at: string; arrivee_at: string;
         rest_before_h: number | null; rest_after_h: number | null;
         scheduled_begin_activity_at: string | null; scheduled_end_activity_at: string | null;
+        scheduled_begin_duty_at:     string | null; scheduled_end_duty_at:     string | null;
       }>((from, to) =>
         supabase
           .from('pairing_instance')
-          .select('id, signature_id, depart_date, depart_at, arrivee_at, rest_before_h, rest_after_h, scheduled_begin_activity_at, scheduled_end_activity_at')
+          .select('id, signature_id, depart_date, depart_at, arrivee_at, rest_before_h, rest_after_h, scheduled_begin_activity_at, scheduled_end_activity_at, scheduled_begin_duty_at, scheduled_end_duty_at')
           .in('signature_id', sigIds)
           .order('depart_date')
           .range(from, to),

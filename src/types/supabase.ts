@@ -240,6 +240,10 @@ export type Database = {
           rest_after_h: number | null;
           scheduled_begin_activity_at: string | null;
           scheduled_end_activity_at: string | null;
+          /** Briefing AF (scheduledBeginDutyDate) — mig 0039. */
+          scheduled_begin_duty_at: string | null;
+          /** Closeout AF (scheduledEndDutyDate) — mig 0039. */
+          scheduled_end_duty_at: string | null;
           /** Payload brut de l'endpoint CrewBidd `pairingsearch` — police
            *  d'assurance pour reprocess sans re-scrape (migration 0034). */
           raw_summary: Json | null;

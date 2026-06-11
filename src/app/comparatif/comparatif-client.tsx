@@ -19,9 +19,13 @@ type SigInstance = {
   depart_date: string;   // "YYYY-MM-DD"
   depart_at: string;     // ISO UTC (= scheduledBeginBlockDate)
   arrivee_at: string;    // ISO UTC (= scheduledEndBlockDate)
-  /** ISO UTC, peut être null si non encore backfilled depuis pairingsearch. */
+  /** Bornes du REPOS pré/post-courrier (PAS briefing/closeout). */
   scheduled_begin_activity_at?: string | null;
   scheduled_end_activity_at?: string | null;
+  /** Briefing (= scheduledBeginDutyDate) / closeout (= scheduledEndDutyDate).
+   *  Null pour les instances pre-mig 0034 sans raw_summary. */
+  scheduled_begin_duty_at?: string | null;
+  scheduled_end_duty_at?: string | null;
   rest_before_h?: number | null;
   rest_after_h?: number | null;
 };
@@ -108,6 +112,8 @@ function rotToSig(s: RotationSignature): Sig {
       rest_after_h:  i.rest_after_h,
       scheduled_begin_activity_at: (i as { scheduled_begin_activity_at?: string | null }).scheduled_begin_activity_at ?? null,
       scheduled_end_activity_at:   (i as { scheduled_end_activity_at?:   string | null }).scheduled_end_activity_at   ?? null,
+      scheduled_begin_duty_at:     (i as { scheduled_begin_duty_at?:     string | null }).scheduled_begin_duty_at     ?? null,
+      scheduled_end_duty_at:       (i as { scheduled_end_duty_at?:       string | null }).scheduled_end_duty_at       ?? null,
     })),
   };
 }
@@ -221,22 +227,25 @@ export function ComparatifClient({
   const sigZone      = sig?.zone ?? null;
   const inst0Depart  = sig?.instances[0]?.depart_at ?? null;
   const inst0Arrivee = sig?.instances[0]?.arrivee_at ?? null;
+  const inst0Brief   = sig?.instances[0]?.scheduled_begin_duty_at ?? null;
+  const inst0Close   = sig?.instances[0]?.scheduled_end_duty_at   ?? null;
   useEffect(() => {
     if (!sigId) { setEp4(null); return; }
     let cancelled = false;
     setEp4Ld(true); setEp4(null);
-    // Manex (cf. V1 doc L25+L28) : briefing = 1h45 avant 1er block-off,
-    // closeout = 30min après dernier block-on. On NE peut PAS utiliser
-    // `scheduled_*_activity_at` qui stocke les bornes du repos pré/post-courrier
-    // (= block-span + repos avant + repos après = ~150h pour un 6ON JFK au lieu
-    // de ~118h attendus). Override = briefing/closeout calculés depuis blocks.
-    const BRIEFING_MS = 1.75 * 3_600_000;
-    const CLOSEOUT_MS = 0.5  * 3_600_000;
-    const override = (inst0Depart && inst0Arrivee)
-      ? {
-          beginActivityMs: new Date(inst0Depart).getTime()  - BRIEFING_MS,
-          endActivityMs:   new Date(inst0Arrivee).getTime() + CLOSEOUT_MS,
-        }
+    // TA = briefing → closeout (DutyDate AF). Priorité aux valeurs DB exactes
+    // (mig 0039) ; fallback Manex (1h45 avant block-off / 30min après block-on)
+    // pour les instances sans raw_summary (pre-mig 0034).
+    // NB : `scheduled_*_activity_at` = bornes du repos pré/post-courrier — pas
+    // utilisable pour TA.
+    const MANEX_BRIEF_MS = 1.75 * 3_600_000;
+    const MANEX_CLOSE_MS = 0.5  * 3_600_000;
+    const briefMs = inst0Brief ? new Date(inst0Brief).getTime()
+                   : inst0Depart  ? new Date(inst0Depart).getTime()  - MANEX_BRIEF_MS : null;
+    const closeMs = inst0Close ? new Date(inst0Close).getTime()
+                   : inst0Arrivee ? new Date(inst0Arrivee).getTime() + MANEX_CLOSE_MS : null;
+    const override = (briefMs != null && closeMs != null)
+      ? { beginActivityMs: briefMs, endActivityMs: closeMs }
       : undefined;
     getEp4Detail(sigId)
       .then(res => {
@@ -246,7 +255,7 @@ export function ComparatifClient({
       .catch(() => { /* silencieux : les lignes EP4 afficheront '—' */ })
       .finally(() => { if (!cancelled) setEp4Ld(false); });
     return () => { cancelled = true; };
-  }, [sigId, sigRot, sigZone, year, mo, inst0Depart, inst0Arrivee]);
+  }, [sigId, sigRot, sigZone, year, mo, inst0Depart, inst0Arrivee, inst0Brief, inst0Close]);
 
   const computed = useMemo(() => {
     if (!sig) return null;
@@ -561,11 +570,17 @@ export function ComparatifClient({
                   const restAfterCalc  = (endAct && endBlock)
                     ? ((new Date(endAct).getTime() - new Date(endBlock).getTime()) / 3_600_000)
                     : null;
-                  // TA = briefing → closeout (Manex : block-off −1h45 / block-on +30min).
-                  // Les bornes scheduled_*_activity_at sont en fait les bornes du
-                  // repos pré/post-courrier — pas utilisables pour TA.
-                  const taCalc = (beginBlock && endBlock)
-                    ? ((new Date(endBlock).getTime() - new Date(beginBlock).getTime()) / 3_600_000) + 2.25
+                  // TA = briefing → closeout. Préfère les valeurs AF exactes
+                  // (scheduled_*_duty_at, mig 0039) ; fallback Manex sur blocks
+                  // (1h45 / 30min). Les `scheduled_*_activity_at` (repos
+                  // pré/post-courrier) ne sont PAS utilisables pour TA.
+                  const briefAt = inst.scheduled_begin_duty_at ?? null;
+                  const closeAt = inst.scheduled_end_duty_at   ?? null;
+                  const taCalc =
+                    (briefAt && closeAt)
+                      ? (new Date(closeAt).getTime() - new Date(briefAt).getTime()) / 3_600_000
+                    : (beginBlock && endBlock)
+                      ? ((new Date(endBlock).getTime() - new Date(beginBlock).getTime()) / 3_600_000) + 2.25
                     : null;
                   const hcaCalc = taCalc != null ? (taCalc * 5) / 24 : null;
                   const fmtIso = (s: string | null | undefined) => s ? new Date(s).toISOString().replace('T', ' ').slice(0, 16) : '—';
@@ -577,7 +592,7 @@ export function ComparatifClient({
                       <Row label="scheduledEndActivityDate"   db={fmtIso(endAct)}     calc={fmtIso(endAct)}     formula="fin d'activité (closeout) — pairing_instance.scheduled_end_activity_at" />
                       <Row label="rest_before_h (formule)" db={fmt(sig.rest_before_h, 1)} calc={restBeforeCalc != null ? fmt(restBeforeCalc, 1) : '—'} formula="(scheduledBeginBlockDate − scheduledBeginActivityDate) / 1h" />
                       <Row label="rest_after_h (formule)"  db={fmt(sig.rest_after_h, 1)}  calc={restAfterCalc != null  ? fmt(restAfterCalc, 1)  : '—'} formula="(scheduledEndActivityDate − scheduledEndBlockDate) / 1h" />
-                      <Row label="TA"  db="—" calc={taCalc  != null ? fmt(taCalc,  2) + ' h' : '—'} formula="(arrivee_at − depart_at) + 2h15 (briefing 1h45 + closeout 30min Manex) — durée briefing→closeout" />
+                      <Row label="TA"  db="—" calc={taCalc  != null ? fmt(taCalc,  2) + ' h' : '—'} formula="scheduledEndDutyDate − scheduledBeginDutyDate (mig 0039 ; fallback blocks + Manex 1h45/30min)" />
                       <Row label="HCA" db="—" calc={hcaCalc != null ? fmt(hcaCalc, 2) + ' h' : '—'} formula="TA × 5/24 — heures créditées absence" highlight />
                     </>
                   );
@@ -624,6 +639,8 @@ export function ComparatifClient({
             month={mo}
             instanceDepartAt={sig.instances[0]?.depart_at ?? null}
             instanceArriveeAt={sig.instances[0]?.arrivee_at ?? null}
+            instanceBriefingAt={sig.instances[0]?.scheduled_begin_duty_at ?? null}
+            instanceCloseoutAt={sig.instances[0]?.scheduled_end_duty_at   ?? null}
           />
         </div>
       )}

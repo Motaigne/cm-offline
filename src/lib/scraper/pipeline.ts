@@ -216,8 +216,10 @@ async function loadSnapshotDiffState(supabase: SupabaseClient, snapshotId: strin
  *  conservé pour permettre une re-dérivation hors-ligne en cas de bug
  *  d'exploitation (cf. migration 0034). */
 function buildInstanceRow(sigId: string, inst: PairingSummary) {
-  const beginAct = inst.scheduledBeginActivityDate;
-  const endAct   = inst.scheduledEndActivityDate;
+  const beginAct  = inst.scheduledBeginActivityDate;
+  const endAct    = inst.scheduledEndActivityDate;
+  const beginDuty = inst.beginDutyDate;   // = briefing (TSV Manex, ~1h45 avant block-off)
+  const endDuty   = inst.endDutyDate;     // = closeout (~30min après block-on)
   const restBefore = (beginAct > 0 && inst.beginBlockDate > 0)
     ? (inst.beginBlockDate - beginAct) / 3_600_000
     : (inst.pairingDetail.restBeforeHaulDuration ?? null);
@@ -232,8 +234,10 @@ function buildInstanceRow(sigId: string, inst: PairingSummary) {
     arrivee_at:     new Date(inst.endBlockDate).toISOString(),
     rest_before_h:  restBefore,
     rest_after_h:   restAfter,
-    scheduled_begin_activity_at: beginAct > 0 ? new Date(beginAct).toISOString() : null,
-    scheduled_end_activity_at:   endAct   > 0 ? new Date(endAct).toISOString()   : null,
+    scheduled_begin_activity_at: beginAct  > 0 ? new Date(beginAct).toISOString()  : null,
+    scheduled_end_activity_at:   endAct    > 0 ? new Date(endAct).toISOString()    : null,
+    scheduled_begin_duty_at:     beginDuty > 0 ? new Date(beginDuty).toISOString() : null,
+    scheduled_end_duty_at:       endDuty   > 0 ? new Date(endDuty).toISOString()   : null,
     raw_summary:    inst as unknown as Json,
   };
 }
