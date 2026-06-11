@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>optiP — Guide de prise en main</title>
+<style>
+  /* ─── Reset + base ────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    color: #18181b;
+    background: #fafafa;
+    font-size: 10.5pt;
+    line-height: 1.4;
+  }
+
+  /* ─── Format A4 + pagination print ────────────────────────────── */
+  @page { size: A4 portrait; margin: 0; }
+  .page {
+    width: 210mm;
+    min-height: 297mm;
+    padding: 14mm 14mm 12mm 14mm;
+    margin: 8mm auto;
+    background: #fff;
+    box-shadow: 0 4px 24px rgba(0,0,0,.08);
+    page-break-after: always;
+    display: flex;
+    flex-direction: column;
+  }
+  .page:last-child { page-break-after: auto; }
+  @media print {
+    body { background: #fff; }
+    .page { margin: 0; box-shadow: none; }
+  }
+
+  /* ─── Typo ────────────────────────────────────────────────────── */
+  h1 {
+    font-size: 22pt;
+    font-weight: 700;
+    margin: 0 0 2mm 0;
+    color: #0a0a0a;
+    letter-spacing: -0.5px;
+  }
+  h1 .accent { color: #2563eb; }
+  .subtitle {
+    font-size: 10pt;
+    color: #71717a;
+    margin: 0 0 6mm 0;
+    padding-bottom: 3mm;
+    border-bottom: 1.5px solid #e4e4e7;
+  }
+  h2 {
+    font-size: 12pt;
+    font-weight: 700;
+    margin: 5mm 0 2mm 0;
+    color: #2563eb;
+    display: flex;
+    align-items: center;
+    gap: 2mm;
+  }
+  h2 .num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 6mm;
+    height: 6mm;
+    border-radius: 50%;
+    background: #2563eb;
+    color: white;
+    font-size: 9pt;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  h3 {
+    font-size: 10.5pt;
+    font-weight: 600;
+    margin: 3mm 0 1mm 0;
+    color: #27272a;
+  }
+  p, li { margin: 0 0 1.5mm 0; }
+  ol, ul { margin: 0 0 2mm 0; padding-left: 6mm; }
+  li { margin-bottom: 1mm; }
+  code, .mono {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    background: #f4f4f5;
+    padding: 0.2mm 1.2mm;
+    border-radius: 1.5mm;
+    font-size: 9.5pt;
+    color: #2563eb;
+  }
+  strong { color: #0a0a0a; }
+
+  /* ─── Cards et highlights ─────────────────────────────────────── */
+  .card {
+    background: #f4f4f5;
+    border-left: 2.5px solid #2563eb;
+    padding: 3mm 4mm;
+    border-radius: 0 2mm 2mm 0;
+    margin: 2mm 0 3mm 0;
+  }
+  .card.warn {
+    background: #fef3c7;
+    border-left-color: #d97706;
+  }
+  .card.warn strong { color: #92400e; }
+  .card.tip {
+    background: #d1fae5;
+    border-left-color: #059669;
+  }
+  .card.tip strong { color: #065f46; }
+
+  /* ─── Icônes inline (unicode) ─────────────────────────────────── */
+  .ico { display: inline-block; font-size: 11pt; vertical-align: -1px; }
+  .ico-share { color: #2563eb; }
+  .ico-cloud-down { color: #2563eb; }
+  .ico-cloud-up { color: #f59e0b; }
+
+  /* ─── Footer ──────────────────────────────────────────────────── */
+  .footer {
+    margin-top: auto;
+    padding-top: 4mm;
+    border-top: 1px solid #e4e4e7;
+    font-size: 8pt;
+    color: #a1a1aa;
+    display: flex;
+    justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PAGE 1 — Démarrer avec optiP
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="page">
+  <h1>opti<span class="accent">P</span> — Prise en main</h1>
+  <p class="subtitle">Planning &amp; simulation paie · Installation, cache, sync, profils</p>
+
+  <h2><span class="num">1</span> Installer l'app sur iPhone / iPad</h2>
+  <ol>
+    <li>Ouvre <strong>Safari</strong> (pas Chrome) et va sur l'URL communiquée par administrateur.</li>
+    <li>Connecte-toi avec ton <strong>email</strong> et le <strong>mot de passe</strong> reçu en privé.</li>
+    <li>Appuie sur l'icône <strong>Partager</strong> <span class="ico ico-share">⇪</span> (rectangle avec flèche, en bas de l'écran).</li>
+    <li>Fais défiler la liste et choisis <strong>« Sur l'écran d'accueil »</strong>.</li>
+    <li>Valide. L'icône optiP apparaît sur ton écran d'accueil.</li>
+    <li>Ouvre toujours l'app depuis cette icône — <strong>pas via Safari</strong>.</li>
+  </ol>
+  <div class="card warn">
+    <strong>Important :</strong> en mode standalone (icône écran d'accueil), l'app fonctionne entièrement hors-ligne et garde ta session. En Safari onglet, tu peux être déconnecté plus souvent.
+  </div>
+  <h3>Android</h3>
+  <p>Chrome → menu ⋮ → « Ajouter à l'écran d'accueil ». Le reste est identique.</p>
+
+  <h2><span class="num">2</span> Cache, sync et sauvegarde</h2>
+
+  <h3>Hors-ligne par défaut</h3>
+  <p>Toutes tes données (planning, profil, rotations, A81) sont stockées <strong>dans ton téléphone</strong>. L'app fonctionne sans réseau, sauf le premier login et l'onglet EP4 détaillé.</p>
+
+  <h3>Les deux boutons nuage de la barre du haut</h3>
+  <ul>
+    <li><span class="ico ico-cloud-down">⟲</span> <strong>Nuage circulaire (Pull)</strong> — toujours visible. Télécharge depuis le serveur les rotations, plannings, profils et A81 du mois courant + 3 mois suivants. À utiliser au moins une fois par semaine ou après un long offline.</li>
+    <li><span class="ico ico-cloud-up">☁︎↑</span> <strong>Nuage flèche-haut (Push)</strong> — apparaît avec un <strong>badge orange</strong> dès que tu as des modifs locales à envoyer. Clique pour pousser. Le badge montre combien de modifs sont en attente.</li>
+  </ul>
+
+  <h3>Sauvegarde automatique</h3>
+  <p>Chaque modif (vol, note, profil) est enregistrée <strong>localement immédiatement</strong>, puis envoyée au serveur dès qu'il y a du réseau (auto au prochain Push). En cas de pépin matériel, tes données sont sur le serveur — il suffit de te reconnecter sur un nouvel appareil et de cliquer sur le nuage circulaire.</p>
+
+  <div class="card tip">
+    <strong>Astuce :</strong> avant un long vol hors-réseau, fais un Pull sur l'appareil. Avant de fermer un onglet pour de bon, fais un Push si le badge orange est visible.
+  </div>
+
+  <h2><span class="num">3</span> Profils versionnés</h2>
+  <p>Dans l'onglet <strong>Profil</strong>, tu peux enregistrer plusieurs versions de ton profil paie à différentes <strong>dates de validité</strong> : changement de qualification, passage CDB, évolution de régime A81, etc.</p>
+  <ol>
+    <li>Clique <strong>« + Nouveau profil »</strong> pour créer une nouvelle version.</li>
+    <li>Choisis une <strong>date de début de validité</strong> (ex. <code>2026-01-01</code>).</li>
+    <li>Renseigne les champs (base, PVEI, KSP, etc.). Seuls les champs renseignés écrasent — les autres héritent de la version précédente.</li>
+    <li>Les calculs paie (catalogue, comparatif, EP4) utilisent <strong>automatiquement</strong> la bonne version selon le mois affiché.</li>
+  </ol>
+
+  <div class="footer">
+    <span>optiP · Guide v1 · Page 1/2</span>
+    <span>Questions ? Contacte l'administrateur.</span>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PAGE 2 — Article 81
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="page">
+  <h1>Article <span class="accent">81</span></h1>
+  <p class="subtitle">Prime de séjour défiscalisée · Principe, calcul, personnalisation</p>
+
+  <h2><span class="num">1</span> Principe</h2>
+  <p>L'Article 81 du Code Général des Impôts permet de <strong>défiscaliser une partie de la prime de séjour</strong> versée pour les escales à l'étranger. Pour chaque rotation, le montant exonéré dépend de trois paramètres :</p>
+  <ul>
+    <li><strong>Zone géographique</strong> de l'escale (A, B, C, D selon la matrice ministérielle).</li>
+    <li><strong>Temps de séjour</strong> sur place (<code>tSej</code>), calculé en heures.</li>
+    <li><strong>Valeur journalière</strong> définie dans ton profil (par défaut 600 €/jour, modifiable par version).</li>
+  </ul>
+
+  <h2><span class="num">2</span> Comment optiP calcule</h2>
+  <p>Pour chaque rotation éligible, le calcul est en quatre étapes :</p>
+  <ol>
+    <li><code>tSej = (arrivée − départ) − HDV</code> (heures hors vol passées sur l'escale).</li>
+    <li><code>tSej + 15 min</code> (marge réglementaire TSVP).</li>
+    <li><code>tSej24 = arrondi par paliers de 0,5 jour</code> (= 0 si < 24h).</li>
+    <li><code>Montant = valeurJour × tauxSej × tSej24</code>, où <code>tauxSej</code> vient de la matrice (zone × seuil).</li>
+  </ol>
+  <div class="card">
+    <strong>Éligibilité :</strong> une rotation est éligible A81 si <code>tSej ≥ 24h</code> ET la zone fait partie de la matrice (toutes les escales long-courrier qualifiantes y sont).
+  </div>
+
+  <h2><span class="num">3</span> L'onglet A81</h2>
+  <h3>Vue par escale</h3>
+  <p>L'onglet liste toutes tes escales avec, pour chacune : zone, seuils horaires, taux appliqué, et montant calculé du mois. Tri par escale, par zone ou par montant.</p>
+
+  <h3>Personnaliser un séjour</h3>
+  <p>Le calcul auto se base sur les heures programmées (briefing → closeout). Si tu as un <strong>séjour réel différent</strong> (départ retardé, retour avancé, escale prolongée), tu peux <strong>surcharger</strong> les heures début/fin de séjour pour cette instance :</p>
+  <ol>
+    <li>Tape sur la ligne de l'instance concernée.</li>
+    <li>Saisis les nouvelles heures de début et fin de séjour.</li>
+    <li>Le montant se recalcule immédiatement. Tu peux toujours <strong>restaurer la valeur calculée</strong> en cliquant sur ↻.</li>
+  </ol>
+
+  <h3>Plafond d'exonération annuel</h3>
+  <p>Le total exonéré sur l'année ne peut dépasser un <strong>plafond légal</strong> mis à jour chaque année. Saisis-le en haut de l'onglet A81 — optiP affiche un avertissement si tes montants cumulés s'en approchent.</p>
+
+  <div class="card warn">
+    <strong>Évolution réglementaire :</strong> les zones, seuils et taux sont définis par décret. optiP utilise la matrice à jour mais en cas de changement annoncé en cours d'année, signale-le à l'administrateur pour mise à jour.
+  </div>
+
+  <h2><span class="num">4</span> Mémo express</h2>
+  <ul>
+    <li>Tu vois <code>—</code> partout dans la colonne A81 d'une rotation : <code>tSej &lt; 24h</code> ou zone non éligible. <strong>Normal.</strong></li>
+    <li>Le calcul est <strong>hors-ligne</strong> — pas besoin de réseau pour avoir les bons montants.</li>
+    <li>Le bouton <strong>Push</strong> (nuage flèche-haut) synchronise tes overrides A81 vers le serveur.</li>
+  </ul>
+
+  <div class="footer">
+    <span>optiP · Guide v1 · Page 2/2</span>
+    <span>Bonnes rotations ✈</span>
+  </div>
+</section>
+
+</body>
+</html>
