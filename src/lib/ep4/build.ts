@@ -364,6 +364,8 @@ export function buildEp4Rotation(
     tsv_n_rot_m,
     debut_vol_ms, fin_vol_ms,
     utc_arr_first_service,
+    restBeforeHaul: pv0?.restBeforeHaulDuration ?? 0,
+    restPostHaul:   pv0?.restPostHaulDuration ?? 0,
     services,
   };
 }

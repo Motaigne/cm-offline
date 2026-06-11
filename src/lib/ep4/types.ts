@@ -89,6 +89,11 @@ export interface Ep4Rotation {
   debut_vol_ms: number;
   fin_vol_ms: number;
   utc_arr_first_service: number;
+  /** Repos avant/après haul (h) renvoyé brut par CrewBidd (pairingValue) —
+   *  pour cross-check avec inst.rest_before_h / rest_after_h calculé depuis
+   *  les timestamps. Sources souvent incohérentes (cf. note pipeline.ts:408). */
+  restBeforeHaul: number;
+  restPostHaul: number;
   services: Ep4Service[];
 }
 

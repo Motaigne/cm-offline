@@ -484,118 +484,100 @@ export function ComparatifClient({
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                <Row label="Rotation"         db={sig.rotation_code}           calc={sig.rotation_code}              formula="—" />
+                <Row label="Rotation" db={sig.rotation_code} calc={sig.rotation_code} formula="—" />
 
-                {/* ───── Section EP4 (nouvelle hiérarchie) ───── */}
-                {(() => {
-                  if (ep4Loading) return <Row label="EP4" db="—" calc="Chargement…" formula="(en attente du raw_detail)" />;
-                  if (!ep4 || !ep4Agg) return null;
-                  const sumPV  = ep4.H2HCr;
-                  const montantHCr  = Math.round(sumPV * pvei * ksp);
-                  const pvNuitEp4   = ep4Agg.sumTSVn / 2;
-                  const montantNuit = Math.round(pvNuitEp4 * pvei * ksp);
-                  const hcrPlusPVn  = sumPV + pvNuitEp4;
+                {ep4Loading && <Row label="EP4" db="—" calc="Chargement…" formula="(en attente du raw_detail)" />}
+
+                {!ep4Loading && ep4 && ep4Agg && (() => {
+                  const sumTdv  = ep4.services.reduce((s, svc) => s + svc.legs.reduce((ss, l) => ss + l.tdv_troncon, 0), 0);
+                  const pvNuit_db   = (sig.tsv_nuit ?? 0) / 2;
+                  const pvNuit_mois = ep4.tsv_n_rot_m / 2;
+                  const montantHCr_init  = ep4.H2HCr_initial * pvei * ksp;
+                  const montantHCr_mois  = ep4.H2HCr * pvei * ksp;
+                  const montantNuit_init = pvNuit_db   * pvei * ksp;
+                  const montantNuit_mois = pvNuit_mois * pvei * ksp;
+                  const hcrPlusPVn_init  = ep4.H2HCr_initial + pvNuit_db;
+                  const hcrPlusPVn_mois  = ep4.H2HCr        + pvNuit_mois;
+                  const montantRot_init  = montantHCr_init + montantNuit_init;
+                  const montantRot_mois  = montantHCr_mois + montantNuit_mois;
+                  const primeBT          = (sig.prime ?? 0) * 2.5 * pvei;
+                  const montantTotal_init = montantRot_init + primeBT;
+                  const montantTotal_mois = montantRot_mois + primeBT;
+                  const eur = (n: number) => `${Math.round(n).toLocaleString('fr-FR')} €`;
                   return (
                     <>
-                      <Row label="HV real"           db={fmt(ep4.HDV)}                 calc={fmt(ep4.HDV)}                      formula="HDV = flightTime (somme block des legs)" />
-                      <Row label="Tme"               db="—"                            calc={ep4Agg.tmePerSvc || '—'}            formula="max(1, ΣTDV_troncon / nbLegs) — par service" />
-                      <Row label="CMT"               db="—"                            calc={ep4Agg.cmtPerSvc || '—'}            formula="TME≤2 : 70/(21×TME+30) ; sinon 1 — par service" />
-                      <Row label="HV100"             db="—"                            calc={fmt(ep4Agg.sumHV100)}               formula="Σ legs.hv100 (= TDV troncon)" />
-                      <Row label="HCV"               db="—"                            calc={fmt(ep4Agg.sumHCV)}                 formula="Σ services (Σ TDV_norm × CMT + Σ TDV_MEP / 2)" />
-                      <Row label="HCT"               db="—"                            calc={fmt(ep4Agg.sumHCT)}                 formula="Σ services (TSV / 1,75)" />
-                      <Row label="HCA"               db="—"                            calc={fmt(ep4.HCA)}                       formula="TA × 5/24 — heures créditées absence" />
-                      <Row label="H1"                db="—"                            calc={fmt(ep4Agg.sumH1)}                  formula="Σ services max(HCV, HCT)" />
-                      <Row label="H2/HC"             db="—"                            calc={fmt(ep4.H2HC)}                      formula="rtHDV × max(HCA, ΣH1)" />
-                      <Row label="HV100r"            db="—"                            calc={fmt(ep4Agg.sumHV100r)}              formula="Σ legs.hv100r (= TDV troncon + 0,58)" />
-                      <Row label="HCVr"              db="—"                            calc={fmt(ep4Agg.sumHCVr)}                formula="Σ services (Σ HV100r_norm × CMT + Σ HV100r_MEP / 2)" />
-                      <Row label="H1r"               db="—"                            calc={fmt(ep4Agg.sumH1r)}                 formula="Σ services max(HCVr, HCT)" />
-                      <Row label="H2HCr (HCr)"       db="—"                            calc={fmt(ep4.H2HCr)}                     formula="rtHDV × max(HCA, ΣH1r)" highlight />
-                      <Row label="Montant HCr"       db="—"                            calc={`${montantHCr.toLocaleString('fr-FR')} €`} formula="H2HCr × PVEI × KSP" highlight />
-                      <Row label="TSVnuit"           db={fmt(sig.tsv_nuit)}            calc={fmt(ep4Agg.sumTSVn)}                formula="Σ services tsv_nuit (18h–6h locale dép.)" />
-                      <Row label="Majo Nuit (PVnuit)" db="—"                          calc={fmt(pvNuitEp4)}                      formula="TSVnuit / 2" />
-                      <Row label="Montant Nuit"      db="—"                            calc={`${montantNuit.toLocaleString('fr-FR')} €`} formula="PVnuit × PVEI × KSP" />
-                      <Row label="HCr + PVnuit"      db="—"                            calc={fmt(hcrPlusPVn)}                    formula="H2HCr + PVnuit" highlight />
-                    </>
-                  );
-                })()}
+                      <Row label="HV réal." db="—" calc={fmt(sumTdv)} formula="Σ legs.tdv_troncon (= arr_ms − dep_ms ; tdv_ref = tdv_real pour l'instant)" />
 
-                {/* ───── Existant ci-dessous ───── */}
-                <Row label="Hc"               db={fmt(sig.hc)}                 calc={fmt(sig.hc)}                    formula="Heures créditées" />
-                <Row label="Hcr"              db={fmt(sig.hcr_crew)}           calc={fmt(sig.hcr_crew)}              formula="Hcr crew (rotation entière)" />
-                <Row label="TSVnuit (h)"      db={fmt(computed.tsvNuit)}       calc={fmt(computed.tsvNuit)}          formula="TSV entre 18h–6h locale départ" />
-                <Row label="PVnuit"           db="—"                           calc={fmt(computed.pvNuit)}           formula="TSVnuit / 2" />
-                <Row label="Hcr + PVnuit"     db={fmt(sig.hcr_crew + computed.pvNuit)} calc={fmt(computed.pvTotal)}   formula="HCr + TSVnuit/2 (HCr = ep4.H2HCr, fallback sig.hcr_crew)" />
-                <Row label="Montant PV"       db="—"                                   calc={`${Math.round(computed.montantPv)} €`} formula="(HCr + PVnuit) × PVEI × KSP — HCr = max(HCA, ΣH1r) × rtHDV" highlight />
-                <Row label="Prime bi-tronçon" db={sig.prime != null ? `×${sig.prime}` : '—'} calc={`${Math.round(computed.primeBT)} €`} formula={`${sig.prime ?? 0} × 2,5 × PVEI`} />
-                <Row label="PV + Prime"       db="—"                           calc={`${Math.round(computed.pvPrime)} €`} formula="Montant PV + Prime" highlight />
-                <Row label="ON"               db={String(sig.nb_on_days)}      calc={String(sig.nb_on_days)}         formula="nb_on_days" />
-                <Row label="Escale"           db={sig.first_layover ?? '—'}    calc={sig.first_layover ?? '—'}       formula="first_layover" />
-                <Row label="Zone"             db={sig.zone ?? '—'}             calc={sig.zone ?? '—'}                formula="Article 81 zone" />
-                <Row label="A81"              db={sig.a81 ? 'Oui' : 'Non'}    calc={sig.a81 ? 'Oui' : 'Non'}       formula="TSV escale ≥ 24h" />
-                <Row label="Temps séjour"     db={fmt(sig.temps_sej, 1)}       calc={fmt(sig.temps_sej, 1)}          formula="Durée entre 1er atterrissage et dernier décollage (h)" />
-                {(() => {
-                  // Vérification par instance : (arrivee_at − depart_at) − HDV
-                  // = block-off 1er leg → block-on dernier leg, moins temps de vol.
-                  // Détecte les signatures legacy splittées (mig 0033) dont le
-                  // temps_sej stocké provient du raw_detail d'une AUTRE durée.
-                  const inst = sig.instances[0];
-                  if (!inst || sig.hdv == null) return null;
-                  const totalBlock = (new Date(inst.arrivee_at).getTime() - new Date(inst.depart_at).getTime()) / 3_600_000;
-                  const tSejFormula = totalBlock - sig.hdv;
-                  const dbVal = sig.temps_sej ?? 0;
-                  const delta = tSejFormula - dbVal;
-                  const warn  = Math.abs(delta) > 0.25;
-                  return (
-                    <Row
-                      label="Temps séjour (formule)"
-                      db={fmt(dbVal, 1)}
-                      calc={`${fmt(tSejFormula, 1)}${warn ? `  ⚠ Δ ${delta > 0 ? '+' : ''}${delta.toFixed(1)}h` : ''}`}
-                      formula="(arrivee_at − depart_at) / 1h − HDV — par instance"
-                      warn={warn}
-                    />
-                  );
-                })()}
-                <Row label="Repos avant"      db={fmt(sig.rest_before_h, 1)}   calc={fmt(sig.rest_before_h, 1)}      formula="Rest before haul (h)" />
-                <Row label="Repos après"      db={fmt(sig.rest_after_h, 1)}    calc={fmt(sig.rest_after_h, 1)}       formula="Rest after haul (h)" />
-                {(() => {
-                  // Affichage debug des timestamps activity (pris sur la 1ère instance
-                  // — chaque instance peut avoir ses propres timestamps).
-                  const inst = sig.instances[0];
-                  if (!inst) return null;
-                  const beginAct = inst.scheduled_begin_activity_at;
-                  const endAct   = inst.scheduled_end_activity_at;
-                  const beginBlock = inst.depart_at;
-                  const endBlock   = inst.arrivee_at;
-                  const restBeforeCalc = (beginAct && beginBlock)
-                    ? ((new Date(beginBlock).getTime() - new Date(beginAct).getTime()) / 3_600_000)
-                    : null;
-                  const restAfterCalc  = (endAct && endBlock)
-                    ? ((new Date(endAct).getTime() - new Date(endBlock).getTime()) / 3_600_000)
-                    : null;
-                  // TA = briefing → closeout. Préfère les valeurs AF exactes
-                  // (scheduled_*_duty_at, mig 0039) ; fallback Manex sur blocks
-                  // (1h45 / 30min). Les `scheduled_*_activity_at` (repos
-                  // pré/post-courrier) ne sont PAS utilisables pour TA.
-                  const briefAt = inst.scheduled_begin_duty_at ?? null;
-                  const closeAt = inst.scheduled_end_duty_at   ?? null;
-                  const taCalc =
-                    (briefAt && closeAt)
-                      ? (new Date(closeAt).getTime() - new Date(briefAt).getTime()) / 3_600_000
-                    : (beginBlock && endBlock)
-                      ? ((new Date(endBlock).getTime() - new Date(beginBlock).getTime()) / 3_600_000) + 2.25
-                    : null;
-                  const hcaCalc = taCalc != null ? (taCalc * 5) / 24 : null;
-                  const fmtIso = (s: string | null | undefined) => s ? new Date(s).toISOString().replace('T', ' ').slice(0, 16) : '—';
-                  return (
-                    <>
-                      <Row label="scheduledBeginActivityDate" db={fmtIso(beginAct)}   calc={fmtIso(beginAct)}   formula="début d'activité (briefing) — pairing_instance.scheduled_begin_activity_at" />
-                      <Row label="scheduledBeginBlockDate"    db={fmtIso(beginBlock)} calc={fmtIso(beginBlock)} formula="départ (block-off) — pairing_instance.depart_at" />
-                      <Row label="scheduledEndBlockDate"      db={fmtIso(endBlock)}   calc={fmtIso(endBlock)}   formula="arrivée (block-on) — pairing_instance.arrivee_at" />
-                      <Row label="scheduledEndActivityDate"   db={fmtIso(endAct)}     calc={fmtIso(endAct)}     formula="fin d'activité (closeout) — pairing_instance.scheduled_end_activity_at" />
-                      <Row label="rest_before_h (formule)" db={fmt(sig.rest_before_h, 1)} calc={restBeforeCalc != null ? fmt(restBeforeCalc, 1) : '—'} formula="(scheduledBeginBlockDate − scheduledBeginActivityDate) / 1h" />
-                      <Row label="rest_after_h (formule)"  db={fmt(sig.rest_after_h, 1)}  calc={restAfterCalc != null  ? fmt(restAfterCalc, 1)  : '—'} formula="(scheduledEndActivityDate − scheduledEndBlockDate) / 1h" />
-                      <Row label="TA"  db="—" calc={taCalc  != null ? fmt(taCalc,  2) + ' h' : '—'} formula="scheduledEndDutyDate − scheduledBeginDutyDate (mig 0039 ; fallback blocks + Manex 1h45/30min)" />
-                      <Row label="HCA" db="—" calc={hcaCalc != null ? fmt(hcaCalc, 2) + ' h' : '—'} formula="TA × 5/24 — heures créditées absence" highlight />
+                      {ep4.services.map((svc, i) => (
+                        <Row key={`tme-${i}`} label={`Tme svc ${i + 1}`} db="—" calc={fmt(svc.TME)} formula="max(1, Σ tdv_troncon / nb_tronçons)" />
+                      ))}
+                      {ep4.services.map((svc, i) => (
+                        <Row key={`cmt-${i}`} label={`CMT svc ${i + 1}`} db="—" calc={fmt(svc.CMT)} formula="TME ≤ 2 ? 70/(21·TME+30) : 1" />
+                      ))}
+
+                      <Row label="HV100" db="—" calc={fmt(ep4Agg.sumHV100)} formula="Σ legs.hv100 (= TDV tronçon)" />
+
+                      {ep4.services.map((svc, i) => (
+                        <Row key={`hcv-${i}`} label={`HCV svc ${i + 1}`} db="—" calc={fmt(svc.HCV)} formula="(Σ tdv_norm + Σ tdv_MEP / 2) × CMT" />
+                      ))}
+                      {ep4.services.map((svc, i) => (
+                        <Row key={`hct-${i}`} label={`HCT svc ${i + 1}`} db="—" calc={fmt(svc.HCT)} formula="TSV / 1,75" />
+                      ))}
+
+                      <Row label="TA"  db="—" calc={fmt(ep4.TA) + ' h'}  formula="scheduledEndDutyDate − scheduledBeginDutyDate (mig 0039)" />
+                      <Row label="HCA" db="—" calc={fmt(ep4.HCA) + ' h'} formula="TA × 5/24" />
+
+                      {ep4.services.map((svc, i) => (
+                        <Row key={`h1-${i}`} label={`H1 svc ${i + 1}`} db="—" calc={fmt(svc.H1)} formula="max(HCV, HCT)" />
+                      ))}
+
+                      <Row label="rtHDV"        db="—"           calc={fmt(ep4.rtHDV, 4)}      formula="Σ HCVmoisM / Σ HCV" />
+                      <Row label="H2HC (Hc)"    db={fmt(sig.hc)} calc={fmt(ep4.H2HC_initial)} formula="max(HCA, Σ H1) — avant proratisation mois" />
+                      <Row label="H2HC mois"    db="—"           calc={fmt(ep4.H2HC)}         formula="rtHDV × max(HCA, Σ H1)" />
+
+                      <Row label="HV100r" db="—" calc={fmt(ep4Agg.sumHV100r)} formula="Σ legs.hv100r (= tdv_troncon + 0,58)" />
+
+                      {ep4.services.map((svc, i) => (
+                        <Row key={`hcvr-${i}`} label={`HCVr svc ${i + 1}`} db="—" calc={fmt(svc.HCVr)} formula="(Σ hv100r_norm + Σ hv100r_MEP / 2) × CMT" />
+                      ))}
+                      {ep4.services.map((svc, i) => (
+                        <Row key={`h1r-${i}`} label={`H1r svc ${i + 1}`} db="—" calc={fmt(svc.H1r)} formula="max(HCVr, HCT)" />
+                      ))}
+
+                      <Row label="H2HCr (HCr)" db={fmt(sig.hcr_crew)} calc={fmt(ep4.H2HCr_initial)} formula="max(HCA, Σ H1r)" />
+                      <Row label="H2HCr mois"  db="—"                 calc={fmt(ep4.H2HCr)}         formula="rtHDV × max(HCA, Σ H1r)" />
+
+                      <Row label="Montant HCr"      db="—" calc={eur(montantHCr_init)} formula="H2HCr_initial × PVEI × KSP" />
+                      <Row label="Montant HCr mois" db="—" calc={eur(montantHCr_mois)} formula="H2HCr × PVEI × KSP" />
+
+                      <Row label="TSVnuit"     db={fmt(sig.tsv_nuit)} calc={fmt(ep4.tsv_n_rot_m)} formula="Σ svc.tsv_n_ser_m (proraté mois)" />
+                      <Row label="Majo Nuit"   db={fmt(pvNuit_db)}    calc={fmt(pvNuit_mois)}     formula="TSVnuit / 2" />
+                      <Row label="Montant Nuit"      db="—" calc={eur(montantNuit_init)} formula="Majo Nuit (initial) × PVEI × KSP" />
+                      <Row label="Montant Nuit mois" db="—" calc={eur(montantNuit_mois)} formula="Majo Nuit (mois) × PVEI × KSP" />
+
+                      <Row
+                        label="HCr + PVnuit mois / HCr + PVnuit"
+                        db={fmt(sig.hcr_crew + pvNuit_db)}
+                        calc={`${fmt(hcrPlusPVn_mois)} / ${fmt(hcrPlusPVn_init)}`}
+                        formula="H2HCr + Majo Nuit (mois) / H2HCr_initial + Majo Nuit (initial)"
+                      />
+                      <Row
+                        label="montantRot mois / montantRot"
+                        db={eur((sig.hcr_crew + pvNuit_db) * pvei * ksp)}
+                        calc={`${eur(montantRot_mois)} / ${eur(montantRot_init)}`}
+                        formula="Montant HCr + Montant Nuit (mois / initial)"
+                        highlight
+                      />
+
+                      <Row label="Prime bi-tronçon" db={sig.prime != null ? `×${sig.prime}` : '—'} calc={eur(primeBT)} formula={`${sig.prime ?? 0} × 2,5 × PVEI`} />
+
+                      <Row
+                        label="montantTotal mois / montantTotal"
+                        db="—"
+                        calc={`${eur(montantTotal_mois)} / ${eur(montantTotal_init)}`}
+                        formula="montantRot + Prime bi-tronçon (mois / initial)"
+                        highlight
+                      />
                     </>
                   );
                 })()}
@@ -608,29 +590,102 @@ export function ComparatifClient({
             <span className="ml-2 text-zinc-300 dark:text-zinc-500">(profil applicable au mois)</span>
           </div>
 
-          {/* Article 81 — défiscalisation par rotation */}
-          {a81 && (
-            <div className="bg-white dark:bg-zinc-900 rounded-xl border border-emerald-200 dark:border-emerald-900/50 overflow-hidden">
-              <div className="px-4 py-2 bg-emerald-50 dark:bg-emerald-950/30 border-b border-emerald-100 dark:border-emerald-900/40 flex items-center justify-between">
-                <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 uppercase tracking-wide">
-                  Article 81 — Prime de séjour défiscalisée
-                </p>
+          {/* Article 81 — toujours visible (escale/zone/tSej en haut, calcs A81 si éligible) */}
+          <div className="bg-white dark:bg-zinc-900 rounded-xl border border-emerald-200 dark:border-emerald-900/50 overflow-hidden">
+            <div className="px-4 py-2 bg-emerald-50 dark:bg-emerald-950/30 border-b border-emerald-100 dark:border-emerald-900/40 flex items-center justify-between">
+              <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 uppercase tracking-wide">
+                Article 81 — Prime de séjour défiscalisée
+              </p>
+              {a81 && (
                 <span className="text-[10px] text-emerald-600/70 dark:text-emerald-400/70">
                   zone {a81.zone} · valeur jour {valeurJour}€
                 </span>
-              </div>
-              <table className="w-full text-sm">
-                <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                  <Row label="tSej"                  db={fmt(a81.tSej, 2) + ' h'}                                                  calc={fmt(a81.tSej, 2) + ' h'}                                                          formula="Temps entre 1er atterrissage et dernier décollage" />
-                  <Row label="tSej + 15 min"         db={fmt(a81.tSej + 15/60, 2) + ' h'}                                          calc={fmt(a81.tSej + 15/60, 2) + ' h'}                                                  formula="+15 min réglementaires (TSVP marge)" />
-                  <Row label="tSej24"                db={a81.tSej24 > 0 ? `${a81.tSej24.toFixed(1)} j` : '—'}                       calc={a81.tSej24 > 0 ? `${a81.tSej24.toFixed(1)} j` : '—'}                                formula="ceil((tSej + 15min) / 24, 0.5) — 0 si < 24 h" />
-                  <Row label="tauxSej"               db={a81.tauxSej != null ? `${(a81.tauxSej * 100).toFixed(0)} %` : '—'}        calc={a81.tauxSej != null ? `${(a81.tauxSej * 100).toFixed(0)} %` : '—'}                  formula={`Lookup matrice (zone ${a81.zone} × seuil ${(a81.tSej + 15/60).toFixed(2)}h)`} />
-                  <Row label="Montant prime séjour" db="—"                                                                          calc={`${Math.round(a81.montantPrimeSej).toLocaleString('fr-FR')} €`}                       formula="valeurJour × tauxSej × tSej24" highlight />
-                  <Row label="Montant / jour"        db="—"                                                                          calc={`${Math.round(a81.montantPrimeSejJour).toLocaleString('fr-FR')} €`}                   formula="valeurJour × tauxSej (montant pour 1 jour)" />
-                </tbody>
-              </table>
+              )}
             </div>
-          )}
+            <table className="w-full text-sm">
+              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                <Row label="Escale"       db={sig.first_layover ?? '—'}                            calc="—"                                                  formula="first_layover" />
+                <Row label="Zone"         db={sig.zone ?? '—'}                                      calc="—"                                                  formula="Article 81 zone" />
+                <Row label="A81"          db={sig.a81 ? 'Oui' : 'Non'}                              calc="—"                                                  formula="TSV escale ≥ 24h" />
+                {(() => {
+                  const inst = sig.instances[0];
+                  if (!inst || sig.hdv == null) return (
+                    <Row label="Temps séjour" db={fmt(sig.temps_sej, 1) + ' h'} calc="—" formula="(arrivee_at − depart_at) / 1h − HDV (par instance)" />
+                  );
+                  const totalBlock  = (new Date(inst.arrivee_at).getTime() - new Date(inst.depart_at).getTime()) / 3_600_000;
+                  const tSejFormula = totalBlock - sig.hdv;
+                  const delta       = tSejFormula - (sig.temps_sej ?? 0);
+                  const warn        = Math.abs(delta) > 0.25;
+                  return (
+                    <Row
+                      label="Temps séjour"
+                      db={fmt(sig.temps_sej, 1) + ' h'}
+                      calc={`${fmt(tSejFormula, 1)} h${warn ? `  ⚠ Δ ${delta > 0 ? '+' : ''}${delta.toFixed(1)}h` : ''}`}
+                      formula="(arrivee_at − depart_at) / 1h − HDV (par instance)"
+                      warn={warn}
+                    />
+                  );
+                })()}
+                {a81 ? (
+                  <>
+                    <Row label="tSej + 15 min"        db={fmt(a81.tSej + 15/60, 2) + ' h'}                                          calc={fmt(a81.tSej + 15/60, 2) + ' h'}                                                  formula="+15 min réglementaires (TSVP marge)" />
+                    <Row label="tSej24"               db={a81.tSej24 > 0 ? `${a81.tSej24.toFixed(1)} j` : '—'}                       calc={a81.tSej24 > 0 ? `${a81.tSej24.toFixed(1)} j` : '—'}                                formula="ceil((tSej + 15min) / 24, 0.5) — 0 si < 24 h" />
+                    <Row label="tauxSej"              db={a81.tauxSej != null ? `${(a81.tauxSej * 100).toFixed(0)} %` : '—'}        calc={a81.tauxSej != null ? `${(a81.tauxSej * 100).toFixed(0)} %` : '—'}                  formula={`Lookup matrice (zone ${a81.zone} × seuil ${(a81.tSej + 15/60).toFixed(2)}h)`} />
+                    <Row label="Montant prime séjour" db="—"                                                                          calc={`${Math.round(a81.montantPrimeSej).toLocaleString('fr-FR')} €`}                       formula="valeurJour × tauxSej × tSej24" highlight />
+                    <Row label="Montant / jour"       db="—"                                                                          calc={`${Math.round(a81.montantPrimeSejJour).toLocaleString('fr-FR')} €`}                   formula="valeurJour × tauxSej (montant pour 1 jour)" />
+                  </>
+                ) : (
+                  <tr><td colSpan={4} className="px-4 py-2 text-xs text-zinc-400 italic">Rotation non éligible A81 (tSej &lt; 24h ou zone non éligible)</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Metadata — timestamps, repos, ON, TSV nuit par service */}
+          <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+            <div className="px-4 py-2 bg-zinc-50 dark:bg-zinc-800/60 border-b border-zinc-100 dark:border-zinc-800">
+              <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide">Metadata</p>
+            </div>
+            <table className="w-full text-sm">
+              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                {(() => {
+                  const inst    = sig.instances[0];
+                  const fmtIso  = (s: string | null | undefined) => s ? new Date(s).toISOString().replace('T', ' ').slice(0, 16) : '—';
+                  const restBeforeCalc = inst?.scheduled_begin_activity_at && inst.depart_at
+                    ? (new Date(inst.depart_at).getTime() - new Date(inst.scheduled_begin_activity_at).getTime()) / 3_600_000
+                    : null;
+                  const restAfterCalc = inst?.scheduled_end_activity_at && inst.arrivee_at
+                    ? (new Date(inst.scheduled_end_activity_at).getTime() - new Date(inst.arrivee_at).getTime()) / 3_600_000
+                    : null;
+                  return (
+                    <>
+                      <Row label="ON" db={String(sig.nb_on_days)} calc={ep4 ? String(ep4.ON) : '—'} formula="nb jours UTC entre 1er block-off et dernier block-on" />
+                      <Row label="Repos avant (h)" db={ep4 ? fmt(ep4.restBeforeHaul, 1) : '—'} calc={restBeforeCalc != null ? fmt(restBeforeCalc, 1) : fmt(inst?.rest_before_h, 1)} formula="DB = pairingDetail.restBeforeHaulDuration ; calc = (block-off − scheduledBeginActivityDate) / 1h" />
+                      <Row label="Repos après (h)"  db={ep4 ? fmt(ep4.restPostHaul, 1) : '—'} calc={restAfterCalc  != null ? fmt(restAfterCalc, 1)  : fmt(inst?.rest_after_h, 1)}  formula="DB = pairingDetail.restPostHaulDuration ; calc = (scheduledEndActivityDate − block-on) / 1h" />
+                      <Row label="scheduledBeginActivityDate" db={fmtIso(inst?.scheduled_begin_activity_at)} calc="—" formula="début du repos pré-courrier (PAS briefing)" />
+                      <Row label="scheduledBeginDutyDate"     db={fmtIso(inst?.scheduled_begin_duty_at)}     calc="—" formula="briefing (mig 0039)" />
+                      <Row label="scheduledBeginBlockDate"    db={fmtIso(inst?.depart_at)}                   calc="—" formula="block-off 1er leg (depart_at)" />
+                      <Row label="scheduledEndBlockDate"      db={fmtIso(inst?.arrivee_at)}                  calc="—" formula="block-on dernier leg (arrivee_at)" />
+                      <Row label="scheduledEndDutyDate"       db={fmtIso(inst?.scheduled_end_duty_at)}       calc="—" formula="closeout (mig 0039)" />
+                      <Row label="scheduledEndActivityDate"   db={fmtIso(inst?.scheduled_end_activity_at)}   calc="—" formula="fin du repos post-courrier (PAS closeout)" />
+                      {ep4 && ep4.services.map((svc, i) => (
+                        <Row key={`tsvnj-${i}`} label={`TSVnuit J svc ${i + 1}`} db="—" calc={fmt(svc.tsv_nuit_j, 2)} formula="tsvNuitJ(dep_loc_h, block_block) — nuit jour J du tronçon" />
+                      ))}
+                      {ep4 && ep4.services.map((svc, i) => (
+                        <Row key={`tsvnj1-${i}`} label={`TSVnuit J+1 svc ${i + 1}`} db="—" calc={fmt(svc.tsv_nuit_j1, 2)} formula="tsvNuitJ1(dep_loc_h, block_block) — nuit jour J+1" />
+                      ))}
+                      {ep4 && ep4.services.map((svc, i) => (
+                        <Row key={`tsvns-${i}`} label={`TSVnuit S svc ${i + 1}`} db="—" calc={fmt(svc.tsv_nuit, 2)} formula="tsv_nuit_j + tsv_nuit_j1" />
+                      ))}
+                      {ep4 && ep4.services.map((svc, i) => (
+                        <Row key={`tsvnsm-${i}`} label={`TSVnuit Sm svc ${i + 1}`} db="—" calc={fmt(svc.tsv_n_ser_m, 2)} formula="tsv_nuit proraté mois M (0 si dead-head)" />
+                      ))}
+                    </>
+                  );
+                })()}
+              </tbody>
+            </table>
+          </div>
 
           {/* Détail EP4 — feuille horaire + feuille décompte (port du pipeline Python) */}
           <Ep4Detail
