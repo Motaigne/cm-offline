@@ -147,6 +147,11 @@ export async function fetchAllPairings(
           restBeforeHaulDuration: r.pairingDetail?.restBeforeHaulDuration ?? 0,
           restPostHaulDuration:   r.pairingDetail?.restPostHaulDuration   ?? 0,
         },
+        // Capture brute complète pour le panneau admin metadata + futurs usages
+        // — couvre tous les champs documentés dans optiP_CREWBIDD_V1.md
+        // (activityKey, activityCode, populationType, pairingArrivalStationCode,
+        // joonActivity, instructorActivity, endRestPostHaulDate, etc.).
+        _raw: raw as Record<string, unknown>,
       });
     }
 

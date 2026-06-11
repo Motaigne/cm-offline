@@ -28,6 +28,12 @@ export interface PairingSummary {
     restBeforeHaulDuration: number;
     restPostHaulDuration: number;
   };
+  /** Payload brut complet renvoyé par CrewBidd `pairingsearch`, avant
+   *  cherry-picking. Stocké en `raw_summary` (JSONB) pour permettre des
+   *  formules / debug futurs sans re-scraper. Inclut tous les champs de
+   *  `optiP_CREWBIDD_V1.md` : activityKey, activityCode, populationType,
+   *  pairingArrivalStationCode, etc. */
+  _raw?: Record<string, unknown>;
 }
 
 export interface LegDetail {

@@ -6,7 +6,8 @@ import { getRotationsForMonth } from '@/app/actions/search';
 import { cacheRotations, loadRotationsFromDB, getCachedMonths } from '@/lib/local-db';
 import type { RotationSignature } from '@/app/actions/search';
 import { Ep4Detail } from './ep4-detail';
-import { getEp4Detail } from '@/app/actions/ep4';
+import { getEp4Detail, getRawMetadataForSig } from '@/app/actions/ep4';
+import type { AdminRawMetadata } from '@/app/actions/ep4';
 import { buildEp4Rotation } from '@/lib/ep4';
 import type { Ep4Rotation } from '@/lib/ep4';
 import { computeArticle81, TAXI_TSEJ_ADJUST_H } from '@/lib/article81';
@@ -122,6 +123,7 @@ export function ComparatifClient({
   signatures: initialSigs, months: initialMonths, currentMonth: initialMonth,
   article81Data,
   profileVersions = [], annexeRows = [],
+  isAdmin = false,
 }: {
   signatures: Sig[];
   months: string[];
@@ -129,6 +131,7 @@ export function ComparatifClient({
   article81Data: Article81Data | null;
   profileVersions?: ProfileVersion[];
   annexeRows?: AnnexeRow[];
+  isAdmin?: boolean;
 }) {
   const [sigs, setSigs]           = useState<Sig[]>(initialSigs);
   const [months, setMonths]       = useState<string[]>(initialMonths);
@@ -276,6 +279,17 @@ export function ComparatifClient({
     const pvPrime   = montantPv + primeBT;
     return { tsvNuit, pvNuit, pvTotal, montantPv, primeBT, pvPrime, hcr };
   }, [sig, pvei, ksp, ep4]);
+
+  // Admin only : raw_summary + raw_detail bruts CrewBidd pour le panneau metadata.
+  const [adminMeta, setAdminMeta] = useState<AdminRawMetadata | null>(null);
+  useEffect(() => {
+    if (!isAdmin || !sigId) { setAdminMeta(null); return; }
+    let cancelled = false;
+    getRawMetadataForSig(sigId)
+      .then(res => { if (!cancelled) setAdminMeta(res); })
+      .catch(() => { /* silencieux */ });
+    return () => { cancelled = true; };
+  }, [isAdmin, sigId]);
 
   // Agrégats rotation depuis EP4 (sum across services/legs).
   const ep4Agg = useMemo(() => {
@@ -687,6 +701,11 @@ export function ComparatifClient({
             </table>
           </div>
 
+          {/* Metadata complète admin — raw_summary + raw_detail bruts CrewBidd */}
+          {isAdmin && adminMeta && !('error' in adminMeta) && (
+            <AdminMetadataPanel meta={adminMeta} />
+          )}
+
           {/* Détail EP4 — feuille horaire + feuille décompte (port du pipeline Python) */}
           <Ep4Detail
             sigId={sig.id}
@@ -725,5 +744,109 @@ function Row({
       <td className={`px-4 py-2 text-right font-mono font-semibold ${calcC}`}>{calc ?? '—'}</td>
       <td className="px-4 py-2 text-xs text-zinc-400 max-w-xs">{formula}</td>
     </tr>
+  );
+}
+
+// ─── Panneau admin : raw_summary + raw_detail bruts CrewBidd ────────────────
+// Affichage flat key/value pour permettre de voir tous les champs documentés
+// dans optiP_CREWBIDD_V1.md / PAYRINGSEARCH.md sans re-scraper.
+function AdminMetadataPanel({ meta }: { meta: Exclude<AdminRawMetadata, { error: string }> }) {
+  const [openInst, setOpenInst]   = useState<number>(0);
+  const [openDetail, setOpenDetail] = useState<boolean>(false);
+  const insts = meta.instances ?? [];
+  const inst  = insts[openInst] ?? null;
+  const rawSummary = inst?.raw_summary as Record<string, unknown> | null;
+  const rawDetail  = meta.raw_detail as Record<string, unknown> | null;
+  return (
+    <div className="bg-white dark:bg-zinc-900 rounded-xl border border-amber-200 dark:border-amber-900/50 overflow-hidden">
+      <div className="px-4 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-100 dark:border-amber-900/40">
+        <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-300 uppercase tracking-wide">
+          Metadata complète (admin) — payloads CrewBidd bruts
+        </p>
+      </div>
+
+      {/* raw_summary par instance */}
+      <div className="px-4 py-2 border-b border-zinc-100 dark:border-zinc-800">
+        <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-1">
+          raw_summary (PairingSummary)
+        </p>
+        {insts.length > 1 && (
+          <div className="flex gap-1 flex-wrap mb-2">
+            {insts.map((i, idx) => (
+              <button
+                key={i.id}
+                onClick={() => setOpenInst(idx)}
+                className={`text-[10px] px-2 py-0.5 rounded font-mono ${
+                  openInst === idx
+                    ? 'bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-100'
+                    : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 hover:bg-zinc-200'
+                }`}
+              >
+                {new Date(i.depart_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', timeZone: 'Europe/Paris' })}
+              </button>
+            ))}
+          </div>
+        )}
+        {rawSummary ? <FlatJsonTable obj={rawSummary} /> : <p className="text-xs text-zinc-400 italic">raw_summary absent (sig pre-mig 0034 ou _raw non capturé)</p>}
+      </div>
+
+      {/* raw_detail (PairingDetail) — collapsible parce que volumineux */}
+      <div className="px-4 py-2">
+        <button
+          onClick={() => setOpenDetail(o => !o)}
+          className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1 hover:text-zinc-600 dark:hover:text-zinc-300"
+        >
+          {openDetail ? '▼' : '▶'} raw_detail (PairingDetail signature){' '}
+          <span className="text-[9px] text-zinc-300 dark:text-zinc-500 normal-case font-normal">— volumineux, click pour afficher</span>
+        </button>
+        {openDetail && rawDetail && (
+          <div className="mt-2 space-y-2">
+            <div>
+              <p className="text-[10px] font-semibold text-zinc-400 mb-1">Niveau rotation (clés top + pairingValue[0])</p>
+              <FlatJsonTable obj={{
+                ...Object.fromEntries(Object.entries(rawDetail).filter(([k]) => k !== 'flightDuty' && k !== 'pairingValue' && k !== 'serviceRest')),
+                ...((rawDetail.pairingValue as Array<Record<string, unknown>>)?.[0] ?? {}),
+              }} />
+            </div>
+            <div>
+              <p className="text-[10px] font-semibold text-zinc-400 mb-1">flightDuty[] (résumé par service)</p>
+              <pre className="text-[10px] font-mono bg-zinc-50 dark:bg-zinc-800/60 rounded p-2 overflow-x-auto max-h-64">
+                {JSON.stringify(rawDetail.flightDuty, null, 2)}
+              </pre>
+            </div>
+          </div>
+        )}
+        {openDetail && !rawDetail && <p className="mt-2 text-xs text-zinc-400 italic">raw_detail absent en DB</p>}
+      </div>
+    </div>
+  );
+}
+
+function FlatJsonTable({ obj }: { obj: Record<string, unknown> }) {
+  const entries = Object.entries(obj).sort(([a], [b]) => a.localeCompare(b));
+  const fmtVal = (v: unknown): string => {
+    if (v === null || v === undefined) return '—';
+    if (typeof v === 'number') {
+      // Heuristique : timestamps ms epoch entre 1990 et 2050 → format date
+      if (v > 631_152_000_000 && v < 2_524_608_000_000) {
+        return `${v} (${new Date(v).toISOString().replace('T', ' ').slice(0, 16)})`;
+      }
+      return String(v);
+    }
+    if (typeof v === 'boolean') return v ? 'true' : 'false';
+    if (typeof v === 'string')  return v;
+    return JSON.stringify(v);
+  };
+  return (
+    <table className="w-full text-[11px] font-mono">
+      <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+        {entries.map(([k, v]) => (
+          <tr key={k}>
+            <td className="px-2 py-0.5 text-zinc-500 dark:text-zinc-400 align-top w-1/3">{k}</td>
+            <td className="px-2 py-0.5 text-zinc-800 dark:text-zinc-200 break-all">{fmtVal(v)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }

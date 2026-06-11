@@ -39,12 +39,14 @@ export default async function ComparatifPage({
   // Article 81 : matrice annexe + versions complètes (profil + annexe) pour
   // permettre au client de dériver PVEI/KSP et Valeur Jour du profil
   // utilisateur quand il navigue entre mois.
-  const [a81RowData, profileVersions, annexeRows] = await Promise.all([
+  const [a81RowData, profileVersions, annexeRows, profile] = await Promise.all([
     loadAnnexeRowForMonth('article_81', month),
     loadAllProfileVersions(user.id),
     loadAllAnnexeRows(),
+    supabase.from('user_profile').select('is_admin').eq('user_id', user.id).single(),
   ]);
   const article81Data: Article81Data | null = (a81RowData as Article81Data | null) ?? null;
+  const isAdmin = profile.data?.is_admin === true;
 
   const snapshot = (snapshots ?? []).find(s => s.target_month.startsWith(month));
 
@@ -127,6 +129,7 @@ export default async function ComparatifPage({
           article81Data={article81Data}
           profileVersions={profileVersions}
           annexeRows={annexeRows}
+          isAdmin={isAdmin}
         />
       </div>
     </div>

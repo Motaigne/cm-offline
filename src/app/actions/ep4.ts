@@ -42,6 +42,43 @@ export async function getEp4Detail(sigId: string): Promise<Ep4DetailResponse> {
   };
 }
 
+// ─── Metadata admin : raw_summary + raw_detail bruts CrewBidd ───────────────
+
+export type AdminRawMetadata =
+  | {
+      raw_detail: unknown;  // PairingDetail JSONB brut (full)
+      instances: Array<{ id: string; depart_at: string; raw_summary: unknown }>;
+    }
+  | { error: string };
+
+/** Fetch admin-only des payloads CrewBidd bruts (raw_summary par instance +
+ *  raw_detail signature). Sert au panneau metadata complète qui affiche tous
+ *  les champs documentés dans optiP_CREWBIDD_V1.md / PAYRINGSEARCH.md. */
+export async function getRawMetadataForSig(sigId: string): Promise<AdminRawMetadata> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Non authentifié' };
+
+  const { data: profile } = await supabase
+    .from('user_profile').select('is_admin').eq('user_id', user.id).single();
+  if (!profile?.is_admin) return { error: 'Admin requis' };
+
+  const [sigResult, instancesResult] = await Promise.all([
+    supabase.from('pairing_signature').select('raw_detail').eq('id', sigId).single(),
+    supabase.from('pairing_instance').select('id, depart_at, raw_summary')
+      .eq('signature_id', sigId).order('depart_date'),
+  ]);
+
+  if (sigResult.error) return { error: sigResult.error.message };
+
+  return {
+    raw_detail: sigResult.data?.raw_detail ?? null,
+    instances: (instancesResult.data ?? []).map(i => ({
+      id: i.id, depart_at: i.depart_at, raw_summary: i.raw_summary,
+    })),
+  };
+}
+
 // ─── Onglet EP4 (UI H) : tous les vols du planning du mois M ─────────────────
 
 export type Ep4ScenarioFlight = {

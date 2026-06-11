@@ -238,7 +238,11 @@ function buildInstanceRow(sigId: string, inst: PairingSummary) {
     scheduled_end_activity_at:   endAct    > 0 ? new Date(endAct).toISOString()    : null,
     scheduled_begin_duty_at:     beginDuty > 0 ? new Date(beginDuty).toISOString() : null,
     scheduled_end_duty_at:       endDuty   > 0 ? new Date(endDuty).toISOString()   : null,
-    raw_summary:    inst as unknown as Json,
+    // raw_summary = payload CrewBidd `pairingsearch` brut complet (préféré au
+    // typed cherry-pick, pour préserver les champs non utilisés actuellement —
+    // panneau metadata admin + futures formules). Fallback typed si _raw absent
+    // (cas legacy / tests).
+    raw_summary: (inst._raw ?? inst) as unknown as Json,
   };
 }
 
