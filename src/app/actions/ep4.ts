@@ -110,11 +110,15 @@ export async function getEp4ForMonth(month: string): Promise<Ep4MonthResponse | 
   });
 
   // 3. Récupère les pairing_instance pour mapper instance_id → signature_id
-  //    et capter les bornes briefing/closeout par instance (override TA / debut/fin_vol_ms).
+  //    et capter les bornes block par instance (depart_at / arrivee_at) — utilisées
+  //    pour dériver briefing/closeout (Manex : block-off −1h45, block-on +30min)
+  //    et override TA / debut/fin_vol_ms.
+  //    NB : `scheduled_*_activity_at` est le repos pré/post-courrier, pas
+  //    briefing/closeout — d'où usage des bornes block + offsets Manex.
   const instanceIds = [...new Set(filteredItems.map(it => it.pairing_instance_id as string))];
   const { data: instances } = await supabase
     .from('pairing_instance')
-    .select('id, signature_id, activity_id, scheduled_begin_activity_at, scheduled_end_activity_at')
+    .select('id, signature_id, activity_id, depart_at, arrivee_at')
     .in('id', instanceIds);
   const instanceById = new Map((instances ?? []).map(i => [i.id, i]));
 
@@ -154,10 +158,13 @@ export async function getEp4ForMonth(month: string): Promise<Ep4MonthResponse | 
     const sig = sigById.get(inst.signature_id);
     if (!sig?.raw_detail) continue;
 
-    const override = (inst.scheduled_begin_activity_at && inst.scheduled_end_activity_at)
+    // Manex : briefing 1h45 avant block-off, closeout 30min après block-on.
+    const BRIEFING_MS = 1.75 * 3_600_000;
+    const CLOSEOUT_MS = 0.5  * 3_600_000;
+    const override = (inst.depart_at && inst.arrivee_at)
       ? {
-          beginActivityMs: new Date(inst.scheduled_begin_activity_at).getTime(),
-          endActivityMs:   new Date(inst.scheduled_end_activity_at).getTime(),
+          beginActivityMs: new Date(inst.depart_at).getTime()  - BRIEFING_MS,
+          endActivityMs:   new Date(inst.arrivee_at).getTime() + CLOSEOUT_MS,
         }
       : undefined;
     const ep4 = buildEp4Rotation(
