@@ -101,8 +101,38 @@ export async function addPlanningItem(data: {
 
 export async function deletePlanningItem(itemId: string) {
   const supabase = await createClient();
-  const { error } = await supabase.from('planning_item').delete().eq('id', itemId);
+  // `.select('id')` post-delete renvoie les rows effectivement supprimées :
+  // si vide, on distingue le cas où l'item existait toujours en DB mais le
+  // DELETE n'a rien touché. Sans ça, Supabase ne remontait aucune erreur sur
+  // 0 rows affected (RLS qui bloque silencieusement, draft_id qui n'est plus
+  // accessible au user, etc.) → l'op était retirée de la queue alors que la
+  // suppression n'était pas faite, et le router.refresh() côté client
+  // ramenait l'item depuis la DB → impression que le delete avait été annulé.
+  const { data: deleted, error } = await supabase
+    .from('planning_item')
+    .delete()
+    .eq('id', itemId)
+    .select('id');
   if (error) return { error: error.message };
+  if (!deleted || deleted.length === 0) {
+    // 0 rows deleted. Peut signifier :
+    //  (a) item déjà supprimé en DB par un push précédent → idempotent OK.
+    //  (b) item présent en DB mais inaccessible via RLS (draft_id orphelin /
+    //      RLS trop restrictive) → vrai bug, le delete n'aura jamais lieu.
+    // On distingue via un SELECT ciblé : si la row existe et n'est pas vue,
+    // on remonte une erreur pour que le panneau debug montre la cause exacte.
+    const { data: existing } = await supabase
+      .from('planning_item')
+      .select('id, draft_id')
+      .eq('id', itemId)
+      .maybeSingle();
+    if (existing) {
+      return { error: `planning_item ${itemId} existe (draft_id=${existing.draft_id}) mais DELETE refusé par RLS` };
+    }
+    // Cas (a) : vraiment supprimé. Idempotent.
+    revalidatePath('/');
+    return;
+  }
   revalidatePath('/');
 }
 
