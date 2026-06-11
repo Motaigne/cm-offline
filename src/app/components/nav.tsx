@@ -153,12 +153,35 @@ async function clearAllCaches(): Promise<void> {
 /** Wrap une promesse avec un timeout — résout à `fallback` si dépassé.
  *  Évite que Sync ne se bloque indéfiniment sur un fetch qui hang
  *  (wifi instable, server action lente, etc.). */
-function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+/** Sentinel pour debug : capture timeout/reject avec label. Sans `opts`, comportement
+ *  identique à avant (fallback silencieux). Avec `opts.label`, log console + appel
+ *  `opts.onError` pour qu'on remonte la cause réelle dans l'UI (pas de Mac pour
+ *  Web Inspector iPad). */
+function withTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  fallback: T,
+  opts?: { label?: string; onError?: (kind: 'timeout' | 'reject', err: unknown) => void },
+): Promise<T> {
   return new Promise<T>(resolve => {
     let done = false;
-    const t = setTimeout(() => { if (!done) { done = true; resolve(fallback); } }, ms);
+    const t = setTimeout(() => {
+      if (!done) {
+        done = true;
+        if (opts?.label) console.warn(`[sync] timeout ${ms}ms`, opts.label);
+        opts?.onError?.('timeout', new Error(`timeout ${ms}ms`));
+        resolve(fallback);
+      }
+    }, ms);
     p.then(v => { if (!done) { done = true; clearTimeout(t); resolve(v); } })
-     .catch(() => { if (!done) { done = true; clearTimeout(t); resolve(fallback); } });
+     .catch(e => {
+       if (!done) {
+         done = true; clearTimeout(t);
+         if (opts?.label) console.warn(`[sync] reject`, opts.label, e);
+         opts?.onError?.('reject', e);
+         resolve(fallback);
+       }
+     });
   });
 }
 
@@ -191,6 +214,17 @@ export function NavBar() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [backupMenuOpen, setBackupMenuOpen] = useState(false);
+  // Debug sync iPad sans Mac : on capture les rejects/timeouts de chaque mois
+  // pour les afficher dans le `title` du bouton Pull (visible via long-press
+  // sur iPad). Persisté dans localStorage pour relecture ultérieure.
+  const [lastSyncErrors, setLastSyncErrors] = useState<Array<{ label: string; kind: 'timeout' | 'reject'; msg: string }>>(() => {
+    if (typeof localStorage === 'undefined') return [];
+    try { return JSON.parse(localStorage.getItem('cm-sync-last-errors') ?? '[]'); } catch { return []; }
+  });
+  function persistSyncErrors(errs: Array<{ label: string; kind: 'timeout' | 'reject'; msg: string }>) {
+    setLastSyncErrors(errs);
+    try { localStorage.setItem('cm-sync-last-errors', JSON.stringify(errs)); } catch { /* quota */ }
+  }
   const [backupStatus, setBackupStatus] = useState('');
   // Statut réseau via useSyncExternalStore (hook dédié) : pas de
   // set-state-in-effect et pas de mismatch d'hydration (SSR snapshot = true).
@@ -332,20 +366,25 @@ export function NavBar() {
       return;
     }
     setSyncing(true);
+    // Reset des erreurs capturées : on n'affiche que celles de la session en cours.
+    const collectedErrors: Array<{ label: string; kind: 'timeout' | 'reject'; msg: string }> = [];
+    const captureErr = (label: string) => (kind: 'timeout' | 'reject', err: unknown) => {
+      collectedErrors.push({ label, kind, msg: String((err as Error)?.message ?? err) });
+    };
     try {
       setSyncStatus('pull');
       // Cache profil + annexe + A81 versionnés en parallèle (légers, < 50KB).
-      void withTimeout(loadAllProfileVersions(), 5000, [])
+      void withTimeout(loadAllProfileVersions(), 5000, [], { label: 'profileVersions', onError: captureErr('profileVersions') })
         .then(v => cacheProfileVersions(v)).catch(() => {});
-      void withTimeout(loadAllAnnexeRows(), 5000, [])
+      void withTimeout(loadAllAnnexeRows(), 5000, [], { label: 'annexeRows', onError: captureErr('annexeRows') })
         .then(r => cacheAnnexeRows(r)).catch(() => {});
-      void withTimeout(loadAllA81Overrides(), 5000, [])
+      void withTimeout(loadAllA81Overrides(), 5000, [], { label: 'a81Overrides', onError: captureErr('a81Overrides') })
         .then(o => cacheA81Overrides(o)).catch(() => {});
-      void withTimeout(loadAllA81YearData(), 5000, [])
+      void withTimeout(loadAllA81YearData(), 5000, [], { label: 'a81YearData', onError: captureErr('a81YearData') })
         .then(y => cacheA81YearData(y)).catch(() => {});
       const ready = await waitForSWController();
       if (ready) {
-        const months = await withTimeout(getAvailableMonths(), 8000, [] as AvailableMonth[]);
+        const months = await withTimeout(getAvailableMonths(), 8000, [] as AvailableMonth[], { label: 'availableMonths', onError: captureErr('availableMonths') });
         const mode: SyncMode = (localStorage.getItem(SYNC_MODE_KEY) as SyncMode | null) ?? DEFAULT_SYNC_MODE;
         const persoRaw = localStorage.getItem(SYNC_PERSO_KEY);
         const persoMonthsLs: string[] = (() => {
@@ -374,12 +413,14 @@ export function NavBar() {
                 getRotationsForMonth(m, loadMode),
                 25000,
                 null as Awaited<ReturnType<typeof getRotationsForMonth>> | null,
+                { label: `rotations:${m}`, onError: captureErr(`rotations:${m}`) },
               ),
               planningMonths.has(m)
                 ? withTimeout(
                     getScenariosWithItems(m),
                     20000,
                     null as Awaited<ReturnType<typeof getScenariosWithItems>> | null,
+                    { label: `scenarios:${m}`, onError: captureErr(`scenarios:${m}`) },
                   )
                 : Promise.resolve([] as Awaited<ReturnType<typeof getScenariosWithItems>>),
             ]);
@@ -399,6 +440,7 @@ export function NavBar() {
                 .then(() => true),
               10000,
               false,
+              { label: `write:${m}`, onError: captureErr(`write:${m}`) },
             );
             if (writeOk) cachedMonths.push(m);
             else failed++;
@@ -420,13 +462,17 @@ export function NavBar() {
             for (const m of cachedMonths) urlVariants.push(`${url}?m=${m}`);
           }
         }
-        const precacheTasks = urlVariants.map(url => () => withTimeout(precachePage(url), 10000, false));
+        const precacheTasks = urlVariants.map(url => () => withTimeout(
+          precachePage(url), 10000, false,
+          { label: `precache:${url}`, onError: captureErr(`precache:${url}`) },
+        ));
         await runPool(precacheTasks, 6);
         if (failed > 0) {
           // Affiche le nombre de mois en échec — sinon le user voit juste un
           // "!" fugace et croit que tout est OK alors qu'il y a des trous.
           setDlProgress(`${failed} échec${failed > 1 ? 's' : ''}`);
           setSyncStatus('err');
+          persistSyncErrors(collectedErrors);
           setTimeout(() => { setSyncStatus(''); setDlProgress(''); }, 5000);
           return;
         }
@@ -434,8 +480,11 @@ export function NavBar() {
         localStorage.setItem(DL_KEY, String(Date.now()));
       }
       setSyncStatus('ok');
+      persistSyncErrors(collectedErrors);
       setTimeout(() => { setSyncStatus(''); router.refresh(); }, 1500);
-    } catch {
+    } catch (e) {
+      collectedErrors.push({ label: 'handlePull', kind: 'reject', msg: String((e as Error)?.message ?? e) });
+      persistSyncErrors(collectedErrors);
       setSyncStatus('err');
       setTimeout(() => setSyncStatus(''), 3000);
     } finally {
@@ -634,7 +683,9 @@ export function NavBar() {
               syncStatus === 'offline' ? 'Pas de réseau'
               : syncStatus === 'pull'  ? 'Téléchargement…'
               : syncStatus === 'ok'    ? 'Synchronisé'
-              : syncStatus === 'err'   ? 'Erreur de synchronisation'
+              : syncStatus === 'err'   ? (lastSyncErrors.length > 0
+                  ? `Erreur sync — ${lastSyncErrors.length} échec(s) :\n${lastSyncErrors.slice(0, 5).map(e => `• ${e.kind} ${e.label} — ${e.msg}`).join('\n')}${lastSyncErrors.length > 5 ? `\n+${lastSyncErrors.length - 5} autres` : ''}`
+                  : 'Erreur de synchronisation')
               : 'Actualiser depuis le cloud'
             }
             className={`relative px-2 h-8 flex items-center gap-1 text-sm font-medium disabled:opacity-50 rounded hover:bg-zinc-800 transition-colors ${syncStatus === 'pull' ? 'text-blue-400' : syncColor || 'text-zinc-300'}`}
@@ -707,6 +758,31 @@ export function NavBar() {
                               </span>
                             )}
                           </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* Debug : derniers échecs du sync (capté par withTimeout). Permet
+                      de diagnostiquer sur iPad sans Web Inspector. */}
+                  {lastSyncErrors.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-700">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <p className="text-[10px] font-semibold text-red-600 dark:text-red-400">
+                          {lastSyncErrors.length} échec{lastSyncErrors.length > 1 ? 's' : ''} au dernier sync
+                        </p>
+                        <button
+                          onClick={() => persistSyncErrors([])}
+                          className="text-[10px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                        >
+                          Effacer
+                        </button>
+                      </div>
+                      <div className="max-h-40 overflow-y-auto space-y-1">
+                        {lastSyncErrors.map((e, i) => (
+                          <div key={i} className="text-[10px] font-mono bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300 px-1.5 py-1 rounded">
+                            <span className="font-semibold">{e.kind}</span> · {e.label}
+                            <div className="text-red-600/80 dark:text-red-400/80 break-all">{e.msg}</div>
+                          </div>
                         ))}
                       </div>
                     </div>
