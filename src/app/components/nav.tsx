@@ -156,6 +156,21 @@ async function clearAllCaches(): Promise<void> {
   await Promise.all(keys.map(k => caches.delete(k)));
 }
 
+/** Confirme que toutes les URLs sont effectivement présentes dans le cache
+ *  'others' (= celui que CacheFirst utilise pour les navigations). Sert
+ *  d'indicateur visuel "OK pour kill l'app en garantissant cold-cold offline". */
+async function verifyPrecache(urls: string[]): Promise<boolean> {
+  if (typeof caches === 'undefined') return false;
+  try {
+    const cache = await caches.open('others');
+    for (const url of urls) {
+      const hit = await cache.match(url);
+      if (!hit) return false;
+    }
+    return true;
+  } catch { return false; }
+}
+
 /** Wrap une promesse avec un timeout — résout à `fallback` si dépassé.
  *  Évite que Sync ne se bloque indéfiniment sur un fetch qui hang
  *  (wifi instable, server action lente, etc.). */
@@ -232,6 +247,11 @@ export function NavBar() {
     try { localStorage.setItem('cm-sync-last-errors', JSON.stringify(errs)); } catch { /* quota */ }
   }
   const [backupStatus, setBackupStatus] = useState('');
+  // Indicateur "OK pour kill" : vrai quand toutes les routes statiques + /offline
+  // sont confirmées présentes dans le cache 'others' (= CacheFirst navigation
+  // hit garanti hors ligne). Reste persistant tant que NavBar n'est pas démonté
+  // (= soft nav OK, kill reset l'indicateur). Re-vérifié après chaque Sync.
+  const [precacheReady, setPrecacheReady] = useState(false);
   // Statut réseau via useSyncExternalStore (hook dédié) : pas de
   // set-state-in-effect et pas de mismatch d'hydration (SSR snapshot = true).
   const online = useOnlineStatus();
@@ -265,9 +285,22 @@ export function NavBar() {
       if (ready && navigator.onLine) {
         const currentMonth = localStorage.getItem('cm-selected-month')
           ?? new Date().toISOString().slice(0, 7);
-        const targets: string[] = [...PAGES];
+        const targets: string[] = [...PAGES, '/offline'];
         for (const p of PAGES_MONTH) targets.push(`${p}?m=${currentMonth}`);
-        for (const url of targets) { void precachePage(url); }
+        // await pour pouvoir vérifier l'état réel du cache après — l'indicateur
+        // "OK pour kill" doit refléter le cache effectif, pas juste les tentatives.
+        await Promise.all(targets.map(url => precachePage(url)));
+        const ok = await verifyPrecache(targets);
+        setPrecacheReady(ok);
+      } else if (ready && !navigator.onLine) {
+        // Pas de réseau : on vérifie quand même l'état actuel — peut-être que
+        // tout est déjà précaché d'un boot précédent.
+        const currentMonth = localStorage.getItem('cm-selected-month')
+          ?? new Date().toISOString().slice(0, 7);
+        const targets: string[] = [...PAGES, '/offline'];
+        for (const p of PAGES_MONTH) targets.push(`${p}?m=${currentMonth}`);
+        const ok = await verifyPrecache(targets);
+        setPrecacheReady(ok);
       }
     })();
     void getCurrentUserIsAdmin().then(setIsAdmin).catch(() => setIsAdmin(false));
@@ -534,6 +567,16 @@ export function NavBar() {
       }
       setSyncStatus('ok');
       persistSyncErrors(collectedErrors);
+      // Re-vérifie l'état du cache après le Sync — Sync re-précache toutes les
+      // routes + mois → l'indicateur "OK pour kill" doit refléter ce nouvel état.
+      {
+        const currentMonth = localStorage.getItem('cm-selected-month')
+          ?? new Date().toISOString().slice(0, 7);
+        const verifyTargets: string[] = [...PAGES, '/offline'];
+        for (const p of PAGES_MONTH) verifyTargets.push(`${p}?m=${currentMonth}`);
+        const ok = await verifyPrecache(verifyTargets);
+        setPrecacheReady(ok);
+      }
       setTimeout(() => { setSyncStatus(''); router.refresh(); }, 1500);
     } catch (e) {
       collectedErrors.push({ label: 'handlePull', kind: 'reject', msg: String((e as Error)?.message ?? e) });
@@ -697,6 +740,20 @@ export function NavBar() {
           </a>
         )}
         <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
+          {/* OK pour kill — coche verte visible uniquement quand le précache
+              est confirmé complet (CacheFirst nav guaranteed offline). */}
+          {precacheReady && (
+            <span
+              title="Cache complet — OK pour kill l'app, cold-cold offline garanti"
+              className="flex items-center justify-center w-5 h-5 text-emerald-400"
+              aria-label="Cache complet"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"
+                strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4" aria-hidden="true">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </span>
+          )}
           {/* PUSH — visible uniquement s'il y a des modifs locales en queue.
               Cloud-upload : envoie les changements locaux vers Supabase. */}
           {pendingCount > 0 && (
