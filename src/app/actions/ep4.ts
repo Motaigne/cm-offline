@@ -13,11 +13,12 @@ export type Ep4DetailResponse =
   | { error: string };
 
 /** Lecture brute de la table taux_app (brackets AF rot_code → taux).
- *  Utilisée par le pré-cache Dexie pour EP4 offline. */
+ *  Utilisée par le pré-cache Dexie pour EP4 offline. Pas de getUser() check :
+ *  la RLS `taux_read_auth` (= auth.role() = 'authenticated') s'en charge. Sans
+ *  ça, un getUser() qui hang/timeout pendant Sync (race entre plusieurs server
+ *  actions parallèles) renvoyait silencieusement [] → cache taux_app vide à vie. */
 export async function getTauxApp(): Promise<TauxAppRow[]> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return [];
   const { data } = await supabase
     .from('taux_app')
     .select('rot_code, duree_min_h, duree_max_h, taux');

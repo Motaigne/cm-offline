@@ -306,7 +306,12 @@ export function NavBar() {
       void loadAllAnnexeRows().then(r => cacheAnnexeRows(r)).catch(() => {});
       void loadAllA81Overrides().then(o => cacheA81Overrides(o)).catch(() => {});
       void loadAllA81YearData().then(y => cacheA81YearData(y)).catch(() => {});
-      void getTauxApp().then(t => cacheTauxApp(t)).catch(() => {});
+      void getTauxApp()
+        .then(t => {
+          console.warn(`[priming] taux_app reçu : ${t.length} rows`);
+          return cacheTauxApp(t);
+        })
+        .catch(e => { console.warn('[priming] taux_app erreur', e); });
     };
 
     type RIC = (cb: () => void, opts?: { timeout: number }) => number;
@@ -426,7 +431,10 @@ export function NavBar() {
       void withTimeout(loadAllA81YearData(), 5000, [], { label: 'a81YearData', onError: captureErr('a81YearData') })
         .then(y => cacheA81YearData(y)).catch(() => {});
       void withTimeout(getTauxApp(), 15000, [], { label: 'tauxApp', onError: captureErr('tauxApp') })
-        .then(t => cacheTauxApp(t)).catch(() => {});
+        .then(t => {
+          console.warn(`[sync] taux_app reçu : ${t.length} rows`);
+          return cacheTauxApp(t);
+        }).catch(e => { console.warn('[sync] taux_app cache erreur', e); });
       const ready = await waitForSWController();
       if (ready) {
         const months = await withTimeout(getAvailableMonths(), 8000, [] as AvailableMonth[], { label: 'availableMonths', onError: captureErr('availableMonths') });
