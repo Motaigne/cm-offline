@@ -1,18 +1,28 @@
-import { createClient } from '@/lib/supabase/server';
-import { redirect } from 'next/navigation';
-import { Ep4PageClient } from './ep4-page-client';
+'use client';
 
-export default async function Ep4Page({
-  searchParams,
-}: {
-  searchParams: Promise<{ m?: string }>;
-}) {
-  const { m } = await searchParams;
-  const month = m && /^\d{4}-\d{2}$/.test(m) ? m : new Date().toISOString().slice(0, 7);
+// Coquille statique précachée pour /ep4 (style /page.tsx, /comparatif/page.tsx).
+// Aucun fetch serveur au boot — auth client via useAuthGuard, data via Dexie
+// dans Ep4PageClient. Permet à /ep4 de fonctionner sur wifi captif / SIM filtrée.
 
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/login');
+import { Suspense } from 'react';
+import { Ep4ShellClient } from './ep4-shell-client';
+import { NavBar } from '@/app/components/nav';
 
-  return <Ep4PageClient month={month} />;
+function ShellFallback() {
+  return (
+    <div className="flex flex-col min-h-screen bg-zinc-50 dark:bg-zinc-950">
+      <NavBar />
+      <main className="flex-1 flex items-center justify-center text-sm text-zinc-400">
+        Chargement…
+      </main>
+    </div>
+  );
+}
+
+export default function Ep4Page() {
+  return (
+    <Suspense fallback={<ShellFallback />}>
+      <Ep4ShellClient />
+    </Suspense>
+  );
 }
