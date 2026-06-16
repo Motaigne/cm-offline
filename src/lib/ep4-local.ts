@@ -148,12 +148,15 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4MonthRespo
 /** Charge raw_detail + taux_app + irRates pour une signature donnée depuis
  *  Dexie. Mirroir client de `getEp4Detail` (utilisé par le panneau détail du
  *  /comparatif). Retourne soit la data, soit un objet `{ reason }` taggué qui
- *  permet à l'UI d'afficher un message précis (sig manquante / raw_detail
- *  manquant / taux_app vide). */
+ *  permet à l'UI d'afficher un message précis.
+ *
+ *  Note : taux_app peut être vide (la table n'est pas seedée en prod côté
+ *  serveur — getEp4Detail retourne aussi taux=[] dans ce cas). buildEp4Rotation
+ *  fonctionne avec un taux vide (les calculs principaux n'en dépendent pas) ;
+ *  on ne bloque donc pas si taux est vide. */
 export type Ep4DetailLocalFail =
   | { reason: 'sig-absent' }
-  | { reason: 'raw-detail-absent' }
-  | { reason: 'taux-app-empty' };
+  | { reason: 'raw-detail-absent' };
 
 export type Ep4DetailLocalResult =
   | { raw_detail: PairingDetail; taux: TauxAppRow[]; irRates: IrMfRate[] }
@@ -167,7 +170,6 @@ export async function loadEp4DetailLocal(sigId: string): Promise<Ep4DetailLocalR
     loadAnnexeRowsLocal(),
     loadTauxAppLocal(),
   ]);
-  if (taux.length === 0) { console.warn('[ep4-local] taux_app vide en Dexie'); return { reason: 'taux-app-empty' }; }
   // ir_mf_rates : pas de contexte mois ici — on prend la version la plus récente.
   const latestIr = annexeRows
     .filter(r => r.slug === 'ir_mf_rates')

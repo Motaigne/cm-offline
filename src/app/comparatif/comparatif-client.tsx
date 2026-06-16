@@ -265,8 +265,8 @@ export function ComparatifClient({
     raw_detail: PairingDetail; taux: TauxAppRow[]; irRates: IrMfRate[];
   } | null>(null);
   /** Cause de l'échec offline si ep4Data est null. Permet à l'UI d'afficher un
-   *  message précis (raw_detail manquant pour le sig vs taux_app vide en cache). */
-  const [ep4FailReason, setEp4FailReason] = useState<'sig-absent' | 'raw-detail-absent' | 'taux-app-empty' | null>(null);
+   *  message précis (sig absent en Dexie vs raw_detail manquant côté serveur). */
+  const [ep4FailReason, setEp4FailReason] = useState<'sig-absent' | 'raw-detail-absent' | null>(null);
   const [ep4Loading, setEp4Ld] = useState(false);
   const sigId   = sig?.id ?? null;
   const sigRot  = sig?.rotation_code ?? '';
@@ -596,9 +596,8 @@ export function ComparatifClient({
                     db="—"
                     calc="indisponible"
                     formula={
-                      ep4FailReason === 'sig-absent'      ? '(sig absente en Dexie — Sync requise)' :
+                      ep4FailReason === 'sig-absent'        ? '(sig absente en Dexie — Sync requise)' :
                       ep4FailReason === 'raw-detail-absent' ? '(raw_detail manquant côté serveur — re-scrape requis)' :
-                      ep4FailReason === 'taux-app-empty'  ? '(taux_app vide en cache — repasser online pour Sync)' :
                       '(diagnostic indisponible)'
                     }
                   />
