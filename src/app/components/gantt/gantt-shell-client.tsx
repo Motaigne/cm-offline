@@ -101,8 +101,11 @@ export function GanttShellClient() {
 
   if (status === 'loading' || status === 'redirecting') return <SkeletonShell />;
   if (noProfile) return <SkeletonShell />;
-  if (!data || !session) return <SkeletonShell />;
+  if (!data) return <SkeletonShell />;
   const profile = data.profile!;
+  // session peut être null si useAuthGuard a timeouté en lisant les cookies
+  // (cf wifi off + token close à expiration). Shell render quand même : le
+  // background getUser revalidera et redirigera /login si vraiment plus authed.
 
   // finBase = primes mensuelles fixes (incitation + A330 + instruction) +
   // éléments versionnés (pvei, fixe, fixeTP, ksp). Mêmes règles que l'ancien
@@ -149,7 +152,7 @@ export function GanttShellClient() {
   })();
 
   const valeurJour = Number(profile.valeur_jour ?? 600);
-  const userName = session.user.email ?? '';
+  const userName = session?.user.email ?? '';
 
   return (
     <GanttView

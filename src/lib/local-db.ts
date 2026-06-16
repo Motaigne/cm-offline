@@ -392,9 +392,13 @@ export async function loadRotationsFromDB(month: string): Promise<RotationSignat
 // ─── Cache taux_app (brackets AF — utilisé par EP4) ───────────────────────────
 
 export async function cacheTauxApp(rows: TauxAppRow[]): Promise<void> {
+  // Non-destructif si vide : sinon un fetch qui timeout pendant Sync (fallback []
+  // de withTimeout) wipait le cache existant → taux_app vide en Dexie alors
+  // qu'on avait des rows valides d'une session précédente.
+  if (rows.length === 0) return;
   await db.transaction('rw', db.taux_app, async () => {
     await db.taux_app.clear();
-    if (rows.length) await db.taux_app.bulkPut(rows.map(r => ({ ...r, key: tauxAppKey(r) })));
+    await db.taux_app.bulkPut(rows.map(r => ({ ...r, key: tauxAppKey(r) })));
   });
 }
 

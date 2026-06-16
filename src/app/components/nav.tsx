@@ -425,7 +425,7 @@ export function NavBar() {
         .then(o => cacheA81Overrides(o)).catch(() => {});
       void withTimeout(loadAllA81YearData(), 5000, [], { label: 'a81YearData', onError: captureErr('a81YearData') })
         .then(y => cacheA81YearData(y)).catch(() => {});
-      void withTimeout(getTauxApp(), 5000, [], { label: 'tauxApp', onError: captureErr('tauxApp') })
+      void withTimeout(getTauxApp(), 15000, [], { label: 'tauxApp', onError: captureErr('tauxApp') })
         .then(t => cacheTauxApp(t)).catch(() => {});
       const ready = await waitForSWController();
       if (ready) {
