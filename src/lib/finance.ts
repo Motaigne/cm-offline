@@ -71,11 +71,18 @@ export const REGIME_NB30E: Record<string, number> = {
 };
 
 /**
- * Valeur d'une rotation en euros — utilise les constantes par défaut (profil
- * non chargé : search panel, catalogue avant hydratation profil).
- * PV = hcr_crew + TSVnuit/2. Bi-tronçon sans KSP.
+ * Valeur d'une rotation en euros. PV = hcr_crew + TSVnuit/2. Bi-tronçon
+ * sans KSP. Accepte pvei/ksp optionnels pour le contexte profil-chargé
+ * (Gantt) ; tombe sur les constantes par défaut si non fournis (search
+ * panel, catalogue avant hydratation profil).
  */
-export function rotationValue(hcrCrew: number, prime: number, tsvNuit = 0): number {
+export function rotationValue(
+  hcrCrew: number,
+  prime: number,
+  tsvNuit = 0,
+  pvei: number = PVEI,
+  ksp: number = KSP,
+): number {
   const pv = hcrCrew + tsvNuit / 2;
-  return pv * PVEI * KSP + prime * 2.5 * PVEI;
+  return pv * pvei * ksp + prime * 2.5 * pvei;
 }
