@@ -64,8 +64,16 @@ export function GanttShellClient() {
         // (si toute la base est vide) ou pourra naviguer vers un mois qu'il a
         // déjà visité.
         if (d.scenarios.length === 0 && navigator.onLine) {
+          // Timeout 5s — sur wifi captif / SIM filtrée, navigator.onLine = true
+          // mais le fetch hang indéfiniment. Sans timeout, le shell resterait
+          // bloqué en "Chargement…". On laisse tomber, l'utilisateur verra le
+          // calendrier vide (mieux qu'un écran blanc).
           try {
-            const scs = await getScenariosWithItems(month);
+            const scs = await Promise.race([
+              getScenariosWithItems(month),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('auto-fetch timeout')), 5000)),
+            ]);
             if (cancelled) return;
             await hydrateDB(scs, month);
             d = await loadShellData(month);
