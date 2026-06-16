@@ -100,16 +100,14 @@ async function waitForSWController(): Promise<boolean> {
   });
 }
 
-// Normalise une URL en strippant les query params dynamiques. DOIT correspondre
-// exactement au plugin `stripDynamicParams` du SW (sw.ts) — sinon les writes
-// précachePage et les reads CacheFirst utiliseraient des clés différentes
-// (= cache miss systématique offline). Strip : _rsc (variable par soft nav
-// Next.js) + m (mois, géré client-side depuis l'URL parsing).
+// Normalise une URL en strippant `_rsc` (cache-buster Next.js soft nav). DOIT
+// correspondre exactement au plugin `stripDynamicParams` du SW (sw.ts). On NE
+// strip PAS `m` : le payload RSC contient next-router-state-tree qui peut
+// dépendre du mois → servir le mauvais cassé la nav client.
 function stripDynamicCacheKey(rawUrl: string): string {
   try {
     const url = new URL(rawUrl, typeof window === 'undefined' ? 'http://localhost' : window.location.origin);
     url.searchParams.delete('_rsc');
-    url.searchParams.delete('m');
     return url.pathname + (url.search || '');
   } catch { return rawUrl; }
 }

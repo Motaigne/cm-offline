@@ -2,18 +2,17 @@ import { defaultCache } from '@serwist/next/worker';
 import type { PrecacheEntry, SerwistGlobalConfig } from 'serwist';
 import { Serwist, CacheFirst, ExpirationPlugin } from 'serwist';
 
-// Normalise les URLs en strippant les query params dynamiques avant lookup
-// cache. Sans ce plugin :
-//   - Next.js ajoute ?_rsc=hash aléatoire à chaque soft nav → cache miss
-//     systématique sur 'rsc' → "this page couldn't load" offline.
-//   - Les routes statiques (/, /comparatif, etc.) varient par ?m=YYYY-MM mais
-//     l'HTML servi est identique (le mois est décodé client-side depuis l'URL).
-// Le plugin s'applique en lecture ET en écriture → cohérent.
+// Normalise les URLs en strippant le query param `_rsc` (cache-buster aléatoire
+// ajouté par Next.js à chaque soft nav RSC). Sans ce plugin :
+//   - /comparatif?m=2026-08&_rsc=abc ≠ /comparatif?m=2026-08 précaché → miss
+//     sur 'rsc' → throw → "this page couldn't load" offline sur soft nav.
+// On NE strip PAS `m` car le payload RSC contient potentiellement l'état
+// router-tree (next-router-state-tree) qui peut différer par mois → servir
+// le mauvais mois cassé la nav client (vu en test 2026-06-17 19:05).
 const stripDynamicParams = {
   cacheKeyWillBeUsed: async ({ request }: { request: Request }) => {
     const url = new URL(request.url);
     url.searchParams.delete('_rsc');
-    url.searchParams.delete('m');
     return url.toString();
   },
 };
