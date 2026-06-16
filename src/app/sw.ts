@@ -2,6 +2,22 @@ import { defaultCache } from '@serwist/next/worker';
 import type { PrecacheEntry, SerwistGlobalConfig } from 'serwist';
 import { Serwist, CacheFirst, ExpirationPlugin } from 'serwist';
 
+// Normalise les URLs en strippant les query params dynamiques avant lookup
+// cache. Sans ce plugin :
+//   - Next.js ajoute ?_rsc=hash aléatoire à chaque soft nav → cache miss
+//     systématique sur 'rsc' → "this page couldn't load" offline.
+//   - Les routes statiques (/, /comparatif, etc.) varient par ?m=YYYY-MM mais
+//     l'HTML servi est identique (le mois est décodé client-side depuis l'URL).
+// Le plugin s'applique en lecture ET en écriture → cohérent.
+const stripDynamicParams = {
+  cacheKeyWillBeUsed: async ({ request }: { request: Request }) => {
+    const url = new URL(request.url);
+    url.searchParams.delete('_rsc');
+    url.searchParams.delete('m');
+    return url.toString();
+  },
+};
+
 declare global {
   interface WorkerGlobalScope extends SerwistGlobalConfig {
     __SW_MANIFEST: (PrecacheEntry | string)[] | undefined;
@@ -39,6 +55,7 @@ const serwist = new Serwist({
       handler: new CacheFirst({
         cacheName: 'rsc',
         plugins: [
+          stripDynamicParams,
           new ExpirationPlugin({ maxEntries: 128, maxAgeSeconds: 30 * 24 * 60 * 60 }),
         ],
       }),
@@ -54,6 +71,7 @@ const serwist = new Serwist({
       handler: new CacheFirst({
         cacheName: 'others',
         plugins: [
+          stripDynamicParams,
           new ExpirationPlugin({ maxEntries: 64, maxAgeSeconds: 30 * 24 * 60 * 60 }),
         ],
       }),

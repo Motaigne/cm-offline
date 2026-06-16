@@ -100,6 +100,20 @@ async function waitForSWController(): Promise<boolean> {
   });
 }
 
+// Normalise une URL en strippant les query params dynamiques. DOIT correspondre
+// exactement au plugin `stripDynamicParams` du SW (sw.ts) — sinon les writes
+// précachePage et les reads CacheFirst utiliseraient des clés différentes
+// (= cache miss systématique offline). Strip : _rsc (variable par soft nav
+// Next.js) + m (mois, géré client-side depuis l'URL parsing).
+function stripDynamicCacheKey(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl, typeof window === 'undefined' ? 'http://localhost' : window.location.origin);
+    url.searchParams.delete('_rsc');
+    url.searchParams.delete('m');
+    return url.pathname + (url.search || '');
+  } catch { return rawUrl; }
+}
+
 // Pré-cache : HTML + chunks JS/CSS référencés.
 // Lit le body en string puis recrée la Response → évite les soucis de stream consumé.
 async function precachePage(url: string): Promise<boolean> {
@@ -125,7 +139,12 @@ async function precachePage(url: string): Promise<boolean> {
       statusText: 'OK',
       headers: { 'content-type': ct },
     });
-    await cache.put(url, cached);
+    // Stocke sous la clé normalisée (sans _rsc/m) : aligné avec le plugin SW
+    // stripDynamicParams qui normalise les reads CacheFirst pareil. Sans ça,
+    // précachePage('/?m=2026-06') écrit clé /?m=2026-06 et SW lookup
+    // /?m=2026-08 → strip → /  → MISS → erreur browser hors ligne.
+    const cacheKey = stripDynamicCacheKey(url);
+    await cache.put(cacheKey, cached);
 
     // Récupère tous les chunks JS/CSS référencés et les fait passer par le SW
     const resources = new Set<string>();
@@ -144,8 +163,8 @@ async function precachePage(url: string): Promise<boolean> {
       headers: { 'RSC': '1' },
     }).catch(() => {});
 
-    // Vérifie que la page est bien dans le cache
-    const verify = await cache.match(url);
+    // Vérifie que la page est bien dans le cache (clé normalisée).
+    const verify = await cache.match(cacheKey);
     return !!verify;
   } catch { return false; }
 }
@@ -157,14 +176,14 @@ async function clearAllCaches(): Promise<void> {
 }
 
 /** Confirme que toutes les URLs sont effectivement présentes dans le cache
- *  'others' (= celui que CacheFirst utilise pour les navigations). Sert
- *  d'indicateur visuel "OK pour kill l'app en garantissant cold-cold offline". */
+ *  'others' (= celui que CacheFirst utilise pour les navigations). Lookup avec
+ *  clés normalisées (cf. stripDynamicCacheKey), aligné avec le SW. */
 async function verifyPrecache(urls: string[]): Promise<boolean> {
   if (typeof caches === 'undefined') return false;
   try {
     const cache = await caches.open('others');
     for (const url of urls) {
-      const hit = await cache.match(url);
+      const hit = await cache.match(stripDynamicCacheKey(url));
       if (!hit) return false;
     }
     return true;
