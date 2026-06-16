@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 import { EmptyCacheBanner } from '@/app/components/empty-cache-banner';
+import { ErudaDebug } from '@/app/components/eruda-debug';
 
 const geistSans = Geist({ variable: '--font-geist-sans', subsets: ['latin'] });
 const geistMono = Geist_Mono({ variable: '--font-geist-mono', subsets: ['latin'] });
@@ -49,6 +50,9 @@ export default function RootLayout({
             fraichement vidé de restaurer une sauvegarde depuis n'importe
             quelle page, sans devoir d'abord atterrir sur /offline. */}
         <EmptyCacheBanner />
+        {/* Debug overlay activable via ?eruda=1 (persisté localStorage).
+            Permet d'inspecter console/network/IndexedDB sur iPad sans Mac. */}
+        <ErudaDebug />
         {children}
       </body>
     </html>
