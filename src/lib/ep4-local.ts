@@ -7,7 +7,7 @@
 //   - scénario A/B/C, spillovers M-1 dont end_date ≥ M
 //   - tri chrono par scenario
 
-import { db, loadAnnexeRowsLocal, loadTauxAppLocal } from '@/lib/local-db';
+import { db, loadAnnexeRowsLocal, loadTauxAppLocal, loadRawDetailLocal } from '@/lib/local-db';
 import { buildEp4Rotation, type PairingDetail, type TauxAppRow } from '@/lib/ep4';
 import type { IrMfRate } from '@/lib/ir-rates';
 import type { Ep4MonthResponse } from '@/app/actions/ep4';
@@ -64,18 +64,16 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4MonthRespo
     return draftMonth === prevMonth && it.end_date.slice(0, 7) >= month;
   });
 
-  // Index sig + instance depuis toutes les rotations cachées en Dexie.
+  // Index sig + instance depuis toutes les rotations cachées en Dexie (light,
+  // ~1 kB / sig — raw_detail est dans rotation_details, chargé à la demande).
   const allRotations = await db.rotations.toArray();
-  type SigSubset = { id: string; rotation_code: string; zone: string | null; raw_detail: PairingDetail | null };
+  type SigSubset = { id: string; rotation_code: string; zone: string | null };
   type InstSubset = { id: string; signature_id: string; depart_at: string | null; arrivee_at: string | null;
                       scheduled_begin_duty_at: string | null; scheduled_end_duty_at: string | null; };
   const sigById  = new Map<string, SigSubset>();
   const instById = new Map<string, InstSubset>();
-  let anyRawDetail = false;
   for (const sig of allRotations) {
-    const rd = (sig.raw_detail ?? null) as PairingDetail | null;
-    if (rd) anyRawDetail = true;
-    sigById.set(sig.id, { id: sig.id, rotation_code: sig.rotation_code ?? '', zone: sig.zone ?? null, raw_detail: rd });
+    sigById.set(sig.id, { id: sig.id, rotation_code: sig.rotation_code ?? '', zone: sig.zone ?? null });
     for (const inst of sig.instances) {
       instById.set(inst.id, {
         id: inst.id,
@@ -87,7 +85,18 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4MonthRespo
       });
     }
   }
-  if (!anyRawDetail) return null;
+  // Charge en bulk les raw_detail des sigs utilisés dans les flights filtrés.
+  const neededSigIds = new Set<string>();
+  for (const it of filteredItems) {
+    const inst = instById.get(it.pairing_instance_id as string);
+    if (inst) neededSigIds.add(inst.signature_id);
+  }
+  const detailRows = await db.rotation_details.bulkGet([...neededSigIds]);
+  const detailById = new Map<string, PairingDetail>();
+  for (const row of detailRows) {
+    if (row?.raw_detail) detailById.set(row.id, row.raw_detail as PairingDetail);
+  }
+  if (detailById.size === 0) return null;
 
   const annexeRows = await loadAnnexeRowsLocal();
   const tauxRows   = await loadTauxAppLocal();
@@ -110,7 +119,9 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4MonthRespo
     const inst = instById.get(it.pairing_instance_id as string);
     if (!inst) continue;
     const sig = sigById.get(inst.signature_id);
-    if (!sig?.raw_detail) continue;
+    if (!sig) continue;
+    const rawDetail = detailById.get(sig.id);
+    if (!rawDetail) continue;
 
     const briefMs = inst.scheduled_begin_duty_at ? new Date(inst.scheduled_begin_duty_at).getTime()
                    : inst.depart_at  ? new Date(inst.depart_at).getTime()  - MANEX_BRIEF_MS : null;
@@ -123,7 +134,7 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4MonthRespo
       : undefined;
 
     const ep4 = buildEp4Rotation(
-      sig.raw_detail,
+      rawDetail,
       sig.rotation_code,
       sig.zone,
       y, m, tauxRows, irRates, override,
@@ -163,19 +174,20 @@ export type Ep4DetailLocalResult =
   | Ep4DetailLocalFail;
 
 export async function loadEp4DetailLocal(sigId: string): Promise<Ep4DetailLocalResult> {
-  const sig = await db.rotations.get(sigId);
-  if (!sig) { console.warn('[ep4-local] sig absent en Dexie', sigId); return { reason: 'sig-absent' }; }
-  if (!sig.raw_detail) { console.warn('[ep4-local] raw_detail manquant pour sig', sigId, sig.rotation_code); return { reason: 'raw-detail-absent' }; }
-  const [annexeRows, taux] = await Promise.all([
+  const [sig, rawDetail, annexeRows, taux] = await Promise.all([
+    db.rotations.get(sigId),
+    loadRawDetailLocal(sigId),
     loadAnnexeRowsLocal(),
     loadTauxAppLocal(),
   ]);
+  if (!sig) { console.warn('[ep4-local] sig absent en Dexie', sigId); return { reason: 'sig-absent' }; }
+  if (!rawDetail) { console.warn('[ep4-local] raw_detail manquant pour sig', sigId, sig.rotation_code); return { reason: 'raw-detail-absent' }; }
   // ir_mf_rates : pas de contexte mois ici — on prend la version la plus récente.
   const latestIr = annexeRows
     .filter(r => r.slug === 'ir_mf_rates')
     .sort((a, b) => b.valid_from.localeCompare(a.valid_from))[0];
   return {
-    raw_detail: sig.raw_detail as PairingDetail,
+    raw_detail: rawDetail as PairingDetail,
     taux:       taux as TauxAppRow[],
     irRates:    ((latestIr?.data ?? []) as IrMfRate[]),
   };

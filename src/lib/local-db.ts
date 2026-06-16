@@ -35,7 +35,16 @@ export interface A81YearDataLocal {
   plafond_exo_brut: number | null;
 }
 
-type StoredRotation = RotationSignature & { target_month: string };
+/** Rotation stockée en Dexie SANS raw_detail (gros payload, ~5 kB / sig).
+ *  raw_detail est dans `rotation_details` table séparée. Sinon les reads
+ *  type `db.rotations.toArray()` de `loadShellData` chargeaient ~12 MB de
+ *  JSON par mount → calendrier hang 10-30s sur iPad. */
+type StoredRotation = Omit<RotationSignature, 'raw_detail'> & { target_month: string };
+/** raw_detail dans une table dédiée, lookup à la demande par sigId. */
+interface StoredRotationDetail {
+  id: string;            // = sig.id
+  raw_detail: unknown;
+}
 
 /** Row taux_app stockée en Dexie. Clé primaire composite `rot_code|min|max`. */
 type StoredTauxAppRow = TauxAppRow & { key: string };
@@ -76,6 +85,7 @@ class CmDatabase extends Dexie {
   items!:            Table<StoredItem,         string>;
   sync_queue!:       Table<SyncOp,             number>;
   rotations!:        Table<StoredRotation,     string>;
+  rotation_details!: Table<StoredRotationDetail, string>; // PK = sig.id
   releases!:         Table<StoredRelease,      string>;
   notes!:            Table<UserNote,           string>;
   profile_versions!: Table<ProfileVersion,     string>; // PK = valid_from (user_id implicite)
@@ -119,6 +129,27 @@ class CmDatabase extends Dexie {
     // v8 : table taux_app (brackets AF rot_code → taux) — utilisée par EP4 offline
     this.version(8).stores({
       taux_app: 'key, rot_code',
+    });
+    // v9 : raw_detail extrait dans rotation_details (table dédiée). La table
+    // rotations garde tout sauf raw_detail (économie ~5 kB / sig × N sigs = ~12 MB
+    // de JSON sur cache complète) → loadShellData reste rapide même avec EP4
+    // offline complet activé.
+    this.version(9).stores({
+      rotation_details: 'id',
+    }).upgrade(async tx => {
+      // Migration : extrait raw_detail de toutes les rows existantes vers la
+      // nouvelle table, puis nettoie le champ sur la rotation. Cf StoredRotation
+      // qui ne le déclare plus.
+      const rotations = await tx.table('rotations').toArray();
+      const details: StoredRotationDetail[] = [];
+      for (const r of rotations) {
+        if (r.raw_detail) {
+          details.push({ id: r.id, raw_detail: r.raw_detail });
+          delete r.raw_detail;
+        }
+      }
+      if (details.length) await tx.table('rotation_details').bulkPut(details);
+      if (rotations.length) await tx.table('rotations').bulkPut(rotations);
     });
   }
 }
@@ -360,33 +391,57 @@ const CACHE_ROTATIONS_CHUNK = 10;
 
 export async function cacheRotations(sigs: RotationSignature[], month: string): Promise<void> {
   if (sigs.length === 0) {
-    await db.transaction('rw', db.rotations, async () => {
+    await db.transaction('rw', db.rotations, db.rotation_details, async () => {
+      const toDelete = await db.rotations.where('target_month').equals(month).primaryKeys();
       await db.rotations.where('target_month').equals(month).delete();
+      if (toDelete.length) await db.rotation_details.bulkDelete(toDelete);
     });
     return;
   }
-  const stamped = sigs.map(s => ({ ...s, target_month: month }));
+  // Split en 2 : rotation light (sans raw_detail) → db.rotations
+  //               et detail (id + raw_detail) → db.rotation_details
+  const lightRows: StoredRotation[] = [];
+  const detailRows: StoredRotationDetail[] = [];
+  for (const s of sigs) {
+    const { raw_detail, ...light } = s;
+    lightRows.push({ ...light, target_month: month });
+    if (raw_detail) detailRows.push({ id: s.id, raw_detail });
+  }
   const newIds = new Set(sigs.map(s => s.id));
   // Upsert par batches — chaque batch dans sa propre transaction pour libérer
   // le rw lock entre deux. Les reads peuvent s'intercaler proprement.
-  for (let i = 0; i < stamped.length; i += CACHE_ROTATIONS_CHUNK) {
-    const batch = stamped.slice(i, i + CACHE_ROTATIONS_CHUNK);
-    await db.transaction('rw', db.rotations, async () => {
-      await db.rotations.bulkPut(batch);
+  for (let i = 0; i < lightRows.length; i += CACHE_ROTATIONS_CHUNK) {
+    const batchLight  = lightRows.slice(i, i + CACHE_ROTATIONS_CHUNK);
+    const batchDetail = detailRows.slice(i, i + CACHE_ROTATIONS_CHUNK);
+    await db.transaction('rw', db.rotations, db.rotation_details, async () => {
+      await db.rotations.bulkPut(batchLight);
+      if (batchDetail.length) await db.rotation_details.bulkPut(batchDetail);
     });
   }
   // Cleanup : retire les sigs orphelins (anciens ids pour ce mois pas remplacés
-  // par la nouvelle liste). Indispensable sinon des sigs zombies traînent.
-  await db.transaction('rw', db.rotations, async () => {
-    await db.rotations.where('target_month').equals(month)
+  // par la nouvelle liste) + leurs raw_detail associés.
+  await db.transaction('rw', db.rotations, db.rotation_details, async () => {
+    const stale = await db.rotations.where('target_month').equals(month)
       .filter(r => !newIds.has(r.id))
-      .delete();
+      .primaryKeys();
+    if (stale.length) {
+      await db.rotations.bulkDelete(stale);
+      await db.rotation_details.bulkDelete(stale);
+    }
   });
 }
 
 export async function loadRotationsFromDB(month: string): Promise<RotationSignature[]> {
   const stored = await db.rotations.where('target_month').equals(month).toArray();
+  // raw_detail n'est plus inclus ici (split en table séparée). Si un consumer
+  // en a besoin (EP4 detail), il doit appeler loadRawDetailLocal(sigId).
   return stored.map(({ target_month: _t, ...sig }) => sig as RotationSignature);
+}
+
+/** Récupère raw_detail pour un sig depuis la table séparée. Null si absent. */
+export async function loadRawDetailLocal(sigId: string): Promise<unknown | null> {
+  const row = await db.rotation_details.get(sigId);
+  return row?.raw_detail ?? null;
 }
 
 // ─── Cache taux_app (brackets AF — utilisé par EP4) ───────────────────────────

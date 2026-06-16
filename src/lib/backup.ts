@@ -256,15 +256,35 @@ export interface DatabaseImportSummary {
 }
 
 /** Restaure intégralement le cache catalogue (rotations, releases, annexe).
- *  Les tables perso (drafts/items/notes/...) ne sont PAS touchées. */
+ *  Les tables perso (drafts/items/notes/...) ne sont PAS touchées.
+ *
+ *  Compat schema v9 : le format historique stockait raw_detail dans la row
+ *  rotations. On split sur import → rotations (light) + rotation_details
+ *  (raw_detail). Les backups exportés post-v9 n'ont déjà plus raw_detail
+ *  dans rotations, donc rien à split. */
 export async function importDatabase(backup: DatabaseBackupFile): Promise<DatabaseImportSummary> {
-  await db.transaction('rw', db.rotations, db.releases, db.annexe_rows, async () => {
+  type RawRotation = { id: string; raw_detail?: unknown } & Record<string, unknown>;
+  const rawRotations = backup.rotations as RawRotation[];
+  const lightRotations: RawRotation[] = [];
+  const details: { id: string; raw_detail: unknown }[] = [];
+  for (const r of rawRotations) {
+    if (r.raw_detail) {
+      details.push({ id: r.id, raw_detail: r.raw_detail });
+      const { raw_detail: _, ...rest } = r;
+      lightRotations.push(rest as RawRotation);
+    } else {
+      lightRotations.push(r);
+    }
+  }
+  await db.transaction('rw', db.rotations, db.rotation_details, db.releases, db.annexe_rows, async () => {
     await Promise.all([
       db.rotations.clear(),
+      db.rotation_details.clear(),
       db.releases.clear(),
       db.annexe_rows.clear(),
     ]);
-    if (backup.rotations.length)   await db.rotations.bulkPut(backup.rotations);
+    if (lightRotations.length)     await db.rotations.bulkPut(lightRotations as never);
+    if (details.length)            await db.rotation_details.bulkPut(details);
     if (backup.releases.length)    await db.releases.bulkPut(backup.releases);
     if (backup.annexe_rows.length) await db.annexe_rows.bulkPut(backup.annexe_rows);
   });
