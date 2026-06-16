@@ -15,7 +15,7 @@ const SESSION_LOST_THROTTLE_MS = 5 * 60 * 1000;
 // getUser() serveur sur ces routes — économie d'un RTT Supabase au boot ET
 // suppression d'une dépendance réseau qui fait écran blanc sur wifi captif
 // quand le SW n'a pas encore intercepté la requête (premier visit post-deploy).
-const SHELL_ROUTES = new Set(['/', '/login', '/onboarding', '/setup-password']);
+const SHELL_ROUTES = new Set(['/', '/login', '/onboarding', '/setup-password', '/comparatif']);
 
 export async function updateSession(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
