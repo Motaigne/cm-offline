@@ -359,11 +359,6 @@ export async function getCachedMonths(): Promise<string[]> {
 const CACHE_ROTATIONS_CHUNK = 10;
 
 export async function cacheRotations(sigs: RotationSignature[], month: string): Promise<void> {
-  // Diag Eruda : combien de sigs reçus ont raw_detail. Si 0/N, c'est que la
-  // server action `getRotationsForMonth` ne renvoie pas raw_detail (peut-être
-  // build pas redéployé, ou stripping de Next.js sur grosse payload).
-  const withRD = sigs.filter(s => !!s.raw_detail).length;
-  console.warn(`[cacheRotations] ${month} : ${sigs.length} sigs, ${withRD} avec raw_detail`);
   if (sigs.length === 0) {
     await db.transaction('rw', db.rotations, async () => {
       await db.rotations.where('target_month').equals(month).delete();

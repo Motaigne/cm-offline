@@ -413,7 +413,10 @@ export function NavBar() {
     };
     try {
       setSyncStatus('pull');
-      // Cache profil + annexe + A81 versionnés en parallèle (légers, < 50KB).
+      // Cache profil + annexe + A81 versionnés + taux_app en parallèle
+      // (légers, < 50KB chacun). taux_app indispensable pour EP4 offline
+      // (`loadEp4DetailLocal` retourne null sans, → tableau champ/valeur
+      // limité à la ligne Rotation).
       void withTimeout(loadAllProfileVersions(), 5000, [], { label: 'profileVersions', onError: captureErr('profileVersions') })
         .then(v => cacheProfileVersions(v)).catch(() => {});
       void withTimeout(loadAllAnnexeRows(), 5000, [], { label: 'annexeRows', onError: captureErr('annexeRows') })
@@ -422,6 +425,8 @@ export function NavBar() {
         .then(o => cacheA81Overrides(o)).catch(() => {});
       void withTimeout(loadAllA81YearData(), 5000, [], { label: 'a81YearData', onError: captureErr('a81YearData') })
         .then(y => cacheA81YearData(y)).catch(() => {});
+      void withTimeout(getTauxApp(), 5000, [], { label: 'tauxApp', onError: captureErr('tauxApp') })
+        .then(t => cacheTauxApp(t)).catch(() => {});
       const ready = await waitForSWController();
       if (ready) {
         const months = await withTimeout(getAvailableMonths(), 8000, [] as AvailableMonth[], { label: 'availableMonths', onError: captureErr('availableMonths') });
