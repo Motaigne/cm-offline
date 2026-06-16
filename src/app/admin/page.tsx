@@ -4,6 +4,7 @@ import { NavBar } from '@/app/components/nav';
 import { WhitelistClient } from './whitelist/whitelist-client';
 import { OutilsClient } from './outils/outils-client';
 import { listFictiveSnapshots } from '@/app/actions/admin-projection';
+import { ErudaToggle } from './eruda-toggle';
 
 export default async function AdminPage() {
   const supabase = await createClient();
@@ -55,6 +56,17 @@ export default async function AdminPage() {
             latestRealMonth={latestReal?.target_month?.slice(0, 7) ?? null}
             fictives={fictives}
           />
+        </section>
+
+        <section className="space-y-3">
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Debug</h2>
+            <p className="text-xs text-zinc-400 mt-0.5">
+              Eruda : console JS overlay pour inspecter network/IndexedDB sur
+              iPad PWA sans Mac. Persisté localStorage de l'instance.
+            </p>
+          </div>
+          <ErudaToggle />
         </section>
 
         <section className="space-y-3">
