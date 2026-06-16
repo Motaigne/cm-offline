@@ -33,6 +33,11 @@ const PAGES = ['/', '/ep4', '/catalogue', '/comparatif', '/a81', '/annexe', '/pr
 // Pages qui acceptent ?m=YYYY-MM — à précacher en variantes par mois
 const PAGES_MONTH = ['/', '/ep4', '/catalogue', '/comparatif'];
 const DL_KEY = 'cm-last-download';
+/** Flag sessionStorage : "le priming Dexie a déjà tourné dans cette session
+ *  de PWA". Évite de re-fetcher/re-cacher les rotations à chaque page-mount.
+ *  Auto-remis à zéro quand l'onglet/PWA est tué (sessionStorage isolé par
+ *  contexte). */
+const PRIMING_DONE_KEY = 'cm-priming-done';
 
 // Mode de sync sélective. Lite (défaut) = m + 3 mois suivants en intégralité +
 // mois antérieurs filtrés sur les vols posés (drafts A/B/C). Perso = l'user
@@ -263,35 +268,51 @@ export function NavBar() {
         const targets: string[] = [...PAGES];
         for (const p of PAGES_MONTH) targets.push(`${p}?m=${currentMonth}`);
         for (const url of targets) { void precachePage(url); }
-
-        // Hydrate Dexie pour le mois courant : sans ça, premier offline après
-        // login = calendrier vide (loadScenariosForMonth retourne null tant
-        // que l'user n'a pas cliqué Sync). Best-effort, silencieux, parallèle.
-        void (async () => {
-          try {
-            const [scs, rots] = await Promise.all([
-              withTimeout(getScenariosWithItems(currentMonth), 8000, [] as Awaited<ReturnType<typeof getScenariosWithItems>>),
-              withTimeout(getRotationsForMonth(currentMonth, 'full'), 12000, [] as Awaited<ReturnType<typeof getRotationsForMonth>>),
-            ]);
-            await Promise.all([
-              scs.length ? hydrateDB(scs, currentMonth) : Promise.resolve(),
-              rots.length ? cacheRotations(rots, currentMonth) : Promise.resolve(),
-            ]);
-          } catch { /* silencieux : Sync explicite ré-essaiera */ }
-        })();
       }
     })();
     void getCurrentUserIsAdmin().then(setIsAdmin).catch(() => setIsAdmin(false));
     void pendingOpsCount().then(setPendingCount);
-    // Pré-cache silencieux profil + annexe + overrides A81 + year data A81
-    // (offline pour A81 + finBase calendrier).
-    if (typeof navigator !== 'undefined' && navigator.onLine) {
+
+    // ─── Priming Dexie ──────────────────────────────────────────────────────
+    // Gardé "une fois par session de PWA" : sessionStorage flag. Sans ça, chaque
+    // page-mount remonte NavBar → re-déclenche le priming → cacheRotations en
+    // boucle → rw lock sur db.rotations qui bloque les reads du calendrier
+    // (= page blanche "Chargement…" quand on navigue profil → /). Cf bug
+    // observé 2026-06-17 (B). Déferré via requestIdleCallback pour ne PAS
+    // tourner en plein milieu d'une transition de route.
+    if (typeof window === 'undefined' || !navigator.onLine) return;
+    if (sessionStorage.getItem(PRIMING_DONE_KEY) === '1') return;
+
+    const runPriming = () => {
+      sessionStorage.setItem(PRIMING_DONE_KEY, '1');
+      const currentMonth = localStorage.getItem('cm-selected-month')
+        ?? new Date().toISOString().slice(0, 7);
+      // Hydrate Dexie pour le mois courant : sans ça, premier offline après
+      // login = calendrier vide (loadScenariosForMonth retourne null tant
+      // que l'user n'a pas cliqué Sync).
+      void (async () => {
+        try {
+          const [scs, rots] = await Promise.all([
+            withTimeout(getScenariosWithItems(currentMonth), 8000, [] as Awaited<ReturnType<typeof getScenariosWithItems>>),
+            withTimeout(getRotationsForMonth(currentMonth, 'full'), 12000, [] as Awaited<ReturnType<typeof getRotationsForMonth>>),
+          ]);
+          if (scs.length) await hydrateDB(scs, currentMonth);
+          if (rots.length) await cacheRotations(rots, currentMonth);
+        } catch { /* silencieux : Sync explicite ré-essaiera */ }
+      })();
+      // Pré-cache silencieux profil + annexe + overrides A81 + year data A81
+      // (offline pour A81 + finBase calendrier) + taux_app (offline pour EP4).
       void loadAllProfileVersions().then(v => cacheProfileVersions(v)).catch(() => {});
       void loadAllAnnexeRows().then(r => cacheAnnexeRows(r)).catch(() => {});
       void loadAllA81Overrides().then(o => cacheA81Overrides(o)).catch(() => {});
       void loadAllA81YearData().then(y => cacheA81YearData(y)).catch(() => {});
       void getTauxApp().then(t => cacheTauxApp(t)).catch(() => {});
-    }
+    };
+
+    type RIC = (cb: () => void, opts?: { timeout: number }) => number;
+    const ric = (window as unknown as { requestIdleCallback?: RIC }).requestIdleCallback;
+    if (typeof ric === 'function') ric(runPriming, { timeout: 3000 });
+    else setTimeout(runPriming, 600);
   }, []);
 
   // Refresh badge quand une op est enqueued ou syncée.

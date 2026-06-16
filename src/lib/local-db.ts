@@ -340,11 +340,28 @@ export async function getCachedMonths(): Promise<string[]> {
 
 // ─── Cache rotations (panneau de recherche) ───────────────────────────────────
 
+/** Chunke le bulkPut des sigs (raw_detail = ~5 kB / sig, ~50 sigs / mois →
+ *  payload conséquent). Sans chunking, le rw lock sur db.rotations peut
+ *  bloquer plusieurs secondes les reads `db.rotations.toArray()` faits en
+ *  parallèle par `loadShellData` du calendrier → page blanche "Chargement…"
+ *  visible quand le user navigue /profil → / pendant un priming. */
+const CACHE_ROTATIONS_CHUNK = 10;
+
 export async function cacheRotations(sigs: RotationSignature[], month: string): Promise<void> {
+  // Suppression rapide en première transaction.
   await db.transaction('rw', db.rotations, async () => {
     await db.rotations.where('target_month').equals(month).delete();
-    await db.rotations.bulkPut(sigs.map(s => ({ ...s, target_month: month })));
   });
+  if (sigs.length === 0) return;
+  const stamped = sigs.map(s => ({ ...s, target_month: month }));
+  // Ecritures par batch — chaque batch dans sa propre transaction pour libérer
+  // le rw lock entre deux. Les reads peuvent s'intercaler proprement.
+  for (let i = 0; i < stamped.length; i += CACHE_ROTATIONS_CHUNK) {
+    const batch = stamped.slice(i, i + CACHE_ROTATIONS_CHUNK);
+    await db.transaction('rw', db.rotations, async () => {
+      await db.rotations.bulkPut(batch);
+    });
+  }
 }
 
 export async function loadRotationsFromDB(month: string): Promise<RotationSignature[]> {

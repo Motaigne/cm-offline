@@ -167,11 +167,31 @@ export function ComparatifClient({
     window.history.replaceState(null, '', `/comparatif?m=${m}`);
     setLoading(true);
     try {
-      // IDB d'abord (offline-first) — réseau seulement si IDB vide
+      // IDB d'abord (offline-first). Pattern stale-while-revalidate : si on a
+      // une cache + on est online → on l'affiche tout de suite ET on refetch en
+      // background pour mettre à jour Dexie + UI (sinon une cache d'avant
+      // commit 45af2dd qui n'a pas `raw_detail` ne se met jamais à jour → le
+      // tableau champ/valeur du détail reste limité à la ligne Rotation).
       const cached = await loadRotationsFromDB(m);
+      const hasStaleCache = cached.length > 0 && cached.some(s => !s.raw_detail);
       if (cached.length > 0) {
         setSigs(cached.map(rotToSig));
         setFromCache(true);
+        setLoading(false);
+        if (navigator.onLine) {
+          // Background refresh — silencieux, update UI quand ça arrive.
+          void Promise.race([
+            getRotationsForMonth(m),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('rotations timeout')), 10_000)),
+          ])
+            .then(data => {
+              setSigs(data.map(rotToSig));
+              setFromCache(!hasStaleCache); // si la cache était fraîche, on reste "fromCache"
+              return cacheRotations(data, m);
+            })
+            .catch(() => { /* on garde la cache locale */ });
+        }
       } else if (navigator.onLine) {
         // Timeout 10s — sur SIM/captif, navigator.onLine=true mais le fetch
         // hang. Sans timeout, loadingMonth reste figé et l'UI peut se bloquer.
