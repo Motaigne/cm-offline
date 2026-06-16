@@ -12,6 +12,18 @@ export type Ep4DetailResponse =
   | { raw_detail: PairingDetail; taux: TauxAppRow[]; irRates: IrMfRate[] }
   | { error: string };
 
+/** Lecture brute de la table taux_app (brackets AF rot_code → taux).
+ *  Utilisée par le pré-cache Dexie pour EP4 offline. */
+export async function getTauxApp(): Promise<TauxAppRow[]> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return [];
+  const { data } = await supabase
+    .from('taux_app')
+    .select('rot_code, duree_min_h, duree_max_h, taux');
+  return (data ?? []) as TauxAppRow[];
+}
+
 /** Charge le raw_detail JSONB d'une signature + la table taux_app + ir_mf_rates
  *  pour alimenter buildEp4Rotation côté client. Auth user requis. */
 export async function getEp4Detail(sigId: string): Promise<Ep4DetailResponse> {

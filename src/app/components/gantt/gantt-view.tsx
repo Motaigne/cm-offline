@@ -3137,7 +3137,7 @@ export function GanttView({
             }}
           >
             <div className="text-[9px] font-bold text-zinc-400 uppercase tracking-wide mb-2">
-              Détail — Scénario {detailPanel.name}
+              Détail — Scénario {detailPanel.name} <span className="text-zinc-400 normal-case font-normal">(PVEI = {detailPanel.pveiEff.toFixed(2)})</span>
             </div>
 
             {/* FIXE / PV / HS */}

@@ -5,6 +5,7 @@ import type { UserNote } from '@/app/actions/notes';
 import type { ProfileVersion } from '@/app/actions/profile-version';
 import type { AnnexeRow } from '@/lib/annexe';
 import type { A81OverrideLocal } from '@/lib/a81-local';
+import type { TauxAppRow } from '@/lib/ep4';
 import { computeEffectiveRpc } from '@/lib/rpc';
 
 interface StoredDraft {
@@ -35,6 +36,12 @@ export interface A81YearDataLocal {
 }
 
 type StoredRotation = RotationSignature & { target_month: string };
+
+/** Row taux_app stockée en Dexie. Clé primaire composite `rot_code|min|max`. */
+type StoredTauxAppRow = TauxAppRow & { key: string };
+function tauxAppKey(r: TauxAppRow): string {
+  return `${r.rot_code}|${r.duree_min_h}|${r.duree_max_h}`;
+}
 
 /** Release locale chiffrée (point A2). */
 export interface StoredRelease {
@@ -75,6 +82,7 @@ class CmDatabase extends Dexie {
   annexe_rows!:      Table<StoredAnnexeRow,    string>; // PK = `${slug}|${valid_from}`
   a81_overrides!:    Table<A81OverrideLocal,   string>; // PK = pairing_instance_id
   a81_year_data!:    Table<A81YearDataLocal,   number>; // PK = year
+  taux_app!:         Table<StoredTauxAppRow,   string>; // PK = `${rot_code}|${min_h}|${max_h}`
 
   constructor() {
     super('optip');
@@ -107,6 +115,10 @@ class CmDatabase extends Dexie {
     // v7 : données année A81 (plafond exo brut saisi par user)
     this.version(7).stores({
       a81_year_data: 'year',
+    });
+    // v8 : table taux_app (brackets AF rot_code → taux) — utilisée par EP4 offline
+    this.version(8).stores({
+      taux_app: 'key, rot_code',
     });
   }
 }
@@ -338,6 +350,20 @@ export async function cacheRotations(sigs: RotationSignature[], month: string): 
 export async function loadRotationsFromDB(month: string): Promise<RotationSignature[]> {
   const stored = await db.rotations.where('target_month').equals(month).toArray();
   return stored.map(({ target_month: _t, ...sig }) => sig as RotationSignature);
+}
+
+// ─── Cache taux_app (brackets AF — utilisé par EP4) ───────────────────────────
+
+export async function cacheTauxApp(rows: TauxAppRow[]): Promise<void> {
+  await db.transaction('rw', db.taux_app, async () => {
+    await db.taux_app.clear();
+    if (rows.length) await db.taux_app.bulkPut(rows.map(r => ({ ...r, key: tauxAppKey(r) })));
+  });
+}
+
+export async function loadTauxAppLocal(): Promise<TauxAppRow[]> {
+  const stored = await db.taux_app.toArray();
+  return stored.map(({ key: _k, ...r }) => r as TauxAppRow);
 }
 
 // ─── Notes utilisateur (cross-scénario) ───────────────────────────────────────

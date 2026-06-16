@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { NavBar } from '@/app/components/nav';
 import { Ep4HoraireEP4Consolidee, Ep4DecompteEP4Consolidee, Ep4FraisEP4Consolidee } from '@/app/components/ep4-tables';
 import { getEp4ForMonth, type Ep4MonthResponse } from '@/app/actions/ep4';
+import { loadEp4ForMonthLocal } from '@/lib/ep4-local';
 
 type ScenarioName = 'A' | 'B' | 'C';
 type ViewName = 'horaire' | 'decompte' | 'frais';
@@ -38,24 +39,54 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
     let cancelled = false;
     cancelRef.current = () => { cancelled = true; };
 
-    if (!navigator.onLine) {
-      setError('offline'); setLoading(false); setData(null);
-      return;
-    }
     setLoading(true); setError(null); setData(null);
     window.history.replaceState(null, '', `/ep4?m=${m}`);
     localStorage.setItem('cm-selected-month', m);
 
-    getEp4ForMonth(m)
+    let localOk = false;
+    const applyData = (res: Ep4MonthResponse) => {
+      if (cancelled) return;
+      setData(res);
+      const first = res.scenarios.find(s => s.flights.length > 0);
+      if (first) setScenario(first.name);
+    };
+
+    // 1. Lecture Dexie d'abord (raw_detail + taux_app pré-cachés au sync).
+    //    Si OK → on affiche tout de suite, l'UI ne dépend pas du réseau.
+    void loadEp4ForMonthLocal(m).then(local => {
+      if (cancelled || !local) return;
+      localOk = true;
+      applyData(local);
+      setLoading(false);
+    }).catch(() => { /* on tombera dans le path serveur ci-dessous */ });
+
+    // 2. Refresh background depuis le serveur (timeout 10s pour rester réactif
+    //    sur captif/SIM — sinon l'auto-fetch peut hanger). Si offline et pas de
+    //    cache → on affiche le message offline en fin de tick.
+    if (!navigator.onLine) {
+      // Laisse au .then() Dexie une frame pour résoudre avant d'afficher l'offline.
+      queueMicrotask(() => {
+        if (cancelled) return;
+        if (!localOk) { setError('offline'); setLoading(false); }
+      });
+      return;
+    }
+    Promise.race([
+      getEp4ForMonth(m),
+      new Promise<{ error: string }>(r => setTimeout(() => r({ error: 'timeout' }), 10_000)),
+    ])
       .then(res => {
         if (cancelled) return;
-        if ('error' in res) { setError(res.error); return; }
-        setData(res);
-        const first = res.scenarios.find(s => s.flights.length > 0);
-        if (first) setScenario(first.name);
+        if ('error' in res) {
+          if (!localOk) setError(res.error === 'timeout' ? 'offline' : res.error);
+          return;
+        }
+        applyData(res);
+        setError(null);
       })
       .catch(e => {
         if (cancelled) return;
+        if (localOk) return;
         if (e instanceof TypeError) setError('offline');
         else setError(String(e));
       })

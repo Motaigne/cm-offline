@@ -8,7 +8,8 @@ import { getCurrentUserIsAdmin } from '@/app/actions/auth';
 import { loadAllProfileVersions } from '@/app/actions/profile-version';
 import { loadAllAnnexeRows } from '@/app/actions/annexe';
 import { loadAllA81Overrides, loadAllA81YearData } from '@/app/actions/a81';
-import { cacheRotations, hydrateDB, cacheProfileVersions, cacheAnnexeRows, cacheA81Overrides, cacheA81YearData } from '@/lib/local-db';
+import { getTauxApp } from '@/app/actions/ep4';
+import { cacheRotations, hydrateDB, cacheProfileVersions, cacheAnnexeRows, cacheA81Overrides, cacheA81YearData, cacheTauxApp } from '@/lib/local-db';
 import { syncNow, pendingOpsCount, PENDING_CHANGED_EVENT } from '@/lib/sync-service';
 import {
   downloadPlanning, downloadDatabase,
@@ -20,8 +21,8 @@ import { useOnlineStatus } from '@/hooks/use-online';
 const TABS: { label: string; href: string; offlineDisabled?: boolean }[] = [
   { label: 'Profil',      href: '/profil'     },
   { label: 'Calendrier',  href: '/'           },
-  // EP4 nécessite des calculs server-side (raw_detail) — pas dispo offline.
-  { label: 'EP4',         href: '/ep4',         offlineDisabled: true },
+  // EP4 offline-first depuis 2026-06-17 (raw_detail + taux_app cachés en Dexie).
+  { label: 'EP4',         href: '/ep4'        },
   { label: 'Catalogue',   href: '/catalogue'  },
   { label: 'Comparatif',  href: '/comparatif' },
   { label: 'A81',         href: '/a81'        },
@@ -289,6 +290,7 @@ export function NavBar() {
       void loadAllAnnexeRows().then(r => cacheAnnexeRows(r)).catch(() => {});
       void loadAllA81Overrides().then(o => cacheA81Overrides(o)).catch(() => {});
       void loadAllA81YearData().then(y => cacheA81YearData(y)).catch(() => {});
+      void getTauxApp().then(t => cacheTauxApp(t)).catch(() => {});
     }
   }, []);
 

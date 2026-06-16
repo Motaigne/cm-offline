@@ -6,6 +6,7 @@ import { getRotationsForMonth } from '@/app/actions/search';
 import { cacheRotations, loadRotationsFromDB, getCachedMonths } from '@/lib/local-db';
 import type { RotationSignature } from '@/app/actions/search';
 import { getEp4Detail } from '@/app/actions/ep4';
+import { loadEp4DetailLocal } from '@/lib/ep4-local';
 import { buildEp4Rotation } from '@/lib/ep4';
 import type { Ep4Rotation, PairingDetail, TauxAppRow } from '@/lib/ep4';
 import type { IrMfRate } from '@/lib/ir-rates';
@@ -251,11 +252,20 @@ export function ComparatifClient({
   useEffect(() => {
     if (!sigId) { setEp4Data(null); return; }
     let cancelled = false;
+    let localOk = false;
     setEp4Ld(true); setEp4Data(null);
-    // Timeout 10s — sur SIM/captif, le server action hang indéfiniment et fige
-    // ep4Loading=true (= "Chargement…" perpetuel dans le tableau EP4, parfois
-    // le main thread iOS coince et même Eruda devient muet). Avec timeout on
-    // sort proprement et l'utilisateur voit juste la ligne Rotation.
+    // 1. Tente Dexie d'abord : si raw_detail+taux sont cachés, EP4 dispo offline.
+    void loadEp4DetailLocal(sigId).then(local => {
+      if (cancelled || !local || 'error' in local) return;
+      localOk = true;
+      setEp4Data({ raw_detail: local.raw_detail, taux: local.taux, irRates: local.irRates });
+      setEp4Ld(false);
+    }).catch(() => {});
+    // 2. Refresh background depuis le serveur (timeout 10s — cf. SIM/captif).
+    if (!navigator.onLine) {
+      queueMicrotask(() => { if (!cancelled && !localOk) setEp4Ld(false); });
+      return () => { cancelled = true; };
+    }
     Promise.race([
       getEp4Detail(sigId),
       new Promise<{ error: string }>((resolve) =>
@@ -265,7 +275,7 @@ export function ComparatifClient({
         if (cancelled || 'error' in res) return;
         setEp4Data({ raw_detail: res.raw_detail, taux: res.taux, irRates: res.irRates });
       })
-      .catch(() => { /* silencieux : les lignes EP4 afficheront '—' */ })
+      .catch(() => { /* silencieux : les lignes EP4 afficheront '—' si pas de cache */ })
       .finally(() => { if (!cancelled) setEp4Ld(false); });
     return () => { cancelled = true; };
   }, [sigId]);

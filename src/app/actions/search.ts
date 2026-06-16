@@ -86,6 +86,10 @@ export type RotationSignature = {
   missing_rate_escales: string[];
   /** True si la signature appartient à un snapshot fictif (projection admin). */
   is_fictive?: boolean;
+  /** Payload pairing brut renvoyé par CrewBidd. Embarqué dans la signature pour
+   *  permettre le calcul EP4 et le panneau Metadata complets en offline-first.
+   *  ~1–5 KB JSON / sig. Null si signature pre-mig 0031 sans capture. */
+  raw_detail?: PairingDetail | null;
 };
 
 export interface AvailableMonth { month: string; is_fictive: boolean; }
@@ -212,11 +216,11 @@ export async function getRotationsForMonth(
   const sigMap = new Map<string, RotationSignature>();
   for (const s of sigs) {
     const irMf = irMfBySig.get(s.id);
-    // raw_detail n'est pas exposé au client (lourd) — on ne garde que l'IR/MF calculé.
-    const { raw_detail: _rd, ...rest } = s;
-    void _rd;
+    // raw_detail embarqué dans la signature (mig 0031 + session 2026-06-17) pour
+    // permettre EP4 + Metadata offline-first. ~1–5 kB / sig × ~30–50 sigs / mois.
     sigMap.set(s.id, {
-      ...rest,
+      ...s,
+      raw_detail:     (s.raw_detail ?? null) as PairingDetail | null,
       rotation_code:  s.rotation_code ?? '',
       hc:             Number(s.hc),
       hcr_crew:       Number(s.hcr_crew),
