@@ -172,7 +172,13 @@ export function ComparatifClient({
         setSigs(cached.map(rotToSig));
         setFromCache(true);
       } else if (navigator.onLine) {
-        const data = await getRotationsForMonth(m);
+        // Timeout 10s — sur SIM/captif, navigator.onLine=true mais le fetch
+        // hang. Sans timeout, loadingMonth reste figé et l'UI peut se bloquer.
+        const data = await Promise.race([
+          getRotationsForMonth(m),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('rotations timeout')), 10_000)),
+        ]);
         setSigs(data.map(rotToSig));
         void cacheRotations(data, m);
       } else {
@@ -246,7 +252,15 @@ export function ComparatifClient({
     if (!sigId) { setEp4Data(null); return; }
     let cancelled = false;
     setEp4Ld(true); setEp4Data(null);
-    getEp4Detail(sigId)
+    // Timeout 10s — sur SIM/captif, le server action hang indéfiniment et fige
+    // ep4Loading=true (= "Chargement…" perpetuel dans le tableau EP4, parfois
+    // le main thread iOS coince et même Eruda devient muet). Avec timeout on
+    // sort proprement et l'utilisateur voit juste la ligne Rotation.
+    Promise.race([
+      getEp4Detail(sigId),
+      new Promise<{ error: string }>((resolve) =>
+        setTimeout(() => resolve({ error: 'timeout' }), 10_000)),
+    ])
       .then(res => {
         if (cancelled || 'error' in res) return;
         setEp4Data({ raw_detail: res.raw_detail, taux: res.taux, irRates: res.irRates });
