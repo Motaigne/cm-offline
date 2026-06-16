@@ -53,10 +53,14 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
 
     // 1. Lecture Dexie d'abord (raw_detail + taux_app pré-cachés au sync).
     //    Si OK → on affiche tout de suite, l'UI ne dépend pas du réseau.
+    //    Note : on reset setError(null) ici aussi car le path offline ci-dessous
+    //    a pu déjà setError('offline') si la queueMicrotask a tiré avant la
+    //    résolution Dexie (race typique async IDB > microtask).
     void loadEp4ForMonthLocal(m).then(local => {
       if (cancelled || !local) return;
       localOk = true;
       applyData(local);
+      setError(null);
       setLoading(false);
     }).catch(() => { /* on tombera dans le path serveur ci-dessous */ });
 
