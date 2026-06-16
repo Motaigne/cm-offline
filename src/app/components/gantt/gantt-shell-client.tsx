@@ -32,10 +32,18 @@ function useInitialMonth(): string {
   return month;
 }
 
-function SkeletonShell() {
+function SkeletonShell({ stuck, onReload }: { stuck?: boolean; onReload?: () => void }) {
   return (
-    <main className="flex-1 flex items-center justify-center p-8 text-sm text-zinc-400">
-      Chargement…
+    <main className="flex-1 flex flex-col items-center justify-center p-8 gap-3 text-sm text-zinc-400">
+      <span>Chargement…</span>
+      {stuck && onReload && (
+        <button
+          onClick={onReload}
+          className="mt-2 px-4 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 text-xs text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        >
+          Bloqué ? Recharger
+        </button>
+      )}
     </main>
   );
 }
@@ -46,13 +54,25 @@ export function GanttShellClient() {
   const { status, session } = useAuthGuard();
   const [data, setData] = useState<ShellData | null>(null);
   const [noProfile, setNoProfile] = useState(false);
+  const [stuck, setStuck] = useState(false);
+
+  // Watchdog : si SkeletonShell visible >7s, propose un bouton "Recharger".
+  // Permet à l'utilisateur de sortir d'un hang inexpliqué (ex iOS Safari
+  // freeze post-idle qui empêche getSession / Dexie de progresser).
+  useEffect(() => {
+    if (data) return;
+    const t = setTimeout(() => setStuck(true), 7000);
+    return () => clearTimeout(t);
+  }, [data]);
 
   useEffect(() => {
     if (status !== 'authed') return;
     let cancelled = false;
     void (async () => {
       try {
+        console.warn('[shell] loadShellData start', month);
         let d = await loadShellData(month);
+        console.warn('[shell] loadShellData done', month);
         if (cancelled) return;
 
         // Bridge de l'ancien comportement SSR : l'ancien `/page.tsx` Server
@@ -99,9 +119,10 @@ export function GanttShellClient() {
     return () => { cancelled = true; };
   }, [status, month, router]);
 
-  if (status === 'loading' || status === 'redirecting') return <SkeletonShell />;
-  if (noProfile) return <SkeletonShell />;
-  if (!data) return <SkeletonShell />;
+  const reload = () => window.location.reload();
+  if (status === 'loading' || status === 'redirecting') return <SkeletonShell stuck={stuck} onReload={reload} />;
+  if (noProfile) return <SkeletonShell stuck={stuck} onReload={reload} />;
+  if (!data) return <SkeletonShell stuck={stuck} onReload={reload} />;
   const profile = data.profile!;
   // session peut être null si useAuthGuard a timeouté en lisant les cookies
   // (cf wifi off + token close à expiration). Shell render quand même : le

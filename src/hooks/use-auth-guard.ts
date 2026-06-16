@@ -32,6 +32,7 @@ export function useAuthGuard(): AuthState {
     const supabase = createClient();
 
     void (async () => {
+      console.warn('[auth-guard] getSession start');
       // getSession() lit les cookies en théorie offline-safe, MAIS si l'access
       // token est expiré, supabase-js tente un refresh via réseau qui hang sur
       // wifi captif / offline. Timeout 3s : si on ne sait pas en 3s, on suppose
@@ -41,6 +42,7 @@ export function useAuthGuard(): AuthState {
         supabase.auth.getSession().then(r => ({ kind: 'ok' as const, session: r.data.session })),
         new Promise<{ kind: 'timeout' }>(r => setTimeout(() => r({ kind: 'timeout' }), 3000)),
       ]);
+      console.warn('[auth-guard] getSession resolved', sessionRes.kind);
       if (cancelled) return;
 
       const session = sessionRes.kind === 'ok' ? sessionRes.session : null;
