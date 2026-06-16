@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { fetchAllPaginated } from '@/lib/supabase/paginate';
 import { fetchAllPairings } from '@/lib/scraper/crewbidd';
+import { computeNbOnDays } from '@/lib/rotation-days';
 
 /**
  * Phase Analyse du scrape :
@@ -47,10 +48,25 @@ export async function POST(req: Request) {
     return d.getUTCFullYear() === paramY && d.getUTCMonth() + 1 === paramM;
   });
 
-  const sigMap = new Map<string, { actIds: string[] }>();
+  // Clé `(activityNumber, nb_on_days)` — aligné sur le pipeline (mig 0033
+  // split par durée : une même activityNumber CrewBidd peut donner plusieurs
+  // sigs en DB selon la durée de l'instance). Si on clé par activityNumber
+  // seul, le diff over-compte les missing_instances en additionnant les actIds
+  // de toutes les durées mais en ne regardant que les instances d'UNE sig DB
+  // (la dernière vue, side-effect du `set` répété). Résultat observé : preview
+  // dit "15 dates à ajouter" mais le pipeline n'en trouve aucune côté
+  // (activityNumber, dur) → 0/0 scrape, dialog se ferme, rien d'inséré.
+  function sigKey(actNum: string, nbOnDays: number): string {
+    return `${actNum}|${nbOnDays}`;
+  }
+
+  const sigMap = new Map<string, { actIds: string[]; actNum: string; nbOnDays: number }>();
   for (const p of monthPairings) {
-    let entry = sigMap.get(p.activityNumber);
-    if (!entry) { entry = { actIds: [] }; sigMap.set(p.activityNumber, entry); }
+    const dur = computeNbOnDays(p.beginBlockDate, p.endBlockDate);
+    if (dur <= 0) continue;
+    const k = sigKey(p.activityNumber, dur);
+    let entry = sigMap.get(k);
+    if (!entry) { entry = { actIds: [], actNum: p.activityNumber, nbOnDays: dur }; sigMap.set(k, entry); }
     entry.actIds.push(String(p.actId));
   }
   const uniqueSigs     = sigMap.size;
@@ -68,19 +84,22 @@ export async function POST(req: Request) {
   let inDb = 0;
   let missingInstances = 0;        // dates manquantes pour les sigs déjà en DB
   if (snap) {
-    const sigs = await fetchAllPaginated<{ id: string; activity_number: string | null }>((from, to) =>
+    const sigs = await fetchAllPaginated<{ id: string; activity_number: string | null; nb_on_days: number | null }>((from, to) =>
       supabase
         .from('pairing_signature')
-        .select('id, activity_number')
+        .select('id, activity_number, nb_on_days')
         .eq('snapshot_id', snap.id)
         .range(from, to),
     );
 
-    const sigIdByActNum = new Map<string, string>();
+    const sigIdByKey = new Map<string, string>();
     const legacySigIds: string[] = [];
     for (const s of sigs) {
-      if (s.activity_number) sigIdByActNum.set(s.activity_number, s.id);
-      else legacySigIds.push(s.id);
+      if (s.activity_number && s.nb_on_days != null) {
+        sigIdByKey.set(sigKey(s.activity_number, s.nb_on_days), s.id);
+      } else {
+        legacySigIds.push(s.id);
+      }
     }
 
     // Charge tous les pairing_instance.activity_id du snapshot — sert au diff
@@ -106,11 +125,11 @@ export async function POST(req: Request) {
       }
     }
 
-    // Pour chaque activityNumber fetched, résout sigDbId (direct ou fallback
+    // Pour chaque (actNum, dur) fetched, résout sigDbId (direct ou fallback
     // legacy), compte les sigs en DB et les instances manquantes côté DB.
     const matchedLegacySigs = new Set<string>();
-    for (const [actNum, entry] of sigMap) {
-      let sigDbId = sigIdByActNum.get(actNum);
+    for (const entry of sigMap.values()) {
+      let sigDbId = sigIdByKey.get(sigKey(entry.actNum, entry.nbOnDays));
       if (!sigDbId) {
         for (const aid of entry.actIds) {
           const candidate = legacySigByActId.get(aid);

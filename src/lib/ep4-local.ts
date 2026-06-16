@@ -10,7 +10,7 @@
 import { db, loadAnnexeRowsLocal, loadTauxAppLocal } from '@/lib/local-db';
 import { buildEp4Rotation, type PairingDetail, type TauxAppRow } from '@/lib/ep4';
 import type { IrMfRate } from '@/lib/ir-rates';
-import type { Ep4MonthResponse, Ep4DetailResponse } from '@/app/actions/ep4';
+import type { Ep4MonthResponse } from '@/app/actions/ep4';
 
 const MANEX_BRIEF_MS = 1.75 * 3_600_000;
 const MANEX_CLOSE_MS = 0.5  * 3_600_000;
@@ -147,17 +147,27 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4MonthRespo
 
 /** Charge raw_detail + taux_app + irRates pour une signature donnée depuis
  *  Dexie. Mirroir client de `getEp4Detail` (utilisé par le panneau détail du
- *  /comparatif). Retourne null si la sig n'est pas en cache ou n'a pas de
- *  raw_detail. */
-export async function loadEp4DetailLocal(sigId: string): Promise<Ep4DetailResponse | null> {
+ *  /comparatif). Retourne soit la data, soit un objet `{ reason }` taggué qui
+ *  permet à l'UI d'afficher un message précis (sig manquante / raw_detail
+ *  manquant / taux_app vide). */
+export type Ep4DetailLocalFail =
+  | { reason: 'sig-absent' }
+  | { reason: 'raw-detail-absent' }
+  | { reason: 'taux-app-empty' };
+
+export type Ep4DetailLocalResult =
+  | { raw_detail: PairingDetail; taux: TauxAppRow[]; irRates: IrMfRate[] }
+  | Ep4DetailLocalFail;
+
+export async function loadEp4DetailLocal(sigId: string): Promise<Ep4DetailLocalResult> {
   const sig = await db.rotations.get(sigId);
-  if (!sig) { console.warn('[ep4-local] sig absent en Dexie', sigId); return null; }
-  if (!sig.raw_detail) { console.warn('[ep4-local] raw_detail manquant pour sig', sigId, sig.rotation_code); return null; }
+  if (!sig) { console.warn('[ep4-local] sig absent en Dexie', sigId); return { reason: 'sig-absent' }; }
+  if (!sig.raw_detail) { console.warn('[ep4-local] raw_detail manquant pour sig', sigId, sig.rotation_code); return { reason: 'raw-detail-absent' }; }
   const [annexeRows, taux] = await Promise.all([
     loadAnnexeRowsLocal(),
     loadTauxAppLocal(),
   ]);
-  if (taux.length === 0) { console.warn('[ep4-local] taux_app vide en Dexie'); return null; }
+  if (taux.length === 0) { console.warn('[ep4-local] taux_app vide en Dexie'); return { reason: 'taux-app-empty' }; }
   // ir_mf_rates : pas de contexte mois ici — on prend la version la plus récente.
   const latestIr = annexeRows
     .filter(r => r.slug === 'ir_mf_rates')

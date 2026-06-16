@@ -264,19 +264,26 @@ export function ComparatifClient({
   const [ep4Data, setEp4Data] = useState<{
     raw_detail: PairingDetail; taux: TauxAppRow[]; irRates: IrMfRate[];
   } | null>(null);
+  /** Cause de l'échec offline si ep4Data est null. Permet à l'UI d'afficher un
+   *  message précis (raw_detail manquant pour le sig vs taux_app vide en cache). */
+  const [ep4FailReason, setEp4FailReason] = useState<'sig-absent' | 'raw-detail-absent' | 'taux-app-empty' | null>(null);
   const [ep4Loading, setEp4Ld] = useState(false);
   const sigId   = sig?.id ?? null;
   const sigRot  = sig?.rotation_code ?? '';
   const sigZone = sig?.zone ?? null;
 
   useEffect(() => {
-    if (!sigId) { setEp4Data(null); return; }
+    if (!sigId) { setEp4Data(null); setEp4FailReason(null); return; }
     let cancelled = false;
     let localOk = false;
-    setEp4Ld(true); setEp4Data(null);
+    setEp4Ld(true); setEp4Data(null); setEp4FailReason(null);
     // 1. Tente Dexie d'abord : si raw_detail+taux sont cachés, EP4 dispo offline.
     void loadEp4DetailLocal(sigId).then(local => {
-      if (cancelled || !local || 'error' in local) return;
+      if (cancelled) return;
+      if ('reason' in local) {
+        setEp4FailReason(local.reason);
+        return;
+      }
       localOk = true;
       setEp4Data({ raw_detail: local.raw_detail, taux: local.taux, irRates: local.irRates });
       setEp4Ld(false);
@@ -580,18 +587,20 @@ export function ComparatifClient({
 
                 {ep4Loading && <Row label="EP4" db="—" calc="Chargement…" formula="(en attente du raw_detail)" />}
 
-                {/* Diagnostic offline : Dexie n'a pas raw_detail pour ce sig
-                    (signature pre-mig 0031 jamais re-scrapée, ou cache stale).
-                    Sans ce message on voyait juste la ligne Rotation sans
-                    explication. Repasser online pour refresh la cache. */}
+                {/* Diagnostic précis quand ep4Data null : indique l'origine
+                    exacte (sig pas en Dexie / raw_detail manquant côté sig /
+                    taux_app vide en cache). Cf loadEp4DetailLocal. */}
                 {!ep4Loading && !ep4Data && (
                   <Row
                     label="EP4"
                     db="—"
-                    calc={navigator.onLine ? '—' : 'indisponible'}
-                    formula={navigator.onLine
-                      ? '(raw_detail introuvable — sig pre-mig 0031 ?)'
-                      : '(raw_detail pas en cache — repasser online pour refresh)'}
+                    calc="indisponible"
+                    formula={
+                      ep4FailReason === 'sig-absent'      ? '(sig absente en Dexie — Sync requise)' :
+                      ep4FailReason === 'raw-detail-absent' ? '(raw_detail manquant côté serveur — re-scrape requis)' :
+                      ep4FailReason === 'taux-app-empty'  ? '(taux_app vide en cache — repasser online pour Sync)' :
+                      '(diagnostic indisponible)'
+                    }
                   />
                 )}
 
