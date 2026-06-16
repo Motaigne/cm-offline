@@ -541,7 +541,7 @@ export function NavBar() {
         // On ne précache l'URL ?m=YYYY-MM que pour les mois effectivement
         // hydratés — sinon l'utilisateur clique offline sur un onglet, voit
         // l'écran s'afficher (HTML précaché) mais le calendrier reste vide.
-        const urlVariants: string[] = [];
+        const urlVariants: string[] = ['/offline'];
         for (const url of PAGES) {
           urlVariants.push(url);
           if (PAGES_MONTH.includes(url)) {
