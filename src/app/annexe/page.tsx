@@ -1,36 +1,28 @@
-import { createClient } from '@/lib/supabase/server';
-import { redirect } from 'next/navigation';
+'use client';
+
+// Coquille statique précachée pour /annexe (style /, /comparatif, /ep4).
+// Aucun fetch serveur au boot — auth client via useAuthGuard, data via Dexie
+// dans AnnexeShellClient.
+
+import { Suspense } from 'react';
+import { AnnexeShellClient } from './annexe-shell-client';
 import { NavBar } from '@/app/components/nav';
-import { AnnexeClient } from './annexe-client';
 
-export default async function AnnexePage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/login');
-
-  const { data: profile } = await supabase
-    .from('user_profile')
-    .select('is_admin')
-    .eq('user_id', user.id)
-    .single();
-
-  // Toutes les versions de tous les slugs. AnnexeClient groupe par slug et
-  // affiche la plus récente par défaut + un dropdown pour switcher.
-  const { data: allRows } = await supabase
-    .from('annexe_table')
-    .select('slug, valid_from, name, description, data, updated_at')
-    .order('slug')
-    .order('valid_from', { ascending: false });
-
+function ShellFallback() {
   return (
     <div className="flex flex-col h-screen bg-zinc-50 dark:bg-zinc-950 overflow-hidden">
       <NavBar />
-      <div className="flex-1 overflow-y-auto">
-        <AnnexeClient
-          rows={allRows ?? []}
-          canEdit={profile?.is_admin ?? false}
-        />
-      </div>
+      <main className="flex-1 flex items-center justify-center text-sm text-zinc-400">
+        Chargement…
+      </main>
     </div>
+  );
+}
+
+export default function AnnexePage() {
+  return (
+    <Suspense fallback={<ShellFallback />}>
+      <AnnexeShellClient />
+    </Suspense>
   );
 }
