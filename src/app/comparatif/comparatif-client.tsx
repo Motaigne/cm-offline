@@ -580,6 +580,21 @@ export function ComparatifClient({
 
                 {ep4Loading && <Row label="EP4" db="—" calc="Chargement…" formula="(en attente du raw_detail)" />}
 
+                {/* Diagnostic offline : Dexie n'a pas raw_detail pour ce sig
+                    (signature pre-mig 0031 jamais re-scrapée, ou cache stale).
+                    Sans ce message on voyait juste la ligne Rotation sans
+                    explication. Repasser online pour refresh la cache. */}
+                {!ep4Loading && !ep4Data && (
+                  <Row
+                    label="EP4"
+                    db="—"
+                    calc={navigator.onLine ? '—' : 'indisponible'}
+                    formula={navigator.onLine
+                      ? '(raw_detail introuvable — sig pre-mig 0031 ?)'
+                      : '(raw_detail pas en cache — repasser online pour refresh)'}
+                  />
+                )}
+
                 {!ep4Loading && ep4 && ep4Agg && (() => {
                   const sumTdv  = ep4.services.reduce((s, svc) => s + svc.legs.reduce((ss, l) => ss + l.tdv_troncon, 0), 0);
                   const pvNuit_db   = (sig.tsv_nuit ?? 0) / 2;

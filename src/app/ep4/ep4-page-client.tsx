@@ -52,29 +52,31 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
     };
 
     // 1. Lecture Dexie d'abord (raw_detail + taux_app pré-cachés au sync).
-    //    Si OK → on affiche tout de suite, l'UI ne dépend pas du réseau.
-    //    Note : on reset setError(null) ici aussi car le path offline ci-dessous
-    //    a pu déjà setError('offline') si la queueMicrotask a tiré avant la
-    //    résolution Dexie (race typique async IDB > microtask).
+    //    Si Dexie a la data → on affiche immédiatement, UI ne dépend pas du
+    //    réseau. Si Dexie n'a rien ET on est offline → on affiche le message
+    //    "EP4 indisponible". Si Dexie rien + online → on attend le serveur.
+    //    Note : pas de speculative setError('offline') AVANT que Dexie ait
+    //    résolu (sinon flash visible le temps que Dexie revienne).
     void loadEp4ForMonthLocal(m).then(local => {
-      if (cancelled || !local) return;
-      localOk = true;
-      applyData(local);
-      setError(null);
-      setLoading(false);
-    }).catch(() => { /* on tombera dans le path serveur ci-dessous */ });
+      if (cancelled) return;
+      if (local) {
+        localOk = true;
+        applyData(local);
+        setError(null);
+        setLoading(false);
+      } else if (!navigator.onLine) {
+        setError('offline');
+        setLoading(false);
+      }
+      // sinon : pas de cache + online → on laisse le path serveur ci-dessous
+      // gérer (success ou error de race).
+    }).catch(() => { /* path serveur ci-dessous prend le relais */ });
 
-    // 2. Refresh background depuis le serveur (timeout 10s pour rester réactif
-    //    sur captif/SIM — sinon l'auto-fetch peut hanger). Si offline et pas de
-    //    cache → on affiche le message offline en fin de tick.
-    if (!navigator.onLine) {
-      // Laisse au .then() Dexie une frame pour résoudre avant d'afficher l'offline.
-      queueMicrotask(() => {
-        if (cancelled) return;
-        if (!localOk) { setError('offline'); setLoading(false); }
-      });
-      return;
-    }
+    // 2. Refresh background depuis le serveur si online. Timeout 10s pour
+    //    rester réactif sur captif/SIM — sinon le server action hang. navigator
+    //    .onLine peut être truthy même wifi/4G off (iOS), donc on essaie quand
+    //    même, le timeout coupe.
+    if (!navigator.onLine) return;
     Promise.race([
       getEp4ForMonth(m),
       new Promise<{ error: string }>(r => setTimeout(() => r({ error: 'timeout' }), 10_000)),
