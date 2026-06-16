@@ -1,21 +1,44 @@
-import { createClient } from '@/lib/supabase/server';
-import { redirect } from 'next/navigation';
+'use client';
+
+// Page client : HTML statique précachable par le SW. Le check "déjà connecté"
+// est fait côté client (getSession lit les cookies sans réseau), pour que la
+// page reste fonctionnelle en mode offline / wifi captif.
+
+import { Suspense, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
 import { LoginForm } from './login-form';
 
-export default async function LoginPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ error?: string }>;
-}) {
-  const { error } = await searchParams;
+function LoginPageInner() {
+  const router  = useRouter();
+  const params  = useSearchParams();
+  const error   = params.get('error') ?? undefined;
+  const [checked, setChecked] = useState(false);
 
-  // Si déjà connecté → rebascule sur l'accueil. Sans ce check, un user qui a
-  // installé la PWA depuis /login (Safari iOS bookmark l'URL courante, pas le
-  // start_url du manifest sur iOS < 16.4) voit le formulaire à chaque
-  // ouverture même si sa session est valide → impression d'être déconnecté.
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (user) redirect('/');
+  useEffect(() => {
+    // Si déjà connecté → rebascule sur l'accueil. Lecture cookie synchrone,
+    // ne touche pas Supabase Auth. Remplace l'ancien check Server Component
+    // qui faisait un getUser() réseau (cassé sur wifi captif).
+    let cancelled = false;
+    void (async () => {
+      try {
+        const supabase = createClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        if (cancelled) return;
+        if (session) {
+          router.replace('/');
+          return;
+        }
+      } catch { /* offline / pas de cookies — on reste sur login */ }
+      if (!cancelled) setChecked(true);
+    })();
+    return () => { cancelled = true; };
+  }, [router]);
+
+  if (!checked) {
+    // Pas de spinner ici pour éviter le flash : le formulaire arrive en < 100ms.
+    return null;
+  }
 
   return (
     <main className="flex-1 flex flex-col items-center justify-center p-8">
@@ -27,5 +50,13 @@ export default async function LoginPage({
         <LoginForm urlError={error} />
       </div>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginPageInner />
+    </Suspense>
   );
 }

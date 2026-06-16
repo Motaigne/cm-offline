@@ -10,7 +10,21 @@ import type { Database } from '@/types/supabase';
 const SESSION_LOST_THROTTLE_COOKIE = 'cm-session-lost-ts';
 const SESSION_LOST_THROTTLE_MS = 5 * 60 * 1000;
 
+// Routes "client-shell" : leur HTML est statique et précachée par le SW.
+// L'auth est vérifiée côté client (useAuthGuard). On ne fait plus de
+// getUser() serveur sur ces routes — économie d'un RTT Supabase au boot ET
+// suppression d'une dépendance réseau qui fait écran blanc sur wifi captif
+// quand le SW n'a pas encore intercepté la requête (premier visit post-deploy).
+const SHELL_ROUTES = new Set(['/', '/login', '/onboarding', '/setup-password']);
+
 export async function updateSession(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+
+  // Court-circuit pour les routes shell : pas de getUser(), pass-through total.
+  if (SHELL_ROUTES.has(pathname)) {
+    return NextResponse.next({ request });
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient<Database>(
@@ -38,9 +52,7 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   // Redirection : si pas connecté et route non publique → /login
-  const pathname = request.nextUrl.pathname;
   const isPublic =
-    pathname === '/login' ||
     pathname.startsWith('/auth') ||
     pathname.startsWith('/_next') ||
     pathname.startsWith('/api/public');

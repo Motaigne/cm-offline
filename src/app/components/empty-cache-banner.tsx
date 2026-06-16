@@ -55,9 +55,10 @@ export function EmptyCacheBanner() {
         setStatus(`✓ DB restaurée (${backup.rotations.length} rotations)`);
       }
       await recheck();
-      // Recharge la page pour que les server components prennent en compte
-      // (sur /offline, ça permet de retourner au calendrier alimenté).
-      setTimeout(() => window.location.reload(), 800);
+      // Bascule vers le calendrier après restore — fonctionne sur n'importe
+      // quelle page (le banner est global via layout). Hard navigation pour
+      // que le shell remonte et relise Dexie depuis zéro.
+      setTimeout(() => window.location.assign('/'), 800);
     } catch (e) {
       setStatus(`! ${String(e)}`);
       setTimeout(() => setStatus(''), 4000);

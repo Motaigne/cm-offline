@@ -1380,13 +1380,18 @@ export function GanttView({
         const local = await loadFromDB(scenarios, month);
         setLocalScenarios(local);
         setPendingCount(await pendingOpsCount());
+      } else if (scenarios.length === 0) {
+        // Coquille client : si la prop `scenarios` est vide (Dexie n'a pas de
+        // drafts pour ce mois), on NE PAS écrire dans Dexie (hydrateDB ferait
+        // un wipe destructeur). On lit directement Dexie comme source.
+        const local = await loadFromDB(scenarios, month);
+        setLocalScenarios(local);
       } else {
         await hydrateDB(scenarios, month);
         setLocalScenarios(scenarios);
       }
-      // Hydrate notes pour le mois courant + recharge depuis db (préserve
-      // les pendantes).
-      await hydrateNotes(notes, month);
+      // Hydrate notes pour le mois courant — skip si vide (même raison).
+      if (notes.length > 0) await hydrateNotes(notes, month);
       setLocalNotes(await loadNotesForMonth(month));
     }
     init();

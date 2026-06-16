@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
+import { EmptyCacheBanner } from '@/app/components/empty-cache-banner';
 
 const geistSans = Geist({ variable: '--font-geist-sans', subsets: ['latin'] });
 const geistMono = Geist_Mono({ variable: '--font-geist-mono', subsets: ['latin'] });
@@ -43,6 +44,11 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
+        {/* Banner global : s'affiche uniquement si Dexie est vide (drafts +
+            rotations + releases = 0). Permet à un user offline / sur un cache
+            fraichement vidé de restaurer une sauvegarde depuis n'importe
+            quelle page, sans devoir d'abord atterrir sur /offline. */}
+        <EmptyCacheBanner />
         {children}
       </body>
     </html>

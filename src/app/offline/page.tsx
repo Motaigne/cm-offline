@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import { NavBar } from '@/app/components/nav';
-import { EmptyCacheBanner } from '@/app/components/empty-cache-banner';
+
+// EmptyCacheBanner est désormais monté globalement dans layout.tsx, donc plus
+// besoin de l'inclure ici (s'afficherait deux fois sur /offline sinon).
 
 export const metadata = { title: 'Hors ligne' };
 
@@ -8,7 +10,6 @@ export default function OfflinePage() {
   return (
     <>
       <NavBar />
-      <EmptyCacheBanner />
       <main className="flex-1 flex flex-col items-center justify-center p-8 text-center gap-3">
         <span className="text-4xl">📵</span>
         <h1 className="text-2xl font-semibold">Hors ligne</h1>

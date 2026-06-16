@@ -12,9 +12,19 @@ declare const self: ServiceWorkerGlobalScope;
 
 const serwist = new Serwist({
   precacheEntries: self.__SW_MANIFEST,
+  precacheOptions: {
+    // Strip `?m=YYYY-MM` (et autres params de routing client) AVANT le lookup
+    // précache. Sinon `/?m=2026-08` ne matche pas la coquille précachée `/` et
+    // tombe sur le fallback `/offline` → expérience cassée hors ligne dès qu'on
+    // change de mois. Avec ce stripping, /?m=anything → précache /.
+    ignoreURLParametersMatching: [/^m$/, /^release$/],
+  },
   skipWaiting: true,
   clientsClaim: true,
-  navigationPreload: true,
+  // navigationPreload: désactivé. Avec une stratégie CacheFirst pour les
+  // navigations, le préchargement réseau est gaspillé en ligne et
+  // contre-productif sur portail captif (un fetch parallèle peut ramener
+  // l'HTML du captif et polluer le contrôleur de navigation).
   runtimeCaching: [
     // RSC payloads (Next.js soft navigation) : CacheFirst — l'app est offline-first,
     // le bouton Sync met à jour le cache RSC via precachePage (fetch RSC:1 explicite).
