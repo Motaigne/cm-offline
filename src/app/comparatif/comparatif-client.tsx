@@ -144,6 +144,9 @@ export function ComparatifClient({
   const [noCache, setNoCache]     = useState(false);
   const [query, setQuery]         = useState('');
   const [selected, setSelected]   = useState<string | null>(null);
+  // Tableau "Disponibilités" replié par défaut — trop encombrant sinon, et
+  // l'utilisateur souvent regarde plutôt EP4 + Article 81.
+  const [disposCollapsed, setDisposCollapsed] = useState(true);
   const [selectedInstanceIdx, setSelectedInstanceIdx] = useState(0);
 
   const [year, mo] = currentMonth.split('-').map(Number);
@@ -436,14 +439,21 @@ export function ComparatifClient({
               briefing/closeout différents → TA, HCA, H2HCr propres à l'instance). */}
           {sig.instances.length > 0 && (
             <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-              <div className="px-4 py-2 bg-zinc-50 dark:bg-zinc-800/60 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
-                <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide">
+              <button
+                type="button"
+                onClick={() => setDisposCollapsed(c => !c)}
+                className="w-full px-4 py-2 bg-zinc-50 dark:bg-zinc-800/60 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              >
+                <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1.5">
+                  <span className="inline-block w-3 text-center">{disposCollapsed ? '▸' : '▾'}</span>
                   Disponibilités — {monthLabel(currentMonth)}
+                  <span className="text-zinc-500 normal-case">({sig.instances.length})</span>
                 </p>
-                {sig.instances.length > 1 && (
+                {!disposCollapsed && sig.instances.length > 1 && (
                   <p className="text-[10px] text-zinc-400 italic">Cliquer une ligne pour la sélectionner</p>
                 )}
-              </div>
+              </button>
+              {!disposCollapsed && (<>
               <table className="w-full text-xs">
                 <thead>
                   <tr className="bg-zinc-50/60 dark:bg-zinc-800/30">
@@ -506,6 +516,7 @@ export function ComparatifClient({
                   * Rotation à cheval sur 2 mois — valeur proratée au temps de vol réalisé sur {monthLabel(currentMonth)}
                 </p>
               )}
+              </>)}
             </div>
           )}
 
@@ -567,6 +578,7 @@ export function ComparatifClient({
                       {ep4.services.map((svc, i) => (
                         <Row key={`h1-${i}`} label={`H1 svc ${i + 1}`} db="—" calc={fmt(svc.H1)} formula="max(HCV, HCT)" />
                       ))}
+                      <Row label="Σ H1" db="—" calc={fmt(ep4.services.reduce((s, svc) => s + svc.H1, 0))} formula="Σ H1 svc i" />
 
                       <Row label="rtHDV"        db="—"           calc={fmt(ep4.rtHDV, 4)}      formula="Σ HCVmoisM / Σ HCV" />
                       <Row label="H2HC (Hc)"    db={fmt(sig.hc)} calc={fmt(ep4.H2HC_initial)} formula="max(HCA, Σ H1) — avant proratisation mois" />
@@ -580,6 +592,7 @@ export function ComparatifClient({
                       {ep4.services.map((svc, i) => (
                         <Row key={`h1r-${i}`} label={`H1r svc ${i + 1}`} db="—" calc={fmt(svc.H1r)} formula="max(HCVr, HCT)" />
                       ))}
+                      <Row label="Σ H1r" db="—" calc={fmt(ep4.services.reduce((s, svc) => s + svc.H1r, 0))} formula="Σ H1r svc i" />
 
                       <Row label="H2HCr (HCr)" db={fmt(sig.hcr_crew)} calc={fmt(ep4.H2HCr_initial)} formula="max(HCA, Σ H1r)" />
                       <Row label="H2HCr mois"  db="—"                 calc={fmt(ep4.H2HCr)}         formula="rtHDV × max(HCA, Σ H1r)" />

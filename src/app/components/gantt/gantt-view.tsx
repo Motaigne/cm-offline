@@ -483,6 +483,7 @@ const REST_H = 6;
 function DraggableBar({
   item, clip, dim, year, mo, onEdit, isDragSource,
   scenarioItems, rpcChevauchement, isFictive = false,
+  pvei = PVEI, ksp = KSP,
 }: {
   item: CalendarItem;
   clip: { start: number; end: number };
@@ -499,6 +500,11 @@ function DraggableBar({
   /** True si l'item est sur un mois de projection (snapshot fictif) →
    *  override de la couleur du bar en violet clair. */
   isFictive?: boolean;
+  /** Valeurs profil-aware pour `rotationValue` — sinon défaut aux constantes
+   *  (search panel n'a pas le profil). Ici on a accès au profil donc on les
+   *  passe pour aligner la valeur affichée sur la bar avec le popup/détail. */
+  pvei?: number;
+  ksp?: number;
 }) {
   const readOnly = !!item._isSpillover;
   // RPC-only spillover : vol dont le corps est en M-1 et dont la queue RPC
@@ -534,7 +540,7 @@ function DraggableBar({
     : tsvNuit;
   const isProrated = hcrDisplay !== null && hcrCrew !== null && hcrDisplay < hcrCrew - 0.01;
   const euroVal    = item.kind === 'flight' && hcrDisplay !== null
-    ? rotationValue(hcrDisplay, prime, tsvDisplay) : null;
+    ? rotationValue(hcrDisplay, prime, tsvDisplay, pvei, ksp) : null;
 
   // Sub-day precision for flights with timestamps, integer days for others
   let leftPct: number, wPct: number;
@@ -2168,6 +2174,8 @@ export function GanttView({
                           scenarioItems={scenario.items}
                           rpcChevauchement={rpcChevauchement}
                           isFictive={fictiveMonths.includes(item.start_date.slice(0, 7))}
+                          pvei={finBaseState?.pvei ?? PVEI}
+                          ksp={finBaseState?.ksp ?? KSP}
                         />
                       );
                     })}
@@ -2673,6 +2681,19 @@ export function GanttView({
                   const primeM    = typeof m.prime       === 'number' ? m.prime       : 0;
                   const tempsSejM = typeof m.temps_sej   === 'number' ? m.temps_sej   : null;
                   const zoneM     = typeof m.zone        === 'string' ? m.zone        : null;
+                  const departAtM = typeof m.depart_at   === 'string' ? m.depart_at   : null;
+                  const arriveeAtM = typeof m.arrivee_at === 'string' ? m.arrivee_at  : null;
+                  const fmtDateTime = (iso: string): string => {
+                    const d = new Date(iso);
+                    if (Number.isNaN(d.getTime())) return iso;
+                    // Format UTC : "Lun 15/06 10:30" — canonique aviation.
+                    const days = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
+                    const dd = String(d.getUTCDate()).padStart(2, '0');
+                    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+                    const hh = String(d.getUTCHours()).padStart(2, '0');
+                    const mi = String(d.getUTCMinutes()).padStart(2, '0');
+                    return `${days[d.getUTCDay()]} ${dd}/${mm} ${hh}:${mi}`;
+                  };
                   const instId    = sheet.item.pairing_instance_id;
                   const sig       = instId ? signaturesByInstId.get(instId) : null;
                   const isMep     = sig?.dead_head === true;
@@ -2747,6 +2768,12 @@ export function GanttView({
                           <p className="text-xs text-orange-500 font-semibold">
                             MEP{mepFlight ? ` · ${mepFlight}` : ''}
                           </p>
+                        )}
+                        {(departAtM || arriveeAtM) && (
+                          <div className="grid grid-cols-2 gap-3">
+                            {departAtM  && <Info label="Premier départ"  value={fmtDateTime(departAtM)} />}
+                            {arriveeAtM && <Info label="Dernier arrivée" value={fmtDateTime(arriveeAtM)} />}
+                          </div>
                         )}
                         <div className="grid grid-cols-3 gap-3">
                           {hcM !== null      && <Info label="HC"           value={`${hcM.toFixed(2)} h`} />}
