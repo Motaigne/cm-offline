@@ -483,7 +483,6 @@ const REST_H = 6;
 function DraggableBar({
   item, clip, dim, year, mo, onEdit, isDragSource,
   scenarioItems, rpcChevauchement, isFictive = false,
-  pvei = PVEI, ksp = KSP,
 }: {
   item: CalendarItem;
   clip: { start: number; end: number };
@@ -500,11 +499,6 @@ function DraggableBar({
   /** True si l'item est sur un mois de projection (snapshot fictif) →
    *  override de la couleur du bar en violet clair. */
   isFictive?: boolean;
-  /** Valeurs profil-aware pour `rotationValue` — sinon défaut aux constantes
-   *  (search panel n'a pas le profil). Ici on a accès au profil donc on les
-   *  passe pour aligner la valeur affichée sur la bar avec le popup/détail. */
-  pvei?: number;
-  ksp?: number;
 }) {
   const readOnly = !!item._isSpillover;
   // RPC-only spillover : vol dont le corps est en M-1 et dont la queue RPC
@@ -532,15 +526,19 @@ function DraggableBar({
   const beginActAt   = typeof metaObj?.scheduled_begin_activity_at === 'string' ? metaObj.scheduled_begin_activity_at as string : null;
   const tsvNuit      = typeof metaObj?.tsv_nuit === 'number' ? metaObj.tsv_nuit as number : 0;
 
-  const hcrDisplay = hcrCrew !== null && departAt && arriveeAt
+  // Affichage tile : valeur PLEINE de la rotation (= popup + détail + comparatif).
+  // L'ancien comportement (proratisation au mois) créait un écart de quelques %
+  // pour les rotations à cheval, qu'on retrouvait NULLE PART ailleurs dans l'UI →
+  // confusion. Le badge "à cheval" (isProrated) reste calculé pour la pastille
+  // mais la valeur affichée elle-même n'est plus proratée.
+  const hcrDisplay = hcrCrew;
+  const tsvDisplay = tsvNuit;
+  const hcrMonth   = hcrCrew !== null && departAt && arriveeAt
     ? prorateForMonth(hcrCrew, departAt, arriveeAt, year, mo)
     : hcrCrew;
-  const tsvDisplay = departAt && arriveeAt
-    ? prorateForMonth(tsvNuit, departAt, arriveeAt, year, mo)
-    : tsvNuit;
-  const isProrated = hcrDisplay !== null && hcrCrew !== null && hcrDisplay < hcrCrew - 0.01;
+  const isProrated = hcrMonth !== null && hcrCrew !== null && hcrMonth < hcrCrew - 0.01;
   const euroVal    = item.kind === 'flight' && hcrDisplay !== null
-    ? rotationValue(hcrDisplay, prime, tsvDisplay, pvei, ksp) : null;
+    ? rotationValue(hcrDisplay, prime, tsvDisplay) : null;
 
   // Sub-day precision for flights with timestamps, integer days for others
   let leftPct: number, wPct: number;
@@ -2174,8 +2172,6 @@ export function GanttView({
                           scenarioItems={scenario.items}
                           rpcChevauchement={rpcChevauchement}
                           isFictive={fictiveMonths.includes(item.start_date.slice(0, 7))}
-                          pvei={finBaseState?.pvei ?? PVEI}
-                          ksp={finBaseState?.ksp ?? KSP}
                         />
                       );
                     })}
