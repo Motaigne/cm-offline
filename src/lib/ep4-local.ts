@@ -151,12 +151,13 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4MonthRespo
  *  raw_detail. */
 export async function loadEp4DetailLocal(sigId: string): Promise<Ep4DetailResponse | null> {
   const sig = await db.rotations.get(sigId);
-  if (!sig || !sig.raw_detail) return null;
+  if (!sig) { console.warn('[ep4-local] sig absent en Dexie', sigId); return null; }
+  if (!sig.raw_detail) { console.warn('[ep4-local] raw_detail manquant pour sig', sigId, sig.rotation_code); return null; }
   const [annexeRows, taux] = await Promise.all([
     loadAnnexeRowsLocal(),
     loadTauxAppLocal(),
   ]);
-  if (taux.length === 0) return null;
+  if (taux.length === 0) { console.warn('[ep4-local] taux_app vide en Dexie'); return null; }
   // ir_mf_rates : pas de contexte mois ici — on prend la version la plus récente.
   const latestIr = annexeRows
     .filter(r => r.slug === 'ir_mf_rates')
