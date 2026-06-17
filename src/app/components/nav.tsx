@@ -320,7 +320,12 @@ export function NavBar() {
         setPrecacheReady(ok);
       }
     })();
-    void getCurrentUserIsAdmin().then(setIsAdmin).catch(() => setIsAdmin(false));
+    // getCurrentUserIsAdmin = server action POST → gate par navigator.onLine
+    // (sinon le boot offline déclenche un POST voué à 503/timeout). pendingOpsCount
+    // reste hors gate : local Dexie (db.sync_queue.count()), aucun trafic réseau.
+    if (navigator.onLine) {
+      void getCurrentUserIsAdmin().then(setIsAdmin).catch(() => setIsAdmin(false));
+    }
     void pendingOpsCount().then(setPendingCount);
 
     // ─── Priming Dexie ──────────────────────────────────────────────────────
