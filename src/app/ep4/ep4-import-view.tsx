@@ -349,19 +349,28 @@ function ActivitePanel({
         <table className="min-w-full text-[11px] font-mono">
           <thead className="text-zinc-400 uppercase tracking-wide text-[9px]">
             <tr>
-              <th className="text-left px-1 py-1">#</th>
-              <th className="text-left px-1 py-1">Date</th>
-              <th className="text-left px-1 py-1">Vol</th>
-              <th className="text-left px-1 py-1">Esc</th>
+              <th className="text-left  px-1 py-1">#</th>
+              <th className="text-left  px-1 py-1">Date</th>
+              <th className="text-left  px-1 py-1">Vol</th>
+              <th className="text-left  px-1 py-1">Esc</th>
               <th className="text-right px-1 py-1">HV real</th>
+              <th className="text-right px-1 py-1">TME</th>
+              <th className="text-right px-1 py-1">CMT</th>
               <th className="text-right px-1 py-1">HV 100%</th>
               <th className="text-right px-1 py-1">HCV</th>
+              <th className="text-right px-1 py-1">HCT</th>
+              <th className="text-right px-1 py-1">HCA</th>
+              <th className="text-right px-1 py-1">H1</th>
+              <th className="text-right px-1 py-1">H2/HC</th>
               <th className="text-right px-1 py-1">HV 100%(r)</th>
               <th className="text-right px-1 py-1">HCV(r)</th>
-              <th className="text-right px-1 py-1">H2/HC(r)</th>
-              <th className="text-right px-1 py-1">Mt HC(r)</th>
+              <th className="text-right px-1 py-1">H1(r)</th>
+              <th className="text-right px-1 py-1">H2(r)/HC(r)</th>
+              <th className="text-right px-1 py-1">Montant HC(r)</th>
               <th className="text-right px-1 py-1">Majo Nuit</th>
               <th className="text-right px-1 py-1">Mt Nuit</th>
+              <th className="text-right px-1 py-1">Majo 10%</th>
+              <th className="text-right px-1 py-1">Prime CDB</th>
             </tr>
           </thead>
           <tbody>
@@ -377,23 +386,38 @@ function ActivitePanel({
                 <td className="px-1 py-0.5">{r.numVol}</td>
                 <td className="px-1 py-0.5">{r.depart}→{r.arrivee}</td>
                 <td className="px-1 py-0.5 text-right">{fmt(r.hvReal)}</td>
+                <td className="px-1 py-0.5 text-right">{fmt(r.tme)}</td>
+                <td className="px-1 py-0.5 text-right">{fmt(r.cmt)}</td>
                 <td className="px-1 py-0.5 text-right">{fmt(r.hv100)}</td>
                 <td className="px-1 py-0.5 text-right">{fmt(r.hcv)}</td>
+                <td className="px-1 py-0.5 text-right">{fmt(r.hct)}</td>
+                <td className="px-1 py-0.5 text-right">{fmt(r.hca)}</td>
+                <td className="px-1 py-0.5 text-right">{fmt(r.h1)}</td>
+                <td className="px-1 py-0.5 text-right">{fmt(r.h2hc)}</td>
                 <td className="px-1 py-0.5 text-right">{fmt(r.hv100r)}</td>
                 <td className="px-1 py-0.5 text-right">{fmt(r.hcvr)}</td>
+                <td className="px-1 py-0.5 text-right">{fmt(r.h1r)}</td>
                 <td className="px-1 py-0.5 text-right">{fmt(r.h2hcR)}</td>
                 <td className="px-1 py-0.5 text-right">{fmt(r.montantHcR)}</td>
                 <td className="px-1 py-0.5 text-right">{fmt(r.majoNuit)}</td>
                 <td className="px-1 py-0.5 text-right">{fmt(r.montantNuit)}</td>
+                <td className="px-1 py-0.5 text-right">{fmt(r.majo10)}</td>
+                <td className="px-1 py-0.5 text-right">{fmt(r.primeCdb)}</td>
               </tr>
               );
             })}
             <tr className="font-bold border-t border-zinc-300 dark:border-zinc-700">
-              <td className="px-1 py-1" colSpan={9}>TOTAL</td>
+              <td className="px-1 py-1" colSpan={12}>TOTAL</td>
+              <td className="px-1 py-1 text-right">{fmt(totaux.h2hc)}</td>
+              <td className="px-1 py-1 text-right" />
+              <td className="px-1 py-1 text-right" />
+              <td className="px-1 py-1 text-right" />
               <td className="px-1 py-1 text-right">{fmt(totaux.h2hcR)}</td>
               <td className="px-1 py-1 text-right">{fmt(totaux.montantHcR)}</td>
               <td className="px-1 py-1 text-right">{fmt(totaux.majoNuit)}</td>
               <td className="px-1 py-1 text-right">{fmt(totaux.montantNuit)}</td>
+              <td className="px-1 py-1 text-right">{fmt(totaux.majo10)}</td>
+              <td className="px-1 py-1 text-right">{fmt(totaux.primeCdb)}</td>
             </tr>
           </tbody>
         </table>

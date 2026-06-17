@@ -175,15 +175,15 @@ function fmtEp4Time(ms: number): string {
   return `${d.getUTCDate()} | ${String(d.getUTCHours()).padStart(2, '0')}.${String(d.getUTCMinutes()).padStart(2, '0')}`;
 }
 
-/** day | HH.cc UTC où cc = centièmes industriels (MM/60 × 100). C'est le
- *  format des horaires sur l'EP4 PDF d'AF (ex: 21h06 → "21.10"). */
+/** DD | HH.cc UTC où cc = centièmes industriels (MM/60 × 100). Format des
+ *  horaires sur l'EP4 PDF d'AF (ex: 21h06 le 1er → "01 | 21.10"). Le jour
+ *  est paddé sur 2 chiffres comme dans le PDF (cf. demande user). */
 function fmtEp4TimeCentiemes(ms: number): string {
   const d = new Date(ms);
-  const day = d.getUTCDate();
-  const hour = d.getUTCHours();
-  const minute = d.getUTCMinutes();
-  const cents = Math.round((minute / 60) * 100);
-  return `${day} | ${String(hour).padStart(2, '0')}.${String(cents).padStart(2, '0')}`;
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  const hour = String(d.getUTCHours()).padStart(2, '0');
+  const cents = String(Math.round((d.getUTCMinutes() / 60) * 100)).padStart(2, '0');
+  return `${day} | ${hour}.${cents}`;
 }
 
 /** day | HH.MM en local (UTC + offset en heures de l'escale) */
@@ -715,9 +715,6 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month, highlightedKeys
   const monthStart = Date.UTC(year, month - 1, 1);
   const monthEnd   = month === 12 ? Date.UTC(year + 1, 0, 1) : Date.UTC(year, month, 1);
 
-  // 22 colonnes de données
-  const NCOLS = 22;
-
   // Totaux en reduce — accumulateur object pour respecter l'immutabilité du render.
   const totals = flights.reduce(
     (a, { ep4, is_spillover }) => {
@@ -774,117 +771,120 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month, highlightedKeys
   const totMontantHCr = totals.MontantHCr, totNuit = totals.Nuit, totMontantNuit = totals.MontantNuit;
   const totHv100 = totals.Hv100, totHv100r = totals.Hv100r;
 
-  const rotRows: ReactNode[][] = flights.map(({ ep4, is_spillover }) => {
-    const allLegs = ep4.services.flatMap((svc, si) =>
-      svc.legs.map((leg, li) => ({ leg, svc, si, li }))
-    );
-    const isSpilloverRot = is_spillover;
+  // Aplatit les legs avec leur svc parent + flags (1er leg du svc/rot) pour
+  // savoir où afficher les valeurs agrégées (HCV/H1/HCA…) qui n'apparaissent
+  // qu'une fois par svc ou rot dans l'EP4 officiel.
+  const flatRows = flights.flatMap(({ ep4, is_spillover }, ri) =>
+    ep4.services.flatMap((svc, si) =>
+      svc.legs.map((leg, li) => ({
+        leg, svc, ep4, is_spillover,
+        isFirstOfRot:    si === 0 && li === 0,
+        isFirstOfSvc:    li === 0,
+        rotKey:          `${ep4.rotation_code ?? 'rot'}-${ep4.debut_vol_ms}-${ri}`,
+      })),
+    ),
+  );
 
-    return [
-      <tr key={`sep-d-${ep4.rotation_code}-${ep4.debut_vol_ms}`}
-          className="bg-zinc-100 dark:bg-zinc-800/60 border-t-2 border-zinc-300 dark:border-zinc-600">
-        <td colSpan={NCOLS} className="px-2 py-0.5 text-[10px] font-semibold text-zinc-500 dark:text-zinc-300">
-          {ep4.rotation_code || '—'}
-          {isSpilloverRot && <span className="ml-2 text-amber-500">↩ à cheval</span>}
-        </td>
-      </tr>,
-      ...allLegs.map(({ leg, svc, si, li }) => {
-        const isSpillover = isSpilloverRot || leg.end_ms < monthStart || leg.begin_ms >= monthEnd;
-        const isFirstLegOfSvc = li === 0;
-        const isFirstLegOfRot = si === 0 && li === 0;
-        const montantHCr  = isFirstLegOfRot ? ep4.H2HCr * PVEI * KSP : null;
-        const montantNuit = isFirstLegOfSvc && svc.tsv_nuit > 0 ? svc.tsv_nuit * PVEI : null;
-        const k = diffKey(leg.flightNumber, new Date(leg.begin_ms).getUTCDate());
-        const isDiff = !isSpillover && (highlightedKeys?.has(k) ?? false);
-        return (
-          <tr key={`d2-${leg.flightNumber}-${leg.begin_ms}`}
-              className={`border-b border-zinc-100 dark:border-zinc-800 ${isSpillover ? 'italic text-zinc-400' : ''} ${isDiff ? DIFF_ROW_CLASS : ''}`}>
-            <Td>{fmtDateCourt(leg.begin_ms)}</Td>
-            <Td>{leg.flightNumber}</Td>
-            <Td>{leg.dep}</Td>
-            <Td>{leg.arr}</Td>
-            <Td right>{fmt(leg.tdv_troncon)}</Td>
-            <Td right>{isFirstLegOfSvc ? fmt(svc.TME) : ''}</Td>
-            <Td right>{isFirstLegOfSvc ? fmt(svc.CMT, 4) : ''}</Td>
-            <Td right>{fmt(leg.hv100)}</Td>
-            <Td right>{isFirstLegOfSvc ? fmt(svc.HCV) : ''}</Td>
-            <Td right>{isFirstLegOfSvc ? fmt(svc.HCT) : ''}</Td>
-            <Td right>{isFirstLegOfRot ? fmt(ep4.HCA) : ''}</Td>
-            <Td right>{isFirstLegOfSvc ? fmt(svc.H1) : ''}</Td>
-            <Td right>{isFirstLegOfRot ? fmt(ep4.H2HC) : ''}</Td>
-            <Td right>{fmt(leg.hv100r)}</Td>
-            <Td right>{isFirstLegOfSvc ? fmt(svc.HCVr) : ''}</Td>
-            <Td right>{isFirstLegOfSvc ? fmt(svc.H1r) : ''}</Td>
-            <Td right>{isFirstLegOfRot ? fmt(ep4.H2HCr) : ''}</Td>
-            <Td right>{montantHCr != null ? fmt(montantHCr) : ''}</Td>
-            <Td right>{isFirstLegOfSvc && svc.tsv_nuit > 0 ? fmt(svc.tsv_nuit) : ''}</Td>
-            <Td right>{montantNuit != null ? fmt(montantNuit) : ''}</Td>
-            <Td>{/* Majo 10% */}</Td>
-            <Td>{/* Prime CDB */}</Td>
-          </tr>
-        );
-      }),
-    ];
-  });
+  // Format vol : zfill à 4 chiffres (ex "972" → "0972"), cohérent avec le PDF.
+  const fmtVol = (n: string) => String(parseInt(n, 10) || 0).padStart(4, '0');
 
   return (
-    <Card title="Feuille de Décompte d'Activité du Personnel Navigant EP4">
+    <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
+      <h3 className="text-sm font-semibold mb-3">Feuille Décompte d&apos;Activité — {flatRows.length} lignes</h3>
       <div className="overflow-x-auto">
-        <table className="text-[11px] font-mono w-full border-collapse [&_td]:px-3 [&_th]:px-3">
-          <thead>
-            <tr className="bg-zinc-50 dark:bg-zinc-800 text-zinc-500 border-b border-zinc-200 dark:border-zinc-700">
-              <Th>Date</Th>
-              <Th>N° Vol</Th>
-              <Th>Dép.</Th>
-              <Th>Arr.</Th>
-              <Th>HV réal</Th>
-              <Th>TME</Th>
-              <Th>CMT</Th>
-              <Th>HV 100%</Th>
-              <Th>HCV</Th>
-              <Th>HCT</Th>
-              <Th>HCA</Th>
-              <Th>H1</Th>
-              <Th>H2/HC</Th>
-              <Th>HV 100%(r)</Th>
-              <Th>HCV(r)</Th>
-              <Th>H1(r)</Th>
-              <Th>H2(r)/HC(r)</Th>
-              <Th>Montant HC(r)</Th>
-              <Th>Majo Nuit</Th>
-              <Th>Mt Nuit</Th>
-              <Th>Majo 10%</Th>
-              <Th>Prime CDB</Th>
+        <table className="min-w-full text-[11px] font-mono">
+          <thead className="text-zinc-400 uppercase tracking-wide text-[9px]">
+            <tr>
+              <th className="text-left  px-1 py-1">#</th>
+              <th className="text-left  px-1 py-1">Date</th>
+              <th className="text-left  px-1 py-1">Vol</th>
+              <th className="text-left  px-1 py-1">Esc</th>
+              <th className="text-right px-1 py-1">HV real</th>
+              <th className="text-right px-1 py-1">TME</th>
+              <th className="text-right px-1 py-1">CMT</th>
+              <th className="text-right px-1 py-1">HV 100%</th>
+              <th className="text-right px-1 py-1">HCV</th>
+              <th className="text-right px-1 py-1">HCT</th>
+              <th className="text-right px-1 py-1">HCA</th>
+              <th className="text-right px-1 py-1">H1</th>
+              <th className="text-right px-1 py-1">H2/HC</th>
+              <th className="text-right px-1 py-1">HV 100%(r)</th>
+              <th className="text-right px-1 py-1">HCV(r)</th>
+              <th className="text-right px-1 py-1">H1(r)</th>
+              <th className="text-right px-1 py-1">H2(r)/HC(r)</th>
+              <th className="text-right px-1 py-1">Montant HC(r)</th>
+              <th className="text-right px-1 py-1">Majo Nuit</th>
+              <th className="text-right px-1 py-1">Mt Nuit</th>
+              <th className="text-right px-1 py-1">Majo 10%</th>
+              <th className="text-right px-1 py-1">Prime CDB</th>
             </tr>
           </thead>
-          <tbody>{rotRows}</tbody>
-          {flights.length > 1 && (
-            <tfoot>
-              <tr className="border-t-2 border-zinc-400 dark:border-zinc-500 bg-zinc-50 dark:bg-zinc-800/40 font-semibold">
-                <td colSpan={4} className="px-2 py-1 text-[10px] text-zinc-500 uppercase">Total</td>
-                <Td right>{fmt(totHVReal)}</Td>
-                <Td right>{fmt(totTME)}</Td>
-                <Td />{/* CMT */}
-                <Td right>{fmt(totHv100)}</Td>
-                <Td right>{fmt(totHCV)}</Td>
-                <Td right>{fmt(totHCT)}</Td>
-                <Td right>{fmt(totHCA)}</Td>
-                <Td right>{fmt(totH1)}</Td>
-                <Td right>{fmt(totH2HC)}</Td>
-                <Td right>{fmt(totHv100r)}</Td>
-                <Td right>{fmt(totHCVr)}</Td>
-                <Td right>{fmt(totH1r)}</Td>
-                <Td right>{fmt(totH2HCr)}</Td>
-                <Td right>{fmt(totMontantHCr)}</Td>
-                <Td right>{fmt(totNuit)}</Td>
-                <Td right>{fmt(totMontantNuit)}</Td>
-                <Td />{/* Majo 10% */}
-                <Td />{/* Prime CDB */}
+          <tbody>
+            {flatRows.map((r, idx) => {
+              const { leg, svc, ep4, is_spillover, isFirstOfRot, isFirstOfSvc } = r;
+              const isSpillover = is_spillover || leg.end_ms < monthStart || leg.begin_ms >= monthEnd;
+              const k = diffKey(leg.flightNumber, new Date(leg.begin_ms).getUTCDate());
+              const isDiff = !isSpillover && (highlightedKeys?.has(k) ?? false);
+              const rowClass = [
+                isSpillover ? 'italic text-zinc-400' : '',
+                isDiff ? DIFF_ROW_CLASS : '',
+                isFirstOfRot && idx > 0 ? 'border-t border-zinc-200 dark:border-zinc-700' : '',
+              ].filter(Boolean).join(' ');
+              const montantHCr  = isFirstOfRot ? ep4.H2HCr * PVEI * KSP : null;
+              const montantNuit = isFirstOfSvc && svc.tsv_nuit > 0 ? svc.tsv_nuit * PVEI : null;
+              return (
+                <tr key={`d-${leg.flightNumber}-${leg.begin_ms}-${idx}`} className={rowClass}>
+                  <td className="px-1 py-0.5">{idx}</td>
+                  <td className="px-1 py-0.5">{fmtDateCourt(leg.begin_ms)}</td>
+                  <td className="px-1 py-0.5">{fmtVol(leg.flightNumber)}</td>
+                  <td className="px-1 py-0.5">{leg.dep}→{leg.arr}</td>
+                  <td className="px-1 py-0.5 text-right">{fmt(leg.hv100)}</td>
+                  <td className="px-1 py-0.5 text-right">{isFirstOfSvc ? fmt(svc.TME) : ''}</td>
+                  <td className="px-1 py-0.5 text-right">{isFirstOfSvc ? fmt(svc.CMT, 4) : ''}</td>
+                  <td className="px-1 py-0.5 text-right">{fmt(leg.hv100)}</td>
+                  <td className="px-1 py-0.5 text-right">{isFirstOfSvc ? fmt(svc.HCV) : ''}</td>
+                  <td className="px-1 py-0.5 text-right">{isFirstOfSvc ? fmt(svc.HCT) : ''}</td>
+                  <td className="px-1 py-0.5 text-right">{isFirstOfRot ? fmt(ep4.HCA) : ''}</td>
+                  <td className="px-1 py-0.5 text-right">{isFirstOfSvc ? fmt(svc.H1)  : ''}</td>
+                  <td className="px-1 py-0.5 text-right">{isFirstOfRot ? fmt(ep4.H2HC) : ''}</td>
+                  <td className="px-1 py-0.5 text-right">{fmt(leg.hv100r)}</td>
+                  <td className="px-1 py-0.5 text-right">{isFirstOfSvc ? fmt(svc.HCVr) : ''}</td>
+                  <td className="px-1 py-0.5 text-right">{isFirstOfSvc ? fmt(svc.H1r)  : ''}</td>
+                  <td className="px-1 py-0.5 text-right">{isFirstOfRot ? fmt(ep4.H2HCr) : ''}</td>
+                  <td className="px-1 py-0.5 text-right">{montantHCr  != null ? fmt(montantHCr)  : ''}</td>
+                  <td className="px-1 py-0.5 text-right">{isFirstOfSvc && svc.tsv_nuit > 0 ? fmt(svc.tsv_nuit) : ''}</td>
+                  <td className="px-1 py-0.5 text-right">{montantNuit != null ? fmt(montantNuit) : ''}</td>
+                  <td className="px-1 py-0.5 text-right" />
+                  <td className="px-1 py-0.5 text-right" />
+                </tr>
+              );
+            })}
+            {flights.length > 1 && (
+              <tr className="font-bold border-t border-zinc-300 dark:border-zinc-700">
+                <td className="px-1 py-1" colSpan={4}>TOTAL</td>
+                <td className="px-1 py-1 text-right">{fmt(totHVReal)}</td>
+                <td className="px-1 py-1 text-right">{fmt(totTME)}</td>
+                <td className="px-1 py-1 text-right" />
+                <td className="px-1 py-1 text-right">{fmt(totHv100)}</td>
+                <td className="px-1 py-1 text-right">{fmt(totHCV)}</td>
+                <td className="px-1 py-1 text-right">{fmt(totHCT)}</td>
+                <td className="px-1 py-1 text-right">{fmt(totHCA)}</td>
+                <td className="px-1 py-1 text-right">{fmt(totH1)}</td>
+                <td className="px-1 py-1 text-right">{fmt(totH2HC)}</td>
+                <td className="px-1 py-1 text-right">{fmt(totHv100r)}</td>
+                <td className="px-1 py-1 text-right">{fmt(totHCVr)}</td>
+                <td className="px-1 py-1 text-right">{fmt(totH1r)}</td>
+                <td className="px-1 py-1 text-right">{fmt(totH2HCr)}</td>
+                <td className="px-1 py-1 text-right">{fmt(totMontantHCr)}</td>
+                <td className="px-1 py-1 text-right">{fmt(totNuit)}</td>
+                <td className="px-1 py-1 text-right">{fmt(totMontantNuit)}</td>
+                <td className="px-1 py-1 text-right" />
+                <td className="px-1 py-1 text-right" />
               </tr>
-            </tfoot>
-          )}
+            )}
+          </tbody>
         </table>
       </div>
-    </Card>
+    </section>
   );
 }
