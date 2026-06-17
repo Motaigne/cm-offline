@@ -47,7 +47,18 @@ export function useAuthGuard(): AuthState {
 
       const session = sessionRes.kind === 'ok' ? sessionRes.session : null;
       if (!session && sessionRes.kind === 'ok') {
-        // getSession a résolu et dit "pas de session" → vraiment pas connecté.
+        // getSession a résolu et dit "pas de session" → en théorie redirect login.
+        // MAIS si on est offline, ça boucle : /login redirigerait probablement
+        // vers / une fois la session reconstituée, mais sans réseau on ne
+        // peut rien faire. Sur offline cold-cold (kill + wifi off + open),
+        // getSession peut renvoyer null même avec un cookie présent si le
+        // refresh silencieux a échoué. On reste sur le shell (status=authed,
+        // session=null) — toléré par gantt-shell-client.
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          console.warn('[auth-guard] getSession=null offline → reste sur le shell');
+          setState({ status: 'authed', session: null });
+          return;
+        }
         setState({ status: 'redirecting', session: null });
         router.replace('/login');
         return;
@@ -68,6 +79,12 @@ export function useAuthGuard(): AuthState {
           clearTimeout(timer);
           if (cancelled) return;
           if (error || !data.user) {
+            // Anti-boucle offline : Supabase peut renvoyer error/user=null
+            // sans throw quand le réseau est coupé. Si on est offline, on
+            // trust la session locale au lieu de rediriger vers /login.
+            if (typeof navigator !== 'undefined' && !navigator.onLine) {
+              return;
+            }
             await logSessionLostClient(supabase, session?.user.email, '401');
             router.replace('/login');
           }
@@ -81,6 +98,13 @@ export function useAuthGuard(): AuthState {
       (event, newSession) => {
         if (cancelled) return;
         if (event === 'SIGNED_OUT') {
+          // Anti-boucle offline : Supabase peut fire SIGNED_OUT quand le
+          // refresh silencieux d'un token échoue (réseau coupé). Si offline,
+          // on ignore et on garde la session locale telle quelle.
+          if (typeof navigator !== 'undefined' && !navigator.onLine) {
+            console.warn('[auth-guard] SIGNED_OUT ignored (offline)');
+            return;
+          }
           router.replace('/login');
         } else if (newSession) {
           setState({ status: 'authed', session: newSession });
