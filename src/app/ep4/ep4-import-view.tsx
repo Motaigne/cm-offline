@@ -8,7 +8,7 @@
 // - Permet de garder ~12-13 EP4 mensuels accessibles offline (un par mois),
 //   sans repasser par le PDF.
 
-import { useRef, useState } from 'react';
+import { useRef, useState, type Ref } from 'react';
 import {
   parseEp4PdfFile, Ep4FormatError,
 } from '@/lib/ep4-pdf-extract';
@@ -355,17 +355,18 @@ function HorairePanel({
 }
 
 function ActivitePanel({
-  rows, totaux, summary, highlightedKeys,
+  rows, totaux, summary, highlightedKeys, scrollRef,
 }: {
   rows:    Ep4PdfData['activite']['rows'];
   totaux:  Ep4PdfData['activite']['totaux'];
   summary: Ep4PdfData['activite']['summary'];
   highlightedKeys?: Set<string>;
+  scrollRef?: Ref<HTMLDivElement>;
 }) {
   return (
     <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 space-y-4">
       <h3 className="text-sm font-semibold">Feuille Décompte d&apos;Activité — {rows.length} lignes</h3>
-      <div className="overflow-x-auto">
+      <div ref={scrollRef} className="overflow-x-auto">
         {/* px-3 + nowrap sur tous les th/td → la table déborde, scroll
             horizontal via overflow-x-auto au-dessus (cf. user). */}
         <table className="min-w-full text-[11px] font-mono whitespace-nowrap [&_th]:px-3 [&_td]:px-3">

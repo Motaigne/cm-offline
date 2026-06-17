@@ -240,15 +240,21 @@ async function buildFictiveMonths(): Promise<string[]> {
  *  l'ancien Server Component passait à GanttView. Pas de réseau. */
 export async function loadShellData(month: string): Promise<ShellData> {
   const [y, mo] = month.split('-').map(Number);
+  // Instrumentation temporaire : log la duree de chaque sub-fetch pour
+  // identifier le bottleneck du chargement online (cf debug user 2026-06-17).
+  // A retirer une fois la cause comprise.
+  const t0 = performance.now();
+  const lap = (label: string) => console.warn(`[shell] ${label} ${Math.round(performance.now() - t0)}ms`);
   const [scenarios, notes, annexeRows, profileVersions, a81CumulBefore, irMf, fictiveMonths] = await Promise.all([
-    loadScenariosForMonth(month).then(s => s ?? []),
-    loadNotesForMonth(month),
-    loadAnnexeRowsLocal(),
-    loadProfileVersionsLocal(),
-    buildA81CumulBefore(y, mo),
-    buildIrMfForMonth(month),
-    buildFictiveMonths(),
+    loadScenariosForMonth(month).then(s => { lap('scenarios');       return s ?? []; }),
+    loadNotesForMonth(month).then(n =>      { lap('notes');           return n; }),
+    loadAnnexeRowsLocal().then(a =>         { lap('annexeRows');      return a; }),
+    loadProfileVersionsLocal().then(p =>    { lap('profileVersions'); return p; }),
+    buildA81CumulBefore(y, mo).then(a =>    { lap('a81CumulBefore');  return a; }),
+    buildIrMfForMonth(month).then(i =>      { lap('irMf');            return i; }),
+    buildFictiveMonths().then(f =>          { lap('fictiveMonths');   return f; }),
   ]);
+  lap('TOTAL Promise.all');
 
   const annexe = getAnnexeDataFromRows(annexeRows, month);
   const profile = pickProfileForMonth(profileVersions, month);

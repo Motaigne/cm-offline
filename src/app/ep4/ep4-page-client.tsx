@@ -115,6 +115,34 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
 
   const cancelRef = useRef<(() => void) | null>(null);
 
+  // Sync horizontal scroll des 2 tableaux Décompte (calculé + PDF importé)
+  // pour que les colonnes restent alignées quand l'utilisateur scroll
+  // (~23 colonnes, déborde l'écran).
+  const decompteCalcScrollRef   = useRef<HTMLDivElement>(null);
+  const decompteImportScrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (view !== 'decompte') return;
+    const a = decompteCalcScrollRef.current;
+    const b = decompteImportScrollRef.current;
+    if (!a || !b) return;
+    let syncing = false;
+    const sync = (src: HTMLDivElement, dst: HTMLDivElement) => () => {
+      if (syncing) return;
+      syncing = true;
+      dst.scrollLeft = src.scrollLeft;
+      // Reset au prochain frame pour ne pas boucler sur le scroll event du dst.
+      requestAnimationFrame(() => { syncing = false; });
+    };
+    const onA = sync(a, b);
+    const onB = sync(b, a);
+    a.addEventListener('scroll', onA, { passive: true });
+    b.addEventListener('scroll', onB, { passive: true });
+    return () => {
+      a.removeEventListener('scroll', onA);
+      b.removeEventListener('scroll', onB);
+    };
+  }, [view, currentImport]);
+
   const loadMonth = useCallback((m: string) => {
     cancelRef.current?.();
     let cancelled = false;
@@ -382,6 +410,7 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
                   <Ep4DecompteEP4Consolidee
                     flights={scenarioFlights} year={y} month={mo}
                     highlightedKeys={diff.decompteKeys}
+                    scrollRef={decompteCalcScrollRef}
                   />
                   {currentImport?.monthIso === month && (
                     <div className="mt-4">
@@ -393,6 +422,7 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
                         totaux={currentImport.data.activite.totaux}
                         summary={currentImport.data.activite.summary}
                         highlightedKeys={diff.decompteKeys}
+                        scrollRef={decompteImportScrollRef}
                       />
                     </div>
                   )}

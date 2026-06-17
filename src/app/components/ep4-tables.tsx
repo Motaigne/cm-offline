@@ -2,7 +2,7 @@
 // Consommé par /comparatif (1 rotation au clic) et /ep4 (toutes rotations
 // du planning). Pas de fetch ici — l'objet Ep4Rotation est passé en prop.
 
-import type { ReactNode } from 'react';
+import type { ReactNode, Ref } from 'react';
 import type { Ep4Rotation } from '@/lib/ep4';
 import { getPlanPrestation } from '@/lib/plan-prestation';
 import { diffKey } from '@/lib/ep4-diff';
@@ -722,11 +722,15 @@ export function Ep4HoraireEP4Consolidee({ flights, year, month, highlightedKeys 
 const PVEI = 120.65;
 const KSP  = 1.07;
 
-export function Ep4DecompteEP4Consolidee({ flights, year, month, highlightedKeys }: {
+export function Ep4DecompteEP4Consolidee({ flights, year, month, highlightedKeys, scrollRef }: {
   flights: ConsoFlight[];
   year: number;
   month: number;
   highlightedKeys?: Set<string>;
+  /** Ref optionnel sur le conteneur scrollable horizontal — permet à un
+   *  parent de synchroniser le scroll avec un autre tableau jumeau (ex:
+   *  le panel PDF importé sur l'onglet Décompte). */
+  scrollRef?: Ref<HTMLDivElement>;
 }) {
   const monthStart = Date.UTC(year, month - 1, 1);
   const monthEnd   = month === 12 ? Date.UTC(year + 1, 0, 1) : Date.UTC(year, month, 1);
@@ -807,7 +811,7 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month, highlightedKeys
   return (
     <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
       <h3 className="text-sm font-semibold mb-3">Feuille Décompte d&apos;Activité — {flatRows.length} lignes</h3>
-      <div className="overflow-x-auto">
+      <div ref={scrollRef} className="overflow-x-auto">
         {/* Sélecteurs enfants : impose px-3 + nowrap sur tous les th/td à
             l'intérieur (specificity > px-1 inline). 23 colonnes → la table
             dépasse l'écran, le scroll horizontal est attendu (cf. user). */}
