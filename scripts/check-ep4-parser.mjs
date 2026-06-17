@@ -1,23 +1,33 @@
 #!/usr/bin/env node
-// Vérifie la sortie de src/lib/ep4-pdf-parse.ts contre le dump du PDF de
-// référence. Utilise ts-node ? Non, on compile à la volée via tsx ou on
-// importe le .ts via tsx. Plus simple : on charge tsx en runtime.
+// Vérifie la sortie de src/lib/ep4-pdf-parse.ts.
 //
-// Usage :
-//   node --import tsx scripts/check-ep4-parser.mjs <dump.json>
-//   ou : npx tsx scripts/check-ep4-parser.mjs <dump.json>
+// Deux modes :
+//   - Par défaut (dump JSON) : npx tsx scripts/check-ep4-parser.mjs [dump.json]
+//   - Via PDF direct (exerce aussi ep4-pdf-extract.ts qui utilise pdfjs) :
+//     npx tsx scripts/check-ep4-parser.mjs --pdf <file.pdf>
 
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parseEp4PdfItems } from '../src/lib/ep4-pdf-parse.ts';
+import { parseEp4PdfFile } from '../src/lib/ep4-pdf-extract.ts';
 
 async function main() {
-  const dumpArg = process.argv[2] ?? 'sources/sourcesEP4/dump.json';
-  const dumpPath = path.isAbsolute(dumpArg) ? dumpArg : path.resolve(process.cwd(), dumpArg);
-  const raw = await readFile(dumpPath, 'utf-8');
-  const pages = JSON.parse(raw);
+  const args = process.argv.slice(2);
+  const pdfMode = args.includes('--pdf');
 
-  const result = parseEp4PdfItems(pages);
+  let result;
+  if (pdfMode) {
+    const pdfArg = args[args.indexOf('--pdf') + 1] ?? 'sources/sourcesEP4/AF_Activité_202601.pdf';
+    const pdfPath = path.isAbsolute(pdfArg) ? pdfArg : path.resolve(process.cwd(), pdfArg);
+    const buffer = await readFile(pdfPath);
+    result = await parseEp4PdfFile(buffer);
+  } else {
+    const dumpArg = args[0] ?? 'sources/sourcesEP4/dump.json';
+    const dumpPath = path.isAbsolute(dumpArg) ? dumpArg : path.resolve(process.cwd(), dumpArg);
+    const raw = await readFile(dumpPath, 'utf-8');
+    const pages = JSON.parse(raw);
+    result = parseEp4PdfItems(pages);
+  }
 
   // Affichage compact pour validation visuelle.
   console.log('═══ META ═══');
