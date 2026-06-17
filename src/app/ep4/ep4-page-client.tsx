@@ -5,7 +5,10 @@ import { NavBar } from '@/app/components/nav';
 import { Ep4HoraireEP4Consolidee, Ep4DecompteEP4Consolidee, Ep4FraisEP4Consolidee } from '@/app/components/ep4-tables';
 import { getEp4ForMonth, type Ep4MonthResponse } from '@/app/actions/ep4';
 import { loadEp4ForMonthLocal } from '@/lib/ep4-local';
-import { Ep4ImportView, type Ep4ImportSummary } from './ep4-import-view';
+import {
+  Ep4ImportView, type Ep4ImportSummary,
+  Ep4ImportHorairePanel, Ep4ImportActivitePanel, Ep4ImportFraisPanel,
+} from './ep4-import-view';
 import {
   saveEp4Import, loadEp4Import, listEp4Imports, deleteEp4Import,
   type StoredEp4Import,
@@ -339,11 +342,48 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
 
             {data && scenarioFlights.length > 0 && (
               view === 'horaire' ? (
-                <Ep4HoraireEP4Consolidee flights={scenarioFlights} year={y} month={mo} />
+                <>
+                  <Ep4HoraireEP4Consolidee flights={scenarioFlights} year={y} month={mo} />
+                  {currentImport?.monthIso === month && (
+                    <div className="mt-4">
+                      <p className="text-[10px] uppercase tracking-wide font-semibold text-zinc-400 mb-2">
+                        Issue de l&apos;EP4 importé ({currentImport.fileName})
+                      </p>
+                      <Ep4ImportHorairePanel rows={currentImport.data.horaire.rows} />
+                    </div>
+                  )}
+                </>
               ) : view === 'decompte' ? (
-                <Ep4DecompteEP4Consolidee flights={scenarioFlights} year={y} month={mo} />
+                <>
+                  <Ep4DecompteEP4Consolidee flights={scenarioFlights} year={y} month={mo} />
+                  {currentImport?.monthIso === month && (
+                    <div className="mt-4">
+                      <p className="text-[10px] uppercase tracking-wide font-semibold text-zinc-400 mb-2">
+                        Issue de l&apos;EP4 importé ({currentImport.fileName})
+                      </p>
+                      <Ep4ImportActivitePanel
+                        rows={currentImport.data.activite.rows}
+                        totaux={currentImport.data.activite.totaux}
+                        summary={currentImport.data.activite.summary}
+                      />
+                    </div>
+                  )}
+                </>
               ) : (
-                <Ep4FraisEP4Consolidee flights={scenarioFlights} />
+                <>
+                  <Ep4FraisEP4Consolidee flights={scenarioFlights} />
+                  {currentImport?.monthIso === month && (
+                    <div className="mt-4">
+                      <p className="text-[10px] uppercase tracking-wide font-semibold text-zinc-400 mb-2">
+                        Issue de l&apos;EP4 importé ({currentImport.fileName})
+                      </p>
+                      <Ep4ImportFraisPanel
+                        rows={currentImport.data.frais.rows}
+                        totaux={currentImport.data.frais.totaux}
+                      />
+                    </div>
+                  )}
+                </>
               )
             )}
           </>

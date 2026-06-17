@@ -218,6 +218,14 @@ function Ep4ImportTables({ data }: { data: Ep4PdfData }) {
   );
 }
 
+// Panels exportés pour ré-affichage dans les onglets Feuille Horaire / Décompte /
+// Frais de /ep4 (= comparaison à l'œil avec le tableau calculé).
+export {
+  HorairePanel as Ep4ImportHorairePanel,
+  ActivitePanel as Ep4ImportActivitePanel,
+  FraisPanel as Ep4ImportFraisPanel,
+};
+
 function MetaPanel({ meta }: { meta: Ep4PdfData['meta'] }) {
   const cells: { label: string; value: string | null }[] = [
     { label: 'Mois',       value: meta.monthLabel },
