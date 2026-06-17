@@ -1559,7 +1559,9 @@ export function GanttView({
   function openAdd(scenarioId: string, scenarioName: ScenarioName, date: string) {
     setOverlapErr(false);
     setAddKind('off');
-    setNbJours('');
+    // '1' par défaut car le kind initial 'off' (DDA REPOS) utilise désormais
+    // le sélecteur Nb. de jours — sans valeur, le submit serait disabled.
+    setNbJours('1');
     setAddEnd(date);
     setSheetCategoryMode(false);
     setSheet({ mode: 'add', scenarioId, scenarioName, date });
@@ -1592,7 +1594,7 @@ export function GanttView({
       const end = addDays(sheet.date, tafDur - 1);
       setAddEnd(end);
       setNbJours(String(tafDur));
-    } else if (k === 'conge' || k === 'conge_ss') {
+    } else if (k === 'conge' || k === 'conge_ss' || k === 'off') {
       const days = nbJours ? parseInt(nbJours) : 1;
       setAddEnd(addDays(sheet.date, days - 1));
     } else {
@@ -2615,17 +2617,22 @@ export function GanttView({
                 {/* Inputs durée + Submit : masqués en mode catégorie (le cadre
                     ne montre alors que les boutons DDA/Vol P/Élabo). */}
                 {!sheetCategoryMode && <>
-                {/* Congés / CSS : nb de jours */}
-                {(addKind === 'conge' || addKind === 'conge_ss') && (
+                {/* Congés / CSS / DDA REPOS : nb de jours via <select> natif —
+                    sur iPad PWA standalone, ouvre le wheel picker iOS au lieu
+                    du keyboard numérique (cf. demande UX 2026-06-17 PM). */}
+                {(addKind === 'conge' || addKind === 'conge_ss' || addKind === 'off') && (
                   <div className="flex items-center gap-3">
                     <label className="text-sm text-zinc-600 dark:text-zinc-300 font-medium">Nb. de jours</label>
-                    <input
-                      type="number" min={1} max={31}
-                      value={nbJours}
+                    <select
+                      value={nbJours || '1'}
                       onChange={e => handleNbJoursChange(e.target.value)}
                       className="w-20 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-center font-semibold"
                       autoFocus
-                    />
+                    >
+                      {Array.from({ length: 31 }, (_, i) => i + 1).map(n => (
+                        <option key={n} value={n}>{n}</option>
+                      ))}
+                    </select>
                     {nbJours && parseInt(nbJours) >= 1 && (
                       <span className="text-sm text-zinc-500">
                         → {new Date(computedEnd + 'T00:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}
@@ -2646,9 +2653,11 @@ export function GanttView({
                   </div>
                 )}
 
-                {/* OFF/Sol/etc: date fin libre — non applicable au vol (dates
-                    fixées par la rotation) en mode edit-flight. */}
-                {addKind !== 'conge' && addKind !== 'conge_ss' && addKind !== 'taf' &&
+                {/* Sol/medical/autre/sim/instr: date fin libre — non applicable
+                    au vol (dates fixées par la rotation) en mode edit-flight.
+                    'off' (DDA REPOS) utilise désormais le sélecteur Nb. de jours
+                    ci-dessus, donc exclu d'ici. */}
+                {addKind !== 'conge' && addKind !== 'conge_ss' && addKind !== 'taf' && addKind !== 'off' &&
                   !(sheet.mode === 'edit' && sheet.item?.kind === 'flight') && (
                   <div className="flex items-center gap-3">
                     <label className="text-xs text-zinc-500">Jusqu&apos;au</label>
@@ -2659,7 +2668,7 @@ export function GanttView({
                 )}
 
                 {/* Edit: show current dates */}
-                {sheet.mode === 'edit' && sheet.item && (addKind === 'conge' || addKind === 'conge_ss') && (
+                {sheet.mode === 'edit' && sheet.item && (addKind === 'conge' || addKind === 'conge_ss' || addKind === 'off') && (
                   <p className="text-xs text-zinc-400">
                     Modifiez le nombre de jours pour réduire ou agrandir le bloc (le premier jour reste fixe).
                   </p>
@@ -2817,7 +2826,7 @@ export function GanttView({
                     </button>
                   </div>
                 ) : (
-                  <button onClick={handleSubmit} disabled={isPending || ((addKind === 'conge' || addKind === 'conge_ss') && !nbJours)}
+                  <button onClick={handleSubmit} disabled={isPending || ((addKind === 'conge' || addKind === 'conge_ss' || addKind === 'off') && !nbJours)}
                     className="w-full rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-zinc-700 disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900">
                     Placer
                   </button>
