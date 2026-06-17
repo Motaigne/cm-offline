@@ -175,6 +175,17 @@ function fmtEp4Time(ms: number): string {
   return `${d.getUTCDate()} | ${String(d.getUTCHours()).padStart(2, '0')}.${String(d.getUTCMinutes()).padStart(2, '0')}`;
 }
 
+/** day | HH.cc UTC où cc = centièmes industriels (MM/60 × 100). C'est le
+ *  format des horaires sur l'EP4 PDF d'AF (ex: 21h06 → "21.10"). */
+function fmtEp4TimeCentiemes(ms: number): string {
+  const d = new Date(ms);
+  const day = d.getUTCDate();
+  const hour = d.getUTCHours();
+  const minute = d.getUTCMinutes();
+  const cents = Math.round((minute / 60) * 100);
+  return `${day} | ${String(hour).padStart(2, '0')}.${String(cents).padStart(2, '0')}`;
+}
+
 /** day | HH.MM en local (UTC + offset en heures de l'escale) */
 function fmtEp4TimeLocal(ms: number, offsetH: number): string {
   return fmtEp4Time(ms + offsetH * 3_600_000);
@@ -604,92 +615,82 @@ export function Ep4HoraireEP4Consolidee({ flights, year, month, highlightedKeys 
 }) {
   const monthStart = Date.UTC(year, month - 1, 1);
   const monthEnd   = month === 12 ? Date.UTC(year + 1, 0, 1) : Date.UTC(year, month, 1);
-  // 12 columns: N° Ligne | Esc. | Réal dep | Prog dep | Esc. | Réal arr | Prog arr | Tps Vol | V.ref | TSV | T.A | Tps Vol Nuit
-  const NCOLS = 12;
+
+  // Aplatit tous les legs en compteur global # (= ordre d'apparition), pour
+  // matcher visuellement le panel PDF. On garde un flag isFirstOfRotation
+  // pour pouvoir tracer une légère séparation top entre rotations sans
+  // ajouter de ligne label dédiée.
+  const flatRows = flights.flatMap(({ ep4, is_spillover }, ri) =>
+    ep4.services.flatMap((svc, si) =>
+      svc.legs.map((leg, li) => ({
+        leg, svc, ep4, is_spillover,
+        isFirstOfRotation:        si === 0 && li === 0,
+        isLastLegOfSvc:           li === svc.legs.length - 1,
+        isLastSvcOfRot:           si === ep4.services.length - 1,
+        rotKey:                   `${ep4.rotation_code ?? 'rot'}-${ep4.debut_vol_ms}-${ri}`,
+      })),
+    ),
+  );
+
+  const totalRows = flatRows.length;
 
   return (
-    <Card title="Feuille Horaire d'Activité du Personnel Navigant EP4">
+    <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
+      <h3 className="text-sm font-semibold mb-3">Feuille Horaire — {totalRows} lignes</h3>
       <div className="overflow-x-auto">
-        <table className="text-[11px] font-mono w-full table-fixed border-collapse min-w-[600px]">
-          <colgroup>
-            <col style={{ width: '8%' }} />
-            <col style={{ width: '5%' }} />
-            <col style={{ width: '10%' }} />
-            <col style={{ width: '10%' }} />
-            <col style={{ width: '5%' }} />
-            <col style={{ width: '10%' }} />
-            <col style={{ width: '10%' }} />
-            <col style={{ width: '8%' }} />
-            <col style={{ width: '8%' }} />
-            <col style={{ width: '8%' }} />
-            <col style={{ width: '8%' }} />
-            <col style={{ width: '10%' }} />
-          </colgroup>
-          <thead>
-            <tr className="bg-zinc-50 dark:bg-zinc-800 text-zinc-500 border-b border-zinc-100 dark:border-zinc-700">
-              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">N° Ligne</th>
-              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">Esc.</th>
-              <th colSpan={2} className="px-2 py-1 text-center text-[10px] font-medium uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">Départ TU</th>
-              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">Esc.</th>
-              <th colSpan={2} className="px-2 py-1 text-center text-[10px] font-medium uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">Arrivée TU</th>
-              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">Tps Vol</th>
-              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">V.ref</th>
-              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">TSV</th>
-              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">T.A</th>
-              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">Tps Vol Nuit</th>
-            </tr>
-            <tr className="bg-zinc-50 dark:bg-zinc-800 text-zinc-500 border-b border-zinc-200 dark:border-zinc-700">
-              <Th>Réal</Th>
-              <Th>Prog</Th>
-              <Th>Réal</Th>
-              <Th>Prog</Th>
+        <table className="min-w-full text-[11px] font-mono">
+          <thead className="text-zinc-400 uppercase tracking-wide text-[9px]">
+            <tr>
+              <th className="text-left px-1 py-1">#</th>
+              <th className="text-left px-1 py-1">N°</th>
+              <th className="text-left px-1 py-1">Esc</th>
+              <th className="text-left px-1 py-1">Réel dep</th>
+              <th className="text-left px-1 py-1">Prog dep</th>
+              <th className="text-left px-1 py-1">Esc</th>
+              <th className="text-left px-1 py-1">Réel arr</th>
+              <th className="text-left px-1 py-1">Prog arr</th>
+              <th className="text-right px-1 py-1">Réel vol</th>
+              <th className="text-right px-1 py-1">Prog vol</th>
+              <th className="text-right px-1 py-1">V.ref</th>
+              <th className="text-right px-1 py-1">TSV</th>
+              <th className="text-right px-1 py-1">T.A</th>
+              <th className="text-right px-1 py-1">V.Nuit</th>
             </tr>
           </thead>
           <tbody>
-            {flights.map(({ ep4, is_spillover }) => {
-              const allLegs = ep4.services.flatMap((svc, si) =>
-                svc.legs.map((leg, li) => ({ leg, svc, si, li, isLastLegOfSvc: li === svc.legs.length - 1 }))
+            {flatRows.map((r, idx) => {
+              const { leg, svc, ep4, is_spillover, isFirstOfRotation, isLastLegOfSvc, isLastSvcOfRot } = r;
+              const isSpillover = is_spillover || leg.end_ms < monthStart || leg.begin_ms >= monthEnd;
+              const k = diffKey(leg.flightNumber, new Date(leg.begin_ms).getUTCDate());
+              const isDiff = !isSpillover && (highlightedKeys?.has(k) ?? false);
+              const rowClass = [
+                isSpillover ? 'italic text-zinc-400' : '',
+                isDiff ? DIFF_ROW_CLASS : '',
+                isFirstOfRotation && idx > 0 ? 'border-t border-zinc-200 dark:border-zinc-700' : '',
+              ].filter(Boolean).join(' ');
+              return (
+                <tr key={`h-${leg.flightNumber}-${leg.begin_ms}-${idx}`} className={rowClass}>
+                  <td className="px-1 py-0.5">{idx}</td>
+                  <td className="px-1 py-0.5">{leg.flightNumber}</td>
+                  <td className="px-1 py-0.5">{leg.dep}</td>
+                  <td className="px-1 py-0.5">—</td>
+                  <td className="px-1 py-0.5">{fmtEp4TimeCentiemes(leg.begin_ms)}</td>
+                  <td className="px-1 py-0.5">{leg.arr}</td>
+                  <td className="px-1 py-0.5">—</td>
+                  <td className="px-1 py-0.5">{fmtEp4TimeCentiemes(leg.end_ms)}</td>
+                  <td className="px-1 py-0.5 text-right">—</td>
+                  <td className="px-1 py-0.5 text-right">{fmt(leg.tdv_troncon)}</td>
+                  <td className="px-1 py-0.5 text-right">{fmt(leg.tdv_troncon)}</td>
+                  <td className="px-1 py-0.5 text-right">0</td>
+                  <td className="px-1 py-0.5 text-right">{isLastLegOfSvc && isLastSvcOfRot ? fmt(ep4.TA) : ''}</td>
+                  <td className="px-1 py-0.5 text-right">{isLastLegOfSvc ? fmt(svc.tsv_nuit) : ''}</td>
+                </tr>
               );
-              const isLastSvcIdx = ep4.services.length - 1;
-
-              return [
-                // Ligne séparateur rotation
-                <tr key={`sep-h-${ep4.rotation_code}-${ep4.debut_vol_ms}`}
-                    className="bg-zinc-100 dark:bg-zinc-800/60 border-t-2 border-zinc-300 dark:border-zinc-600">
-                  <td colSpan={NCOLS} className="px-2 py-0.5 text-[10px] font-semibold text-zinc-500 dark:text-zinc-300">
-                    {ep4.rotation_code || '—'}
-                    {is_spillover && <span className="ml-2 text-amber-500">↩ à cheval</span>}
-                  </td>
-                </tr>,
-                ...allLegs.map(({ leg, svc, si, li, isLastLegOfSvc }) => {
-                  const isSpillover = is_spillover || leg.end_ms < monthStart || leg.begin_ms >= monthEnd;
-                  const isFirstLegOfSvc = li === 0;
-                  const k = diffKey(leg.flightNumber, new Date(leg.begin_ms).getUTCDate());
-                  const isDiff = !isSpillover && (highlightedKeys?.has(k) ?? false);
-                  return (
-                    <tr key={`h-${leg.flightNumber}-${leg.begin_ms}`}
-                        className={`border-b border-zinc-100 dark:border-zinc-800 ${isSpillover ? 'italic text-zinc-400' : ''} ${isDiff ? DIFF_ROW_CLASS : ''}`}>
-                      <Td>{isFirstLegOfSvc ? leg.flightNumber : ''}</Td>
-                      <Td>{leg.dep}</Td>
-                      <Td>{fmtEp4Time(leg.begin_ms)}</Td>
-                      <Td>{''}</Td>
-                      <Td>{leg.arr}</Td>
-                      <Td>{fmtEp4Time(leg.end_ms)}</Td>
-                      <Td>{''}</Td>
-                      <Td right>{fmt(leg.tdv_troncon)}</Td>
-                      <Td right>{fmt(leg.tdv_troncon * svc.CMT)}</Td>
-                      <Td right>{isLastLegOfSvc ? fmt(svc.tsv) : ''}</Td>
-                      <Td right>{isLastLegOfSvc && si === isLastSvcIdx ? fmt(ep4.TA) : ''}</Td>
-                      <Td right>{isLastLegOfSvc ? fmt(svc.tsv_nuit) : ''}</Td>
-                    </tr>
-                  );
-                }),
-              ];
             })}
           </tbody>
         </table>
       </div>
-    </Card>
+    </section>
   );
 }
 
