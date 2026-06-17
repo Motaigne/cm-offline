@@ -19,7 +19,23 @@ let pdfjsPromise: Promise<PdfjsModule> | null = null;
 
 function loadPdfjs(): Promise<PdfjsModule> {
   if (!pdfjsPromise) {
-    pdfjsPromise = import('pdfjs-dist/legacy/build/pdf.mjs');
+    pdfjsPromise = (async () => {
+      const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+      // En browser pdfjs v6 exige un workerSrc même quand on charge le legacy
+      // build. `new URL(..., import.meta.url)` est résolu statiquement par
+      // webpack/turbopack → le worker est bundlé et servi avec un hash, donc
+      // précachable par le SW comme le reste de l'app.
+      // En Node (tsx scripts/check-ep4-parser.mjs --pdf …) ce setter est aussi
+      // exécuté mais le legacy build se rabat sur le fakeWorker, donc ça marche
+      // aussi côté serveur sans serveur HTTP pour les workers.
+      if (typeof window !== 'undefined' && !pdfjs.GlobalWorkerOptions.workerSrc) {
+        pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+          'pdfjs-dist/legacy/build/pdf.worker.mjs',
+          import.meta.url,
+        ).toString();
+      }
+      return pdfjs;
+    })();
   }
   return pdfjsPromise;
 }
