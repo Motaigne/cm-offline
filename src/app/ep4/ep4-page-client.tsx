@@ -21,6 +21,10 @@ const VIEWS: { id: ViewName; label: string }[] = [
 const MONTH_FR = ['Janvier','Février','Mars','Avril','Mai','Juin',
                   'Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
 
+/** Clé localStorage du dernier PDF EP4 importé. Un seul slot, écrasé à chaque
+ *  nouvel import. ~30-80 Ko de JSON pour un mois complet, OK vs quota 5 Mo. */
+const EP4_IMPORT_LS_KEY = 'cm-ep4-pdf-import';
+
 function shiftMonth(m: string, delta: number): string {
   const [y, mo] = m.split('-').map(Number);
   const d = new Date(y, mo - 1 + delta, 1);
@@ -34,10 +38,31 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
   const [error, setError]       = useState<string | null>(null);
   const [scenario, setScenario] = useState<ScenarioName>('A');
   const [view, setView]         = useState<ViewName>('horaire');
-  // State du PDF importé : remonté ici pour survivre aux switches de vue
-  // (Ep4ImportView est démonté quand view !== 'import', sinon on perdait
-  // le PDF déjà chargé à chaque aller-retour).
-  const [importState, setImportState] = useState<Ep4ImportState>(EP4_IMPORT_INITIAL);
+  // State du PDF importé : remonté ici pour survivre aux switches de vue,
+  // hydraté depuis localStorage (~30-80 Ko de JSON, négligeable côté quota)
+  // pour aussi survivre aux refresh / kill app.
+  const [importState, setImportState] = useState<Ep4ImportState>(() => {
+    if (typeof window === 'undefined') return EP4_IMPORT_INITIAL;
+    try {
+      const raw = localStorage.getItem(EP4_IMPORT_LS_KEY);
+      if (!raw) return EP4_IMPORT_INITIAL;
+      const parsed = JSON.parse(raw) as Ep4ImportState;
+      // Sécurité : si une erreur a été persistée, ne pas la ressusciter.
+      if (parsed.status !== 'loaded' || !parsed.data) return EP4_IMPORT_INITIAL;
+      return parsed;
+    } catch { return EP4_IMPORT_INITIAL; }
+  });
+  // Persiste uniquement le state 'loaded' (= un PDF correctement parsé).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      if (importState.status === 'loaded' && importState.data) {
+        localStorage.setItem(EP4_IMPORT_LS_KEY, JSON.stringify(importState));
+      } else if (importState.status === 'idle') {
+        localStorage.removeItem(EP4_IMPORT_LS_KEY);
+      }
+    } catch { /* quota dépassé : ignore silencieusement */ }
+  }, [importState]);
   const cancelRef = useRef<(() => void) | null>(null);
 
   const loadMonth = useCallback((m: string) => {

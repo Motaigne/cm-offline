@@ -92,6 +92,15 @@ export function Ep4ImportView({
                 : `${state.data.warnings.length} warning(s)`})
             </span>
           )}
+          {state.fileName && state.status !== 'parsing' && (
+            <button
+              onClick={() => onStateChange(EP4_IMPORT_INITIAL)}
+              className="ml-auto text-xs text-zinc-400 hover:text-red-500 underline"
+              title="Vider le slot localStorage et revenir à l'état initial"
+            >
+              Effacer
+            </button>
+          )}
         </div>
         <p className="text-[11px] text-zinc-500 mt-2">
           Le fichier reste sur votre appareil — il n&apos;est jamais envoyé sur un serveur.
