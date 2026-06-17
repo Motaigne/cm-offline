@@ -22,6 +22,12 @@ interface AuthState {
 const SESSION_LOST_KEY = 'cm-session-lost-ts-client';
 const SESSION_LOST_THROTTLE_MS = 5 * 60 * 1000;
 const GETUSER_TIMEOUT_MS = 5000;
+/** Flag localStorage : on a deja eu une session valide au moins une fois.
+ *  Set au 1er getSession ok+session, removed sur SIGNED_OUT/401. Sert au
+ *  fast path offline : on skip getSession (qui hang 3s) et on entre direct
+ *  sur le shell — la session reste lisible cote SW et utilisable pour
+ *  consulter le cache Dexie. */
+const HAS_SESSION_KEY = 'cm-has-session';
 
 export function useAuthGuard(): AuthState {
   const router = useRouter();
@@ -30,6 +36,21 @@ export function useAuthGuard(): AuthState {
   useEffect(() => {
     let cancelled = false;
     const supabase = createClient();
+
+    // Fast path offline : si on a deja eu une session validee precedemment
+    // (flag set au dernier successful getSession online), on skip getSession()
+    // qui hang 3s offline (Supabase essaie un refresh token reseau). Sans ca,
+    // chaque mount d'un composant utilisant useAuthGuard paie 3s. Le shell
+    // tolere session=null (cf gantt-shell-client commentaire).
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      try {
+        if (typeof localStorage !== 'undefined' && localStorage.getItem(HAS_SESSION_KEY) === '1') {
+          console.warn('[auth-guard] offline fast path (cached session flag)');
+          setState({ status: 'authed', session: null });
+          return () => { cancelled = true; };
+        }
+      } catch { /* localStorage indispo (mode prive ?) → fall through */ }
+    }
 
     void (async () => {
       console.warn('[auth-guard] getSession start');
@@ -67,6 +88,12 @@ export function useAuthGuard(): AuthState {
       // session=null (cas timeout) — useAuthGuard.session sera null mais le
       // shell-client n'a besoin que de status='authed' pour démarrer.
       setState({ status: 'authed', session });
+      // Marque le fast path offline pour les prochains mounts. On le fait
+      // uniquement quand on a vraiment une session (pas sur timeout, qui pourrait
+      // venir d'une session inexistante mais juste lente à résoudre).
+      if (sessionRes.kind === 'ok' && session) {
+        try { localStorage.setItem(HAS_SESSION_KEY, '1'); } catch { /* quota */ }
+      }
 
       // Revalidation background avec timeout — ne bloque pas le rendu.
       // Si online + session expirée → log + redirect login.
@@ -85,6 +112,7 @@ export function useAuthGuard(): AuthState {
             if (typeof navigator !== 'undefined' && !navigator.onLine) {
               return;
             }
+            try { localStorage.removeItem(HAS_SESSION_KEY); } catch { /* */ }
             await logSessionLostClient(supabase, session?.user.email, '401');
             router.replace('/login');
           }
@@ -105,9 +133,11 @@ export function useAuthGuard(): AuthState {
             console.warn('[auth-guard] SIGNED_OUT ignored (offline)');
             return;
           }
+          try { localStorage.removeItem(HAS_SESSION_KEY); } catch { /* */ }
           router.replace('/login');
         } else if (newSession) {
           setState({ status: 'authed', session: newSession });
+          try { localStorage.setItem(HAS_SESSION_KEY, '1'); } catch { /* */ }
         }
       },
     );
