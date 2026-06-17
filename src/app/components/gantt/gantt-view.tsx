@@ -1052,6 +1052,12 @@ export function GanttView({
   // courant. Instantané (zéro fetch) et offline-compatible. Fallback aux props
   // initiales si annexeRows/financeProfile absents (ex: legacy / profil incomplet).
   const finBaseState = useMemo(() => {
+    // Boost juillet/août pour TAF*_10_12 : `isFullPrimeMonth` indique les mois
+    // de vacances pendant lesquels le pilote off touche un fixe + MGA temps
+    // plein (nb30e=30). Sans ce boost, SMMG reste figé sur le pro-rata régime
+    // entre juin (nb30e=23) et juillet (qui doit passer à 30).
+    const moHere   = parseInt(currentMonth.slice(5), 10);
+    const fullPrime = isFullPrimeMonth(effRegime, moHere);
     if (effFinanceProfile && annexeRows.length > 0) {
       const annexe = getAnnexeDataFromRows(annexeRows, currentMonth);
       const hasAnnexe = !!(
@@ -1061,7 +1067,8 @@ export function GanttView({
         annexe.traitement_base
       );
       if (hasAnnexe) {
-        const nb30e = REGIME_NB30E[effRegime] ?? 30;
+        const nb30eBase = REGIME_NB30E[effRegime] ?? 30;
+        const nb30e     = fullPrime ? 30 : nb30eBase;
         const c = computeFullProfile(
           effFinanceProfile.aircraft,
           effFinanceProfile.fonction,
@@ -1087,12 +1094,14 @@ export function GanttView({
     // Fallback aux props initiales (server-rendered pour le mois initial).
     if (pveiProp != null && kspProp != null && fixeRegimeProp != null && fixeTPProp != null) {
       // SMMG = fixe + MGA (cf. annexe.ts). MGA = 85×PVEI×KSP×(nb30e/30).
-      // Recalcul à la volée pour le fallback (annexeRows pas dispo).
-      const nb30eFb = REGIME_NB30E[effRegime] ?? 30;
-      const mgaFb   = 85 * pveiProp * kspProp * (nb30eFb / 30);
+      // En full-prime month (juillet/août TAF*_10_12) : fixe TP + MGA TP.
+      const nb30eBase = REGIME_NB30E[effRegime] ?? 30;
+      const nb30eFb   = fullPrime ? 30 : nb30eBase;
+      const fixeFb    = fullPrime ? fixeTPProp : fixeRegimeProp;
+      const mgaFb     = 85 * pveiProp * kspProp * (nb30eFb / 30);
       return {
-        pvei: pveiProp, ksp: kspProp, fixe: fixeRegimeProp, fixeTP: fixeTPProp,
-        smmg: fixeRegimeProp + mgaFb,
+        pvei: pveiProp, ksp: kspProp, fixe: fixeFb, fixeTP: fixeTPProp,
+        smmg: fixeFb + mgaFb,
         primeIncitationUnit, primeA330, primeInstruction,
       };
     }
