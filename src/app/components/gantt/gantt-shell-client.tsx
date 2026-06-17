@@ -71,10 +71,8 @@ export function GanttShellClient() {
     void (async () => {
       try {
         console.warn('[shell] loadShellData start', month);
-        const t0 = performance.now();
         let d = await loadShellData(month);
-        const tShellDone = performance.now() - t0;
-        console.warn(`[shell] loadShellData done ${Math.round(tShellDone)}ms`);
+        console.warn('[shell] loadShellData done', month);
         if (cancelled) return;
 
         // Bridge de l'ancien comportement SSR : l'ancien `/page.tsx` Server
@@ -113,16 +111,7 @@ export function GanttShellClient() {
           router.replace('/profil');
           return;
         }
-        const tBeforeSet = performance.now() - t0;
-        console.warn(`[shell] setData called ${Math.round(tBeforeSet)}ms`);
         setData(d);
-        // Mesure le delai jusqu'au prochain frame paint (= apres render React).
-        // Si tFramePaint - tBeforeSet est gros (1-2s), le bottleneck est le
-        // render synchrone de GanttView (matrice + computeStatsForScenario).
-        requestAnimationFrame(() => {
-          const tFramePaint = performance.now() - t0;
-          console.warn(`[shell] first paint after setData ${Math.round(tFramePaint)}ms (render: +${Math.round(tFramePaint - tBeforeSet)}ms)`);
-        });
       } catch (e) {
         console.error('[shell] loadShellData failed', e);
       }
