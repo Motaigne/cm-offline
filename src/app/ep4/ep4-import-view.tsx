@@ -432,10 +432,11 @@ function SummaryCell({ label, value }: { label: string; value: string }) {
 }
 
 function FraisPanel({
-  rows, totaux,
+  rows, totaux, highlightedKeys,
 }: {
   rows:   Ep4PdfData['frais']['rows'];
   totaux: Ep4PdfData['frais']['totaux'];
+  highlightedKeys?: Set<string>;
 }) {
   return (
     <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
@@ -464,8 +465,12 @@ function FraisPanel({
             </tr>
           </thead>
           <tbody>
-            {rows.map(r => (
-              <tr key={r.index} className={r.kind === 'spillover_info' ? 'italic text-zinc-400' : ''}>
+            {rows.map(r => {
+              const day = r.horaireDep?.day ?? r.horaireArr?.day ?? null;
+              const k = diffKey(r.numLigne, day);
+              const isDiff = r.kind !== 'spillover_info' && (highlightedKeys?.has(k) ?? false);
+              return (
+              <tr key={r.index} className={`${r.kind === 'spillover_info' ? 'italic text-zinc-400' : ''} ${isDiff ? DIFF_ROW_CLASS : ''}`}>
                 <td className="px-1 py-0.5">{r.index} {kindBadge(r.kind)}</td>
                 <td className="px-1 py-0.5">{r.numLigne}</td>
                 <td className="px-1 py-0.5">{r.escDep}</td>
@@ -484,7 +489,8 @@ function FraisPanel({
                 <td className="px-1 py-0.5 text-right">{fmt(r.pnExonere)}</td>
                 <td className="px-1 py-0.5 text-right">{fmt(r.pnNonExonere)}</td>
               </tr>
-            ))}
+              );
+            })}
             <tr className="font-bold border-t border-zinc-300 dark:border-zinc-700">
               <td className="px-1 py-1" colSpan={6}>TOTAUX</td>
               <td className="px-1 py-1 text-right">{fmt(totaux.irDep)}</td>

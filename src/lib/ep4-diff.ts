@@ -16,6 +16,7 @@
 
 import type { Ep4Rotation } from '@/lib/ep4';
 import type { Ep4PdfData } from '@/lib/ep4-pdf-parse';
+import { getPlanPrestation } from '@/lib/plan-prestation';
 
 type ConsoFlight = { ep4: Ep4Rotation; is_spillover: boolean };
 
@@ -38,7 +39,11 @@ function dayUtc(ms: number): number {
 export interface Ep4DiffResult {
   horaireKeys:  Set<string>;
   decompteKeys: Set<string>;
+  fraisKeys:    Set<string>;
 }
+
+/** Fraction PN Exonéré / PN Non Exonéré du Total Indem (règle AF : 70 / 30). */
+const PN_EXO_FRACTION = 0.7;
 
 /** Pour chaque leg calculé, lookup la row PDF correspondante et compare les
  *  champs équivalents. Renvoie l'ensemble des `diffKey` divergents par onglet. */
@@ -68,37 +73,92 @@ export function computeEp4Diff(flights: ConsoFlight[], pdfData: Ep4PdfData): Ep4
     });
   }
 
+  // Index PDF Frais. On garde aussi les rows spillover_prorata (vols à cheval
+  // dont le PDF garde la trace côté Frais, ex: ligne XXX→NBJ) — la logique
+  // d'inclusion est alignée sur le calendrier qui affiche aussi les spillovers.
+  const pdfFrais = new Map<string, {
+    decDep: number | null; irDep: number | null; mfDep: number | null;
+    irArr: number | null;  mfArr: number | null;
+    totalIndem: number | null; pnExonere: number | null;
+  }>();
+  for (const r of pdfData.frais.rows) {
+    if (r.kind === 'spillover_info') continue; // ligne "vol entier informative" → pas matchable
+    const day = r.horaireDep?.day ?? r.horaireArr?.day ?? null;
+    pdfFrais.set(diffKey(r.numLigne, day), {
+      decDep:     r.decDep,
+      irDep:      r.irDep,
+      mfDep:      r.mfDep,
+      irArr:      r.irArr,
+      mfArr:      r.mfArr,
+      totalIndem: r.totalIndem,
+      pnExonere:  r.pnExonere,
+    });
+  }
+
   const horaireKeys  = new Set<string>();
   const decompteKeys = new Set<string>();
+  const fraisKeys    = new Set<string>();
 
   for (const { ep4, is_spillover } of flights) {
-    if (is_spillover) continue; // rotation à cheval = pas matchable 1-1 avec les rows PDF normales
-    for (const svc of ep4.services) {
-      for (const leg of svc.legs) {
-        const k = diffKey(leg.flightNumber, dayUtc(leg.begin_ms));
+    // Horaire / Décompte : ignore les rotations à cheval (le PDF les sépare en
+    // info + prorata, pas matchable 1-1 par leg). Frais : on inclut (cf. user).
+    if (!is_spillover) {
+      for (const svc of ep4.services) {
+        for (const leg of svc.legs) {
+          const k = diffKey(leg.flightNumber, dayUtc(leg.begin_ms));
 
-        // Horaire : Tps Vol (calc tdv_troncon) ≈ Prog vol (PDF) ;
-        //           TSV nuit (svc.tsv_nuit) ≈ Tps Vol Nuit (PDF)
-        const ph = pdfHoraire.get(k);
-        if (ph) {
-          if (!near(leg.tdv_troncon, ph.progVol)) horaireKeys.add(k);
-          // tsv_nuit côté calc est par service (somme des legs nuit) — on le
-          // compare sur la clé du PREMIER leg du service pour éviter de
-          // doublonner. Sinon plusieurs legs d'un même svc déclencheraient
-          // tous le highlight pour la même valeur de TSV nuit.
-          if (leg === svc.legs[0] && !near(svc.tsv_nuit, ph.tpsVolNuit)) horaireKeys.add(k);
-        }
+          // Horaire : Tps Vol (calc tdv_troncon) ≈ Prog vol (PDF) ;
+          //           TSV nuit (svc.tsv_nuit) ≈ Tps Vol Nuit (PDF)
+          const ph = pdfHoraire.get(k);
+          if (ph) {
+            if (!near(leg.tdv_troncon, ph.progVol)) horaireKeys.add(k);
+            if (leg === svc.legs[0] && !near(svc.tsv_nuit, ph.tpsVolNuit)) horaireKeys.add(k);
+          }
 
-        // Décompte : HV100r (calc leg.hv100r) ≈ HV 100%(r) (PDF) ;
-        //            HCVr (svc.HCVr, 1er leg du svc) ≈ HCV(r) (PDF)
-        const pd = pdfDecompte.get(k);
-        if (pd) {
-          if (!near(leg.hv100r, pd.hv100r)) decompteKeys.add(k);
-          if (leg === svc.legs[0] && !near(svc.HCVr, pd.hcvr)) decompteKeys.add(k);
+          // Décompte : HV100r (calc leg.hv100r) ≈ HV 100%(r) (PDF) ;
+          //            HCVr (svc.HCVr, 1er leg du svc) ≈ HCV(r) (PDF)
+          const pd = pdfDecompte.get(k);
+          if (pd) {
+            if (!near(leg.hv100r, pd.hv100r)) decompteKeys.add(k);
+            if (leg === svc.legs[0] && !near(svc.HCVr, pd.hcvr)) decompteKeys.add(k);
+          }
         }
+      }
+    }
+
+    // Frais : 1 row par service côté calc, mais les valeurs IR/MF/Indem sont
+    // assignées uniquement au 1er service de la rotation → on ne compare qu'à
+    // ce niveau. Le matching se fait via la clé du premier leg du 1er service.
+    const firstSvc = ep4.services[0];
+    const firstLeg = firstSvc?.legs[0];
+    if (firstSvc && firstLeg) {
+      const k = diffKey(firstLeg.flightNumber, dayUtc(firstLeg.begin_ms));
+      const pf = pdfFrais.get(k);
+      if (pf) {
+        // Règles côté calc (alignées sur Ep4FraisEP4Consolidee.tsx) :
+        //   - spillover (retour)   → IR/MF côté DÉPART
+        //   - normal aller         → IR/MF côté ARRIVÉE
+        const irDep = is_spillover ? ep4.IR : 0;
+        const mfDep = is_spillover ? ep4.MF : 0;
+        const irArr = is_spillover ? 0 : ep4.IR;
+        const mfArr = is_spillover ? 0 : ep4.MF;
+        const totalIndem = ep4.IR_eur + ep4.MF_eur;
+        const pnExonere  = totalIndem * PN_EXO_FRACTION;
+        const meal = getPlanPrestation(firstLeg.flightNumber, firstLeg.dep);
+        const decDep = meal ? (meal.dej ? 1 : 0) + (meal.din ? 1 : 0) : 0;
+
+        const anyDiff =
+          !near(irDep,      pf.irDep)      ||
+          !near(mfDep,      pf.mfDep)      ||
+          !near(irArr,      pf.irArr)      ||
+          !near(mfArr,      pf.mfArr)      ||
+          !near(totalIndem, pf.totalIndem) ||
+          !near(pnExonere,  pf.pnExonere)  ||
+          !near(decDep,     pf.decDep);
+        if (anyDiff) fraisKeys.add(k);
       }
     }
   }
 
-  return { horaireKeys, decompteKeys };
+  return { horaireKeys, decompteKeys, fraisKeys };
 }

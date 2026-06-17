@@ -372,7 +372,10 @@ export function Ep4DecompteConsolidee({ flights, year, month }: {
 
 // ─── Frais de Déplacement EP4 (format document officiel) ─────────────────────
 
-export function Ep4FraisEP4Consolidee({ flights }: { flights: ConsoFlight[] }) {
+export function Ep4FraisEP4Consolidee({ flights, highlightedKeys }: {
+  flights: ConsoFlight[];
+  highlightedKeys?: Set<string>;
+}) {
   // 19 colonnes de données (format document officiel EP4)
   const NCOLS = 19;
 
@@ -425,10 +428,14 @@ export function Ep4FraisEP4Consolidee({ flights }: { flights: ConsoFlight[] }) {
         // Dec = repas supprimés par prestation sur ce service
         const meal = getPlanPrestation(firstLeg?.flightNumber ?? '', firstLeg?.dep ?? '');
         const dec  = meal ? (meal.dej ? 1 : 0) + (meal.din ? 1 : 0) : 0;
+        // Highlight diff : seulement sur la row du 1er service (= celle qui
+        // porte les IR/MF/Indem). Pour les services suivants, pas de match.
+        const k = firstLeg ? diffKey(firstLeg.flightNumber, new Date(firstLeg.begin_ms).getUTCDate()) : '';
+        const isDiff = isFirstSvc && (highlightedKeys?.has(k) ?? false);
 
         return (
           <tr key={`f-${ep4.rotation_code}-${svc.service_index}`}
-              className={`border-b border-zinc-100 dark:border-zinc-800 ${is_spillover ? 'italic text-zinc-400' : ''}`}>
+              className={`border-b border-zinc-100 dark:border-zinc-800 ${is_spillover ? 'italic text-zinc-400' : ''} ${isDiff ? DIFF_ROW_CLASS : ''}`}>
             {/* N° Ligne */}
             <Td>{firstLeg?.flightNumber ?? ''}</Td>
             {/* Départ */}

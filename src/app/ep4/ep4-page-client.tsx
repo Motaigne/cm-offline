@@ -207,7 +207,7 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
   // référentiellement stables sauf à un sync/réimport).
   const diff = useMemo(() => {
     if (!currentImport || currentImport.monthIso !== month || scenarioFlights.length === 0) {
-      return { horaireKeys: new Set<string>(), decompteKeys: new Set<string>() };
+      return { horaireKeys: new Set<string>(), decompteKeys: new Set<string>(), fraisKeys: new Set<string>() };
     }
     return computeEp4Diff(scenarioFlights, currentImport.data);
   }, [currentImport, month, scenarioFlights]);
@@ -399,7 +399,10 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
                 </>
               ) : (
                 <>
-                  <Ep4FraisEP4Consolidee flights={scenarioFlights} />
+                  <Ep4FraisEP4Consolidee
+                    flights={scenarioFlights}
+                    highlightedKeys={diff.fraisKeys}
+                  />
                   {currentImport?.monthIso === month && (
                     <div className="mt-4">
                       <p className="text-[10px] uppercase tracking-wide font-semibold text-zinc-400 mb-2">
@@ -408,6 +411,7 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
                       <Ep4ImportFraisPanel
                         rows={currentImport.data.frais.rows}
                         totaux={currentImport.data.frais.totaux}
+                        highlightedKeys={diff.fraisKeys}
                       />
                     </div>
                   )}
