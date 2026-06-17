@@ -501,6 +501,10 @@ export async function hydrateNotes(notes: UserNote[], month: string): Promise<vo
  * offline avant qu'elles ne soient pushées). Même esprit que cacheA81Overrides.
  */
 export async function cacheProfileVersions(versions: ProfileVersion[]): Promise<void> {
+  // Non-destructif si vide : un fetch qui timeout pendant Sync (fallback [] de
+  // withTimeout) wipait le cache existant alors qu'on avait des rows valides
+  // d'une session précédente. Cf fix identique sur cacheTauxApp.
+  if (versions.length === 0) return;
   await db.transaction('rw', db.profile_versions, db.sync_queue, async () => {
     // 2 reads en parallèle dans la même tx — Dexie autorise les promesses
     // concurrentes au sein d'une transaction.
@@ -543,10 +547,14 @@ export async function loadProfileVersionsLocal(): Promise<ProfileVersion[]> {
 
 /** Remplace le cache local des rows annexe avec celles passées. */
 export async function cacheAnnexeRows(rows: AnnexeRow[]): Promise<void> {
+  // Non-destructif si vide : un fetch qui timeout pendant Sync (fallback [] de
+  // withTimeout) wipait le cache existant alors qu'on avait des rows valides
+  // d'une session précédente. Cf fix identique sur cacheTauxApp.
+  if (rows.length === 0) return;
   const stored: StoredAnnexeRow[] = rows.map(r => ({ ...r, key: annexeRowKey(r.slug, r.valid_from) }));
   await db.transaction('rw', db.annexe_rows, async () => {
     await db.annexe_rows.clear();
-    if (stored.length) await db.annexe_rows.bulkPut(stored);
+    await db.annexe_rows.bulkPut(stored);
   });
 }
 
@@ -564,6 +572,10 @@ export async function loadAnnexeRowsLocal(): Promise<AnnexeRow[]> {
  * Même esprit que hydrateDB pour les planning items.
  */
 export async function cacheA81Overrides(overrides: A81OverrideLocal[]): Promise<void> {
+  // Non-destructif si vide : un fetch qui timeout pendant Sync (fallback [] de
+  // withTimeout) wipait le cache existant alors qu'on avait des rows valides
+  // d'une session précédente. Cf fix identique sur cacheTauxApp.
+  if (overrides.length === 0) return;
   await db.transaction('rw', db.a81_overrides, db.sync_queue, async () => {
     const [pending, existing] = await Promise.all([
       db.sync_queue.toArray(),
@@ -595,6 +607,10 @@ export async function loadA81OverridesLocal(): Promise<A81OverrideLocal[]> {
 
 /** Préserve les années avec ops pending (même esprit que cacheA81Overrides). */
 export async function cacheA81YearData(rows: A81YearDataLocal[]): Promise<void> {
+  // Non-destructif si vide : un fetch qui timeout pendant Sync (fallback [] de
+  // withTimeout) wipait le cache existant alors qu'on avait des rows valides
+  // d'une session précédente. Cf fix identique sur cacheTauxApp.
+  if (rows.length === 0) return;
   await db.transaction('rw', db.a81_year_data, db.sync_queue, async () => {
     const [pending, existing] = await Promise.all([
       db.sync_queue.toArray(),
