@@ -75,10 +75,16 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
       }
       const list = await listEp4Imports();
       setImports(list);
-      // Pré-sélectionne le mois le plus récent (la liste est triée desc).
-      if (list.length > 0) setSelectedImportMonth(list[0].monthIso);
     })();
   }, []);
+
+  // Aligne le mois sélectionné (= EP4 PDF affiché dans Import PDF + dans les
+  // onglets Horaire/Décompte/Frais) sur le mois de navigation. Sans ça, naviguer
+  // ‹ › ne mettait pas à jour le PDF affiché → le diff ne marchait que pour le
+  // mois auto-sélectionné au mount (le plus récent).
+  useEffect(() => {
+    setSelectedImportMonth(month);
+  }, [month]);
 
   // Charge la data Dexie quand le mois sélectionné change.
   useEffect(() => {
