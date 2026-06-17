@@ -678,7 +678,7 @@ export function Ep4HoraireEP4Consolidee({ flights, year, month, highlightedKeys 
               return (
                 <tr key={`h-${leg.flightNumber}-${leg.begin_ms}-${idx}`} className={rowClass}>
                   <td className="px-1 py-0.5">{idx}</td>
-                  <td className="px-1 py-0.5">{leg.flightNumber}</td>
+                  <td className="px-1 py-0.5">{String(parseInt(leg.flightNumber, 10) || 0).padStart(3, '0')}</td>
                   <td className="px-1 py-0.5">{leg.dep}</td>
                   <td className="px-1 py-0.5">—</td>
                   <td className="px-1 py-0.5">{fmtEp4TimeCentiemes(leg.begin_ms)}</td>

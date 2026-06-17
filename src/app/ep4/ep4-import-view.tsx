@@ -258,16 +258,26 @@ function MetaPanel({ meta }: { meta: Ep4PdfData['meta'] }) {
   );
 }
 
-function kindBadge(kind: 'normal' | 'spillover_info' | 'spillover_prorata') {
-  if (kind === 'normal') return null;
-  const label = kind === 'spillover_info' ? 'info' : 'prorata';
-  const cls   = kind === 'spillover_info'
-    ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400'
-    : 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400';
+/** Classe Tailwind à appliquer sur toute la row en fonction de son kind :
+ *  - info     → jaune foncé italique (ligne informative, non comptée)
+ *  - prorata  → bleu (ligne prorata d'un vol à cheval)
+ *  - normal   → aucune classe spécifique.
+ *  Légende affichée en bas de chaque panel par <SpilloverLegend />. */
+function kindRowClass(kind: 'normal' | 'spillover_info' | 'spillover_prorata'): string {
+  if (kind === 'spillover_info')    return 'italic text-amber-700 dark:text-amber-500';
+  if (kind === 'spillover_prorata') return 'text-blue-600 dark:text-blue-400';
+  return '';
+}
+
+function SpilloverLegend() {
   return (
-    <span className={`inline-block px-1 rounded text-[9px] uppercase font-bold tracking-wide ${cls}`}>
-      {label}
-    </span>
+    <p className="text-[10px] text-zinc-400 mt-2">
+      Légende :{' '}
+      <span className="italic text-amber-700 dark:text-amber-500 font-semibold">jaune</span>{' '}
+      = info (vol à cheval, non compté) ·{' '}
+      <span className="text-blue-600 dark:text-blue-400 font-semibold">bleu</span>{' '}
+      = prorata (portion comptée d&apos;un vol à cheval).
+    </p>
   );
 }
 
@@ -309,9 +319,9 @@ function HorairePanel({
               const k = diffKey(r.numLigne, day);
               const isDiff = r.kind === 'normal' && (highlightedKeys?.has(k) ?? false);
               return (
-              <tr key={r.index} className={`${r.kind === 'spillover_info' ? 'italic text-zinc-400' : ''} ${isDiff ? DIFF_ROW_CLASS : ''}`}>
-                <td className="px-1 py-0.5">{r.index} {kindBadge(r.kind)}</td>
-                <td className="px-1 py-0.5">{r.numLigne}</td>
+              <tr key={r.index} className={`${kindRowClass(r.kind)} ${isDiff ? DIFF_ROW_CLASS : ''}`}>
+                <td className="px-1 py-0.5">{r.index}</td>
+                <td className="px-1 py-0.5">{String(parseInt(r.numLigne ?? '0', 10) || 0).padStart(3, '0')}</td>
                 <td className="px-1 py-0.5">{r.escDep}</td>
                 <td className="px-1 py-0.5">{rawH(r.reelDep)}</td>
                 <td className="px-1 py-0.5">{rawH(r.progDep)}</td>
@@ -330,6 +340,7 @@ function HorairePanel({
           </tbody>
         </table>
       </div>
+      <SpilloverLegend />
     </section>
   );
 }
@@ -380,8 +391,8 @@ function ActivitePanel({
               const k = diffKey(r.numVol, day);
               const isDiff = r.kind === 'normal' && (highlightedKeys?.has(k) ?? false);
               return (
-              <tr key={r.index} className={`${r.kind === 'spillover_info' ? 'italic text-zinc-400' : ''} ${isDiff ? DIFF_ROW_CLASS : ''}`}>
-                <td className="px-1 py-0.5">{r.index} {kindBadge(r.kind)}</td>
+              <tr key={r.index} className={`${kindRowClass(r.kind)} ${isDiff ? DIFF_ROW_CLASS : ''}`}>
+                <td className="px-1 py-0.5">{r.index}</td>
                 <td className="px-1 py-0.5">{r.date}</td>
                 <td className="px-1 py-0.5">{r.numVol}</td>
                 <td className="px-1 py-0.5">{r.depart}→{r.arrivee}</td>
@@ -442,6 +453,7 @@ function ActivitePanel({
           <SummaryCell label="Seuil HS"         value={fmt(summary.seuilHs)} />
         </dl>
       </div>
+      <SpilloverLegend />
     </section>
   );
 }
@@ -494,8 +506,8 @@ function FraisPanel({
               const k = diffKey(r.numLigne, day);
               const isDiff = r.kind !== 'spillover_info' && (highlightedKeys?.has(k) ?? false);
               return (
-              <tr key={r.index} className={`${r.kind === 'spillover_info' ? 'italic text-zinc-400' : ''} ${isDiff ? DIFF_ROW_CLASS : ''}`}>
-                <td className="px-1 py-0.5">{r.index} {kindBadge(r.kind)}</td>
+              <tr key={r.index} className={`${kindRowClass(r.kind)} ${isDiff ? DIFF_ROW_CLASS : ''}`}>
+                <td className="px-1 py-0.5">{r.index}</td>
                 <td className="px-1 py-0.5">{r.numLigne}</td>
                 <td className="px-1 py-0.5">{r.escDep}</td>
                 <td className="px-1 py-0.5">{rawH(r.horaireDep)}</td>
@@ -532,6 +544,7 @@ function FraisPanel({
           </tbody>
         </table>
       </div>
+      <SpilloverLegend />
     </section>
   );
 }
