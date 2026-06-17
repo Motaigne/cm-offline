@@ -1077,7 +1077,7 @@ export function GanttView({
           annexe as AnnexeData,
         );
         return {
-          pvei: c.pvei, ksp: c.ksp, fixe: c.fixe, fixeTP: c.fixeTP,
+          pvei: c.pvei, ksp: c.ksp, fixe: c.fixe, fixeTP: c.fixeTP, smmg: c.smmg,
           primeIncitationUnit: c.primeIncitation,
           primeA330: c.primeA330,
           primeInstruction: c.primeInstruction,
@@ -1086,8 +1086,13 @@ export function GanttView({
     }
     // Fallback aux props initiales (server-rendered pour le mois initial).
     if (pveiProp != null && kspProp != null && fixeRegimeProp != null && fixeTPProp != null) {
+      // SMMG = fixe + MGA (cf. annexe.ts). MGA = 85×PVEI×KSP×(nb30e/30).
+      // Recalcul à la volée pour le fallback (annexeRows pas dispo).
+      const nb30eFb = REGIME_NB30E[effRegime] ?? 30;
+      const mgaFb   = 85 * pveiProp * kspProp * (nb30eFb / 30);
       return {
         pvei: pveiProp, ksp: kspProp, fixe: fixeRegimeProp, fixeTP: fixeTPProp,
+        smmg: fixeRegimeProp + mgaFb,
         primeIncitationUnit, primeA330, primeInstruction,
       };
     }
@@ -1791,16 +1796,37 @@ export function GanttView({
           Veuillez tourner votre iPad en mode paysage
         </div>
 
-        {/* Header */}
-        <header className="flex items-center justify-between px-4 h-14 border-b border-zinc-200 dark:border-zinc-800 flex-shrink-0">
-          <div className="flex items-center gap-2">
+        {/* Header — layout 3 ancres :
+            - Gauche (flex normal) : badge sync + PVEI + SMMG
+            - Centre absolu (left-1/2) : sélecteur mois ‹ / ›
+            - "Milieu droite" absolu (~80%) : toggle Chevauch.
+            - Droite (flex normal) : userName/menu */}
+        <header className="relative flex items-center justify-between px-4 h-14 border-b border-zinc-200 dark:border-zinc-800 flex-shrink-0">
+          <div className="flex items-center gap-3">
             {pendingCount > 0 && (
               <span className="text-[10px] font-mono bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 px-1.5 rounded-full">
                 {pendingCount} à sync
               </span>
             )}
+            {finBaseState && (
+              <>
+                <span
+                  title="PVEI — Point de Valeur de l'Échelle Indiciaire (annexe versionnée du mois courant)"
+                  className="text-xs font-mono text-zinc-500 dark:text-zinc-400"
+                >
+                  PVEI <strong className="text-zinc-700 dark:text-zinc-200">{finBaseState.pvei.toFixed(2)}</strong>
+                </span>
+                <span
+                  title="SMMG — Salaire Minimum Mensuel Garanti = fixe + MGA (régime courant)"
+                  className="text-xs font-mono text-zinc-500 dark:text-zinc-400"
+                >
+                  SMMG <strong className="text-zinc-700 dark:text-zinc-200">{finBaseState.smmg.toFixed(0)} €</strong>
+                </span>
+              </>
+            )}
           </div>
-          <div className="flex items-center gap-2">
+          {/* Sélecteur mois — centré absolu sur l'écran */}
+          <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2">
             <button onClick={() => changeMonth(shiftMonth(currentMonth,-1))} disabled={monthLoading}
               className="w-10 h-10 flex items-center justify-center rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-3xl disabled:opacity-40">‹</button>
             <span className={[
@@ -1816,7 +1842,10 @@ export function GanttView({
             </span>
             <button onClick={() => changeMonth(shiftMonth(currentMonth,1))} disabled={monthLoading}
               className="w-10 h-10 flex items-center justify-center rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-3xl disabled:opacity-40">›</button>
-            {/* Toggle Chevauchement RPC / congés */}
+          </div>
+          {/* Toggle Chevauchement RPC / congés — légèrement à droite du milieu
+              de la moitié droite (~80%), absolu pour ne pas perturber le centrage du mois. */}
+          <div className="absolute left-[80%] -translate-x-1/2">
             <button
               onClick={toggleRpcChevauchement}
               role="switch"
@@ -1826,7 +1855,7 @@ export function GanttView({
                   ? 'Chevauchement RPC/congés autorisé — le RPC se met en pause pendant les congés/TAF puis reprend après.'
                   : 'Chevauchement OFF — le RPC se reporte entièrement après les congés/TAF.'
               }
-              className="ml-2 flex items-center gap-2 px-2 h-8 rounded-lg border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+              className="flex items-center gap-2 px-2 h-8 rounded-lg border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
             >
               <span className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
                 Chevauch.
