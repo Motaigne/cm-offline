@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { NavBar } from '@/app/components/nav';
 import { Ep4HoraireEP4Consolidee, Ep4DecompteEP4Consolidee, Ep4FraisEP4Consolidee } from '@/app/components/ep4-tables';
 import { getEp4ForMonth, type Ep4MonthResponse } from '@/app/actions/ep4';
@@ -9,6 +9,7 @@ import {
   Ep4ImportView, type Ep4ImportSummary,
   Ep4ImportHorairePanel, Ep4ImportActivitePanel, Ep4ImportFraisPanel,
 } from './ep4-import-view';
+import { computeEp4Diff } from '@/lib/ep4-diff';
 import {
   saveEp4Import, loadEp4Import, listEp4Imports, deleteEp4Import,
   type StoredEp4Import,
@@ -194,6 +195,17 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
   const flightCountByScenario = (name: ScenarioName) =>
     data?.scenarios.find(s => s.name === name)?.flights.length ?? 0;
 
+  // Diff calc ↔ PDF importé pour le mois courant. Sert de Set<key> à passer
+  // aux 2 onglets Horaire/Décompte pour highlight des rows divergentes.
+  // Memoizé pour éviter le recompute à chaque re-render (les inputs sont
+  // référentiellement stables sauf à un sync/réimport).
+  const diff = useMemo(() => {
+    if (!currentImport || currentImport.monthIso !== month || scenarioFlights.length === 0) {
+      return { horaireKeys: new Set<string>(), decompteKeys: new Set<string>() };
+    }
+    return computeEp4Diff(scenarioFlights, currentImport.data);
+  }, [currentImport, month, scenarioFlights]);
+
   return (
     <div className="flex flex-col min-h-screen bg-zinc-50 dark:bg-zinc-950">
       <NavBar />
@@ -343,19 +355,28 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
             {data && scenarioFlights.length > 0 && (
               view === 'horaire' ? (
                 <>
-                  <Ep4HoraireEP4Consolidee flights={scenarioFlights} year={y} month={mo} />
+                  <Ep4HoraireEP4Consolidee
+                    flights={scenarioFlights} year={y} month={mo}
+                    highlightedKeys={diff.horaireKeys}
+                  />
                   {currentImport?.monthIso === month && (
                     <div className="mt-4">
                       <p className="text-[10px] uppercase tracking-wide font-semibold text-zinc-400 mb-2">
                         Issue de l&apos;EP4 importé ({currentImport.fileName})
                       </p>
-                      <Ep4ImportHorairePanel rows={currentImport.data.horaire.rows} />
+                      <Ep4ImportHorairePanel
+                        rows={currentImport.data.horaire.rows}
+                        highlightedKeys={diff.horaireKeys}
+                      />
                     </div>
                   )}
                 </>
               ) : view === 'decompte' ? (
                 <>
-                  <Ep4DecompteEP4Consolidee flights={scenarioFlights} year={y} month={mo} />
+                  <Ep4DecompteEP4Consolidee
+                    flights={scenarioFlights} year={y} month={mo}
+                    highlightedKeys={diff.decompteKeys}
+                  />
                   {currentImport?.monthIso === month && (
                     <div className="mt-4">
                       <p className="text-[10px] uppercase tracking-wide font-semibold text-zinc-400 mb-2">
@@ -365,6 +386,7 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
                         rows={currentImport.data.activite.rows}
                         totaux={currentImport.data.activite.totaux}
                         summary={currentImport.data.activite.summary}
+                        highlightedKeys={diff.decompteKeys}
                       />
                     </div>
                   )}

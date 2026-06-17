@@ -14,6 +14,10 @@ import {
 } from '@/lib/ep4-pdf-extract';
 import type { Ep4PdfData } from '@/lib/ep4-pdf-parse';
 import type { StoredEp4Import } from '@/lib/local-db';
+import { diffKey } from '@/lib/ep4-diff';
+
+/** Classe Tailwind row "divergente" — alignée avec ep4-tables.tsx (DIFF_ROW_CLASS). */
+const DIFF_ROW_CLASS = 'bg-amber-50/60 dark:bg-amber-950/30';
 
 const MONTH_FR = ['Janvier','Février','Mars','Avril','Mai','Juin',
                   'Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
@@ -270,7 +274,12 @@ function kindBadge(kind: 'normal' | 'spillover_info' | 'spillover_prorata') {
 function fmt(n: number | null): string { return n == null ? '—' : String(n); }
 function rawH(h: { raw: string } | null): string { return h?.raw ?? '—'; }
 
-function HorairePanel({ rows }: { rows: Ep4PdfData['horaire']['rows'] }) {
+function HorairePanel({
+  rows, highlightedKeys,
+}: {
+  rows: Ep4PdfData['horaire']['rows'];
+  highlightedKeys?: Set<string>;
+}) {
   return (
     <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
       <h3 className="text-sm font-semibold mb-3">Feuille Horaire — {rows.length} lignes</h3>
@@ -295,8 +304,12 @@ function HorairePanel({ rows }: { rows: Ep4PdfData['horaire']['rows'] }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map(r => (
-              <tr key={r.index} className={r.kind === 'spillover_info' ? 'italic text-zinc-400' : ''}>
+            {rows.map(r => {
+              const day = r.reelDep?.day ?? r.progDep?.day ?? null;
+              const k = diffKey(r.numLigne, day);
+              const isDiff = r.kind === 'normal' && (highlightedKeys?.has(k) ?? false);
+              return (
+              <tr key={r.index} className={`${r.kind === 'spillover_info' ? 'italic text-zinc-400' : ''} ${isDiff ? DIFF_ROW_CLASS : ''}`}>
                 <td className="px-1 py-0.5">{r.index} {kindBadge(r.kind)}</td>
                 <td className="px-1 py-0.5">{r.numLigne}</td>
                 <td className="px-1 py-0.5">{r.escDep}</td>
@@ -312,7 +325,8 @@ function HorairePanel({ rows }: { rows: Ep4PdfData['horaire']['rows'] }) {
                 <td className="px-1 py-0.5 text-right">{fmt(r.ta)}</td>
                 <td className="px-1 py-0.5 text-right">{fmt(r.tpsVolNuit)}</td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -321,11 +335,12 @@ function HorairePanel({ rows }: { rows: Ep4PdfData['horaire']['rows'] }) {
 }
 
 function ActivitePanel({
-  rows, totaux, summary,
+  rows, totaux, summary, highlightedKeys,
 }: {
   rows:    Ep4PdfData['activite']['rows'];
   totaux:  Ep4PdfData['activite']['totaux'];
   summary: Ep4PdfData['activite']['summary'];
+  highlightedKeys?: Set<string>;
 }) {
   return (
     <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 space-y-4">
@@ -350,8 +365,13 @@ function ActivitePanel({
             </tr>
           </thead>
           <tbody>
-            {rows.map(r => (
-              <tr key={r.index} className={r.kind === 'spillover_info' ? 'italic text-zinc-400' : ''}>
+            {rows.map(r => {
+              const dayStr = r.date?.split('/')[0];
+              const day = dayStr ? parseInt(dayStr, 10) : null;
+              const k = diffKey(r.numVol, day);
+              const isDiff = r.kind === 'normal' && (highlightedKeys?.has(k) ?? false);
+              return (
+              <tr key={r.index} className={`${r.kind === 'spillover_info' ? 'italic text-zinc-400' : ''} ${isDiff ? DIFF_ROW_CLASS : ''}`}>
                 <td className="px-1 py-0.5">{r.index} {kindBadge(r.kind)}</td>
                 <td className="px-1 py-0.5">{r.date}</td>
                 <td className="px-1 py-0.5">{r.numVol}</td>
@@ -366,7 +386,8 @@ function ActivitePanel({
                 <td className="px-1 py-0.5 text-right">{fmt(r.majoNuit)}</td>
                 <td className="px-1 py-0.5 text-right">{fmt(r.montantNuit)}</td>
               </tr>
-            ))}
+              );
+            })}
             <tr className="font-bold border-t border-zinc-300 dark:border-zinc-700">
               <td className="px-1 py-1" colSpan={9}>TOTAL</td>
               <td className="px-1 py-1 text-right">{fmt(totaux.h2hcR)}</td>

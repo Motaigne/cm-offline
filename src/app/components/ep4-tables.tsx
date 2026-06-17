@@ -5,6 +5,11 @@
 import type { ReactNode } from 'react';
 import type { Ep4Rotation } from '@/lib/ep4';
 import { getPlanPrestation } from '@/lib/plan-prestation';
+import { diffKey } from '@/lib/ep4-diff';
+
+/** Classe Tailwind appliquée à une row qui diverge entre calc et PDF importé.
+ *  Couleur volontairement TRÈS légère (cf. demande user 2026-06-17 PM). */
+const DIFF_ROW_CLASS = 'bg-amber-50/60 dark:bg-amber-950/30';
 
 function fmt(n: number | null | undefined, dec = 2): string {
   if (n == null || isNaN(n)) return '';
@@ -590,10 +595,12 @@ export function Ep4FraisDeplacementConsolidee({ flights }: { flights: ConsoFligh
 
 // ─── Feuille Horaire EP4 (format document officiel) ───────────────────────────
 
-export function Ep4HoraireEP4Consolidee({ flights, year, month }: {
+export function Ep4HoraireEP4Consolidee({ flights, year, month, highlightedKeys }: {
   flights: ConsoFlight[];
   year: number;
   month: number;
+  /** Clés de leg (diffKey) dont une valeur diverge avec l'EP4 PDF importé. */
+  highlightedKeys?: Set<string>;
 }) {
   const monthStart = Date.UTC(year, month - 1, 1);
   const monthEnd   = month === 12 ? Date.UTC(year + 1, 0, 1) : Date.UTC(year, month, 1);
@@ -657,9 +664,11 @@ export function Ep4HoraireEP4Consolidee({ flights, year, month }: {
                 ...allLegs.map(({ leg, svc, si, li, isLastLegOfSvc }) => {
                   const isSpillover = is_spillover || leg.end_ms < monthStart || leg.begin_ms >= monthEnd;
                   const isFirstLegOfSvc = li === 0;
+                  const k = diffKey(leg.flightNumber, new Date(leg.begin_ms).getUTCDate());
+                  const isDiff = !isSpillover && (highlightedKeys?.has(k) ?? false);
                   return (
                     <tr key={`h-${leg.flightNumber}-${leg.begin_ms}`}
-                        className={`border-b border-zinc-100 dark:border-zinc-800 ${isSpillover ? 'italic text-zinc-400' : ''}`}>
+                        className={`border-b border-zinc-100 dark:border-zinc-800 ${isSpillover ? 'italic text-zinc-400' : ''} ${isDiff ? DIFF_ROW_CLASS : ''}`}>
                       <Td>{isFirstLegOfSvc ? leg.flightNumber : ''}</Td>
                       <Td>{leg.dep}</Td>
                       <Td>{fmtEp4Time(leg.begin_ms)}</Td>
@@ -689,10 +698,11 @@ export function Ep4HoraireEP4Consolidee({ flights, year, month }: {
 const PVEI = 120.65;
 const KSP  = 1.07;
 
-export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
+export function Ep4DecompteEP4Consolidee({ flights, year, month, highlightedKeys }: {
   flights: ConsoFlight[];
   year: number;
   month: number;
+  highlightedKeys?: Set<string>;
 }) {
   const monthStart = Date.UTC(year, month - 1, 1);
   const monthEnd   = month === 12 ? Date.UTC(year + 1, 0, 1) : Date.UTC(year, month, 1);
@@ -776,9 +786,11 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month }: {
         const isFirstLegOfRot = si === 0 && li === 0;
         const montantHCr  = isFirstLegOfRot ? ep4.H2HCr * PVEI * KSP : null;
         const montantNuit = isFirstLegOfSvc && svc.tsv_nuit > 0 ? svc.tsv_nuit * PVEI : null;
+        const k = diffKey(leg.flightNumber, new Date(leg.begin_ms).getUTCDate());
+        const isDiff = !isSpillover && (highlightedKeys?.has(k) ?? false);
         return (
           <tr key={`d2-${leg.flightNumber}-${leg.begin_ms}`}
-              className={`border-b border-zinc-100 dark:border-zinc-800 ${isSpillover ? 'italic text-zinc-400' : ''}`}>
+              className={`border-b border-zinc-100 dark:border-zinc-800 ${isSpillover ? 'italic text-zinc-400' : ''} ${isDiff ? DIFF_ROW_CLASS : ''}`}>
             <Td>{fmtDateCourt(leg.begin_ms)}</Td>
             <Td>{leg.flightNumber}</Td>
             <Td>{leg.dep}</Td>
