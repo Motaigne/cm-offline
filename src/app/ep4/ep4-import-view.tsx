@@ -15,6 +15,7 @@ import {
 import type { Ep4PdfData } from '@/lib/ep4-pdf-parse';
 import type { StoredEp4Import } from '@/lib/local-db';
 import { diffKey } from '@/lib/ep4-diff';
+import { FRAIS_COL_WIDTHS_PX } from '@/app/components/ep4-tables';
 
 /** Classe Tailwind row "divergente" — alignée avec ep4-tables.tsx (DIFF_ROW_CLASS). */
 const DIFF_ROW_CLASS = 'bg-amber-50/60 dark:bg-amber-950/30';
@@ -480,17 +481,23 @@ function SummaryCell({ label, value }: { label: string; value: string }) {
 }
 
 function FraisPanel({
-  rows, totaux, highlightedKeys,
+  rows, totaux, highlightedKeys, scrollRef,
 }: {
   rows:   Ep4PdfData['frais']['rows'];
   totaux: Ep4PdfData['frais']['totaux'];
   highlightedKeys?: Set<string>;
+  scrollRef?: Ref<HTMLDivElement>;
 }) {
   return (
     <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
       <h3 className="text-sm font-semibold mb-3">Frais de Déplacement — {rows.length} lignes</h3>
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-[11px] font-mono">
+      <div ref={scrollRef} className="overflow-x-auto">
+        {/* table-fixed + colgroup px → MÊMES largeurs que Ep4FraisEP4Consolidee
+            (ep4-tables.tsx) pour l'alignement vertical des 2 tableaux empilés. */}
+        <table className="table-fixed text-[11px] font-mono whitespace-nowrap [&_th]:px-3 [&_td]:px-3">
+          <colgroup>
+            {FRAIS_COL_WIDTHS_PX.map((w, i) => <col key={i} style={{ width: `${w}px` }} />)}
+          </colgroup>
           <thead className="text-zinc-400 uppercase tracking-wide text-[9px]">
             <tr>
               <th className="text-left px-1 py-1">#</th>

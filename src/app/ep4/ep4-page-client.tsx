@@ -115,22 +115,28 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
 
   const cancelRef = useRef<(() => void) | null>(null);
 
-  // Sync horizontal scroll des 2 tableaux Décompte (calculé + PDF importé)
-  // pour que les colonnes restent alignées quand l'utilisateur scroll
-  // (~23 colonnes, déborde l'écran).
+  // Sync horizontal scroll des 2 tableaux empilés (calculé + PDF importé)
+  // sur Décompte ET Frais — pour que les colonnes restent alignées quand
+  // l'utilisateur scroll (tableaux qui débordent largement l'écran).
   const decompteCalcScrollRef   = useRef<HTMLDivElement>(null);
   const decompteImportScrollRef = useRef<HTMLDivElement>(null);
+  const fraisCalcScrollRef      = useRef<HTMLDivElement>(null);
+  const fraisImportScrollRef    = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (view !== 'decompte') return;
-    const a = decompteCalcScrollRef.current;
-    const b = decompteImportScrollRef.current;
+    const refs =
+      view === 'decompte' ? [decompteCalcScrollRef, decompteImportScrollRef] :
+      view === 'frais'    ? [fraisCalcScrollRef,    fraisImportScrollRef] :
+      null;
+    if (!refs) return;
+    const [refA, refB] = refs;
+    const a = refA.current;
+    const b = refB.current;
     if (!a || !b) return;
     let syncing = false;
     const sync = (src: HTMLDivElement, dst: HTMLDivElement) => () => {
       if (syncing) return;
       syncing = true;
       dst.scrollLeft = src.scrollLeft;
-      // Reset au prochain frame pour ne pas boucler sur le scroll event du dst.
       requestAnimationFrame(() => { syncing = false; });
     };
     const onA = sync(a, b);
@@ -432,6 +438,7 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
                   <Ep4FraisEP4Consolidee
                     flights={scenarioFlights}
                     highlightedKeys={diff.fraisKeys}
+                    scrollRef={fraisCalcScrollRef}
                   />
                   {currentImport?.monthIso === month && (
                     <div className="mt-4">
@@ -442,6 +449,7 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
                         rows={currentImport.data.frais.rows}
                         totaux={currentImport.data.frais.totaux}
                         highlightedKeys={diff.fraisKeys}
+                        scrollRef={fraisImportScrollRef}
                       />
                     </div>
                   )}

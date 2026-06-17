@@ -378,9 +378,37 @@ export function Ep4DecompteConsolidee({ flights, year, month }: {
 
 // ─── Frais de Déplacement EP4 (format document officiel) ─────────────────────
 
-export function Ep4FraisEP4Consolidee({ flights, highlightedKeys }: {
+/** Largeurs colonnes Frais (en px). DOIVENT être identiques cote panel PDF
+ *  importé (Ep4ImportFraisPanel) — sinon désalignement visuel entre les 2
+ *  tableaux empilés. 20 colonnes, total ~1370px → la table déborde, scroll
+ *  horizontal sync via Ep4PageClient (decompteFraisCalcScrollRef etc.). */
+export const FRAIS_COL_WIDTHS_PX = [
+  36,  // #
+  60,  // Ligne
+  60,  // Esc dep
+  100, // Hor. dep
+  60,  // Dec
+  60,  // Pdéj
+  60,  // IR
+  60,  // MF
+  60,  // Esc arr
+  100, // Hor. arr
+  60,  // Dec
+  60,  // Pdéj
+  60,  // IR
+  60,  // MF
+  90,  // Total
+  60,  // Type
+  60,  // km
+  80,  // Mt Dec
+  100, // PN Exo
+  100, // PN N.Exo
+];
+
+export function Ep4FraisEP4Consolidee({ flights, highlightedKeys, scrollRef }: {
   flights: ConsoFlight[];
   highlightedKeys?: Set<string>;
+  scrollRef?: Ref<HTMLDivElement>;
 }) {
   // 1 row par service (comme l'EP4 PDF officiel). Aplatissement pour la
   // numérotation # globale et le rendu sequentiel.
@@ -420,9 +448,14 @@ export function Ep4FraisEP4Consolidee({ flights, highlightedKeys }: {
   return (
     <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
       <h3 className="text-sm font-semibold mb-3">Frais de Déplacement — {flatRows.length} lignes</h3>
-      <div className="overflow-x-auto">
-        {/* whitespace-nowrap + px-3 → table déborde au besoin (scroll horizontal). */}
-        <table className="min-w-full text-[11px] font-mono whitespace-nowrap [&_th]:px-3 [&_td]:px-3">
+      <div ref={scrollRef} className="overflow-x-auto">
+        {/* table-fixed + colgroup px → largeurs identiques au panel PDF importé
+            (Ep4ImportFraisPanel) → alignement vertical parfait des 2 tableaux
+            empilés, et scroll horizontal sync par Ep4PageClient. */}
+        <table className="table-fixed text-[11px] font-mono whitespace-nowrap [&_th]:px-3 [&_td]:px-3">
+          <colgroup>
+            {FRAIS_COL_WIDTHS_PX.map((w, i) => <col key={i} style={{ width: `${w}px` }} />)}
+          </colgroup>
           <thead className="text-zinc-400 uppercase tracking-wide text-[9px]">
             <tr>
               <th className="text-left  py-1">#</th>
