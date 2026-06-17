@@ -1,52 +1,70 @@
 'use client';
 
-// Vue "Import EP4 PDF" — file picker + affichage des données extraites du PDF
-// AF (3 tables : Horaire / Activité / Frais + summary). Pure consultation pour
-// la V1 : pas d'injection dans Dexie, pas (encore) de diff visuel avec l'EP4
-// calculé. L'objectif est de permettre une validation visuelle "à l'œil" avant
-// d'aller plus loin. Cf. étape 4 du plan d'import PDF EP4.
+// Vue "Import EP4 PDF" — multi-mois.
+// Architecture :
+// - Le parsing PDF reste dans cette vue (status / error local).
+// - Le STOCKAGE est délégué à Dexie via les callbacks fournis par
+//   Ep4PageClient (qui détient la liste des imports + le mois sélectionné).
+// - Permet de garder ~12-13 EP4 mensuels accessibles offline (un par mois),
+//   sans repasser par le PDF.
 
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import {
   parseEp4PdfFile, Ep4FormatError,
-  type Ep4PdfData,
 } from '@/lib/ep4-pdf-extract';
+import type { Ep4PdfData } from '@/lib/ep4-pdf-parse';
+import type { StoredEp4Import } from '@/lib/local-db';
 
-export type Ep4ImportStatus = 'idle' | 'parsing' | 'loaded' | 'error';
+const MONTH_FR = ['Janvier','Février','Mars','Avril','Mai','Juin',
+                  'Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
 
-export interface Ep4ImportState {
-  status:   Ep4ImportStatus;
-  fileName: string | null;
-  data:     Ep4PdfData | null;
-  error:    string | null;
+function monthLabel(monthIso: string): string {
+  const [y, m] = monthIso.split('-').map(Number);
+  if (!y || !m) return monthIso;
+  return `${MONTH_FR[m - 1]} ${y}`;
 }
 
-export const EP4_IMPORT_INITIAL: Ep4ImportState = {
-  status: 'idle', fileName: null, data: null, error: null,
-};
+export interface Ep4ImportSummary {
+  monthIso:   string;
+  importedAt: string;
+  fileName:   string;
+}
 
-// Le state est PROPS — il vit dans Ep4PageClient pour persister entre les
-// switches de vue (Feuille Horaire → Import PDF par exemple). Sans ça,
-// l'unmount du composant à chaque switch perdait le PDF déjà chargé.
+interface Props {
+  imports:        Ep4ImportSummary[];
+  selectedMonth:  string | null;
+  currentImport:  StoredEp4Import | null;
+  onSelectMonth:  (monthIso: string) => void;
+  /** Le parent gère le save Dexie + refresh de la liste. */
+  onImportSuccess: (data: Ep4PdfData, fileName: string) => Promise<void>;
+  onDeleteMonth:  (monthIso: string) => void;
+}
+
 export function Ep4ImportView({
-  state, onStateChange,
-}: {
-  state:         Ep4ImportState;
-  onStateChange: (next: Ep4ImportState) => void;
-}) {
+  imports, selectedMonth, currentImport,
+  onSelectMonth, onImportSuccess, onDeleteMonth,
+}: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [parsing, setParsing]   = useState<{ fileName: string } | null>(null);
+  const [parseError, setParseError] = useState<{ fileName: string; msg: string } | null>(null);
 
   async function handleFile(file: File) {
-    onStateChange({ status: 'parsing', fileName: file.name, data: null, error: null });
+    setParsing({ fileName: file.name });
+    setParseError(null);
     try {
       const buffer = await file.arrayBuffer();
       const data = await parseEp4PdfFile(buffer);
-      onStateChange({ status: 'loaded', fileName: file.name, data, error: null });
+      if (!data.meta.monthIso) {
+        throw new Ep4FormatError("Mois introuvable dans l'EP4 (méta.monthIso vide).");
+      }
+      await onImportSuccess(data, file.name);
+      setParsing(null);
     } catch (e) {
       const msg = e instanceof Ep4FormatError
         ? `Format non reconnu : ${e.message}`
         : `Erreur de parsing : ${String((e as Error)?.message ?? e)}`;
-      onStateChange({ status: 'error', fileName: file.name, data: null, error: msg });
+      setParseError({ fileName: file.name, msg });
+      setParsing(null);
     }
   }
 
@@ -57,7 +75,7 @@ export function Ep4ImportView({
         <div className="flex flex-wrap items-center gap-3">
           <button
             onClick={() => inputRef.current?.click()}
-            disabled={state.status === 'parsing'}
+            disabled={parsing !== null}
             className="flex items-center gap-1.5 px-3 h-8 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium disabled:opacity-50"
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -66,7 +84,7 @@ export function Ep4ImportView({
               <polyline points="17 8 12 3 7 8" />
               <line x1="12" y1="3" x2="12" y2="15" />
             </svg>
-            {state.fileName ? 'Choisir un autre PDF' : 'Choisir un EP4 (.pdf)'}
+            Importer un EP4 (.pdf)
           </button>
           <input
             ref={inputRef}
@@ -79,65 +97,110 @@ export function Ep4ImportView({
               e.target.value = ''; // permet de re-choisir le même fichier
             }}
           />
-          {state.fileName && (
-            <span className="text-xs text-zinc-500 font-mono truncate">{state.fileName}</span>
-          )}
-          {state.status === 'parsing' && (
-            <span className="text-xs text-zinc-500">Lecture du PDF…</span>
-          )}
-          {state.status === 'loaded' && state.data && (
-            <span className="text-xs text-emerald-600 dark:text-emerald-400">
-              ✓ Parsé ({state.data.warnings.length === 0
-                ? '0 warning'
-                : `${state.data.warnings.length} warning(s)`})
+          {parsing && (
+            <span className="text-xs text-zinc-500">
+              Lecture <span className="font-mono">{parsing.fileName}</span>…
             </span>
-          )}
-          {state.fileName && state.status !== 'parsing' && (
-            <button
-              onClick={() => onStateChange(EP4_IMPORT_INITIAL)}
-              className="ml-auto text-xs text-zinc-400 hover:text-red-500 underline"
-              title="Vider le slot localStorage et revenir à l'état initial"
-            >
-              Effacer
-            </button>
           )}
         </div>
         <p className="text-[11px] text-zinc-500 mt-2">
           Le fichier reste sur votre appareil — il n&apos;est jamais envoyé sur un serveur.
-          Affichage en lecture seule pour vérification visuelle.
+          Les EP4 importés sont conservés localement (un par mois).
         </p>
       </section>
 
       {/* Erreur de parsing */}
-      {state.status === 'error' && (
+      {parseError && (
         <section className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-xl p-4">
           <p className="text-sm font-semibold text-red-700 dark:text-red-400">
-            Impossible de lire ce fichier
+            Impossible de lire <span className="font-mono">{parseError.fileName}</span>
           </p>
-          <p className="text-xs mt-1 text-red-600 dark:text-red-400/80">{state.error}</p>
+          <p className="text-xs mt-1 text-red-600 dark:text-red-400/80">{parseError.msg}</p>
         </section>
       )}
 
-      {/* Warnings */}
-      {state.status === 'loaded' && state.data && state.data.warnings.length > 0 && (
-        <section className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-xl p-3">
-          <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">Warnings de parsing :</p>
-          <ul className="mt-1 list-disc list-inside text-[11px] text-amber-700 dark:text-amber-400/90">
-            {state.data.warnings.map((w, i) => <li key={i}>{w}</li>)}
-          </ul>
+      {/* Sélecteur de mois importés */}
+      {imports.length > 0 && (
+        <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
+          <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">
+            EP4 importés ({imports.length})
+          </h3>
+          <div className="flex flex-wrap gap-2">
+            {imports.map(imp => {
+              const active = imp.monthIso === selectedMonth;
+              return (
+                <button
+                  key={imp.monthIso}
+                  onClick={() => onSelectMonth(imp.monthIso)}
+                  title={`Importé le ${imp.importedAt.slice(0, 10)} — ${imp.fileName}`}
+                  className={`px-3 h-7 rounded-full text-xs font-semibold transition-colors ${
+                    active
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+                  }`}
+                >
+                  {monthLabel(imp.monthIso)}
+                </button>
+              );
+            })}
+          </div>
         </section>
       )}
 
-      {/* Données extraites */}
-      {state.status === 'loaded' && state.data && (
-        <Ep4ImportTables data={state.data} />
+      {/* Warnings + data du mois sélectionné */}
+      {currentImport && (
+        <>
+          <div className="flex items-center justify-between text-xs text-zinc-500 px-1">
+            <span>
+              <span className="text-emerald-600 dark:text-emerald-400">✓</span>{' '}
+              <span className="font-mono">{currentImport.fileName}</span>
+              <span className="mx-2">·</span>
+              importé le {currentImport.importedAt.slice(0, 10)}
+              {currentImport.data.warnings.length > 0 && (
+                <span className="ml-2 text-amber-600 dark:text-amber-400">
+                  {currentImport.data.warnings.length} warning(s)
+                </span>
+              )}
+            </span>
+            <button
+              onClick={() => onDeleteMonth(currentImport.monthIso)}
+              className="text-zinc-400 hover:text-red-500 underline"
+              title="Supprimer cet EP4 du stockage local"
+            >
+              Supprimer ce mois
+            </button>
+          </div>
+
+          {currentImport.data.warnings.length > 0 && (
+            <section className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-xl p-3">
+              <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">Warnings de parsing :</p>
+              <ul className="mt-1 list-disc list-inside text-[11px] text-amber-700 dark:text-amber-400/90">
+                {currentImport.data.warnings.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            </section>
+          )}
+
+          <Ep4ImportTables data={currentImport.data} />
+        </>
+      )}
+
+      {/* Cas vide : aucun import + pas de parsing en cours */}
+      {imports.length === 0 && !parsing && !parseError && (
+        <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-6 text-center">
+          <p className="text-sm text-zinc-400">
+            Aucun EP4 importé pour le moment.
+          </p>
+          <p className="text-xs text-zinc-400/70 mt-1">
+            Clique sur <strong>Importer un EP4 (.pdf)</strong> ci-dessus pour démarrer.
+          </p>
+        </section>
       )}
     </div>
   );
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Affichage des données extraites
+// Affichage des données extraites (identique à la V1 mais sans state local)
 // ───────────────────────────────────────────────────────────────────────────
 
 function Ep4ImportTables({ data }: { data: Ep4PdfData }) {
@@ -307,7 +370,6 @@ function ActivitePanel({
         </table>
       </div>
 
-      {/* Summary : HS Fixe/Vol/CAC + KSP + PVEI + nb30e + seuil */}
       <div>
         <h4 className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">
           Récap HS / PVEI / KSP

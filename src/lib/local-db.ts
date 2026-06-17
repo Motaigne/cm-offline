@@ -6,6 +6,7 @@ import type { ProfileVersion } from '@/app/actions/profile-version';
 import type { AnnexeRow } from '@/lib/annexe';
 import type { A81OverrideLocal } from '@/lib/a81-local';
 import type { TauxAppRow } from '@/lib/ep4';
+import type { Ep4PdfData } from '@/lib/ep4-pdf-parse';
 import { computeEffectiveRpc } from '@/lib/rpc';
 
 interface StoredDraft {
@@ -80,6 +81,14 @@ function annexeRowKey(slug: string, validFrom: string): string {
   return `${slug}|${validFrom}`;
 }
 
+/** EP4 PDF importé par l'utilisateur, stocké en JSON parsé. PK = monthIso. */
+export interface StoredEp4Import {
+  monthIso:   string;       // PK — "2026-01"
+  importedAt: string;       // ISO timestamp de l'import
+  fileName:   string;       // nom original du PDF
+  data:       Ep4PdfData;   // structure complète extraite
+}
+
 class CmDatabase extends Dexie {
   drafts!:           Table<StoredDraft,        string>;
   items!:            Table<StoredItem,         string>;
@@ -93,6 +102,7 @@ class CmDatabase extends Dexie {
   a81_overrides!:    Table<A81OverrideLocal,   string>; // PK = pairing_instance_id
   a81_year_data!:    Table<A81YearDataLocal,   number>; // PK = year
   taux_app!:         Table<StoredTauxAppRow,   string>; // PK = `${rot_code}|${min_h}|${max_h}`
+  ep4_imports!:      Table<StoredEp4Import,    string>; // PK = monthIso (YYYY-MM)
 
   constructor() {
     super('optip');
@@ -150,6 +160,13 @@ class CmDatabase extends Dexie {
       }
       if (details.length) await tx.table('rotation_details').bulkPut(details);
       if (rotations.length) await tx.table('rotations').bulkPut(rotations);
+    });
+    // v10 : EP4 PDFs importés par l'utilisateur, stockés en JSON parsé (~80 Ko
+    // par mois). PK = monthIso "YYYY-MM" (un seul slot par mois, écrasé si
+    // l'user ré-importe). Permet de consulter offline les EP4 des mois passés
+    // sans re-uploader le PDF, et survit kill/refresh PWA.
+    this.version(10).stores({
+      ep4_imports: 'monthIso, importedAt',
     });
   }
 }
@@ -648,4 +665,34 @@ export async function loadNotesForMonth(month: string): Promise<UserNote[]> {
     .where('start_date').below(monthEndStr)
     .filter(n => n.end_date >= monthStartStr)
     .sortBy('start_date');
+}
+
+// ─── EP4 imports (PDFs parsés stockés par mois) ───────────────────────────────
+
+/** Insère ou écrase l'EP4 importé pour un mois donné. */
+export async function saveEp4Import(monthIso: string, fileName: string, data: Ep4PdfData): Promise<void> {
+  await db.ep4_imports.put({
+    monthIso,
+    importedAt: new Date().toISOString(),
+    fileName,
+    data,
+  });
+}
+
+/** Récupère l'EP4 importé pour un mois donné, ou null si absent. */
+export async function loadEp4Import(monthIso: string): Promise<StoredEp4Import | null> {
+  return (await db.ep4_imports.get(monthIso)) ?? null;
+}
+
+/** Liste résumée des imports EP4 (sans la data lourde) — pour le sélecteur UI. */
+export async function listEp4Imports(): Promise<Array<{ monthIso: string; importedAt: string; fileName: string }>> {
+  const all = await db.ep4_imports.toArray();
+  return all
+    .map(({ monthIso, importedAt, fileName }) => ({ monthIso, importedAt, fileName }))
+    .sort((a, b) => b.monthIso.localeCompare(a.monthIso));
+}
+
+/** Supprime l'EP4 importé pour un mois donné. */
+export async function deleteEp4Import(monthIso: string): Promise<void> {
+  await db.ep4_imports.delete(monthIso);
 }

@@ -5,7 +5,12 @@ import { NavBar } from '@/app/components/nav';
 import { Ep4HoraireEP4Consolidee, Ep4DecompteEP4Consolidee, Ep4FraisEP4Consolidee } from '@/app/components/ep4-tables';
 import { getEp4ForMonth, type Ep4MonthResponse } from '@/app/actions/ep4';
 import { loadEp4ForMonthLocal } from '@/lib/ep4-local';
-import { Ep4ImportView, EP4_IMPORT_INITIAL, type Ep4ImportState } from './ep4-import-view';
+import { Ep4ImportView, type Ep4ImportSummary } from './ep4-import-view';
+import {
+  saveEp4Import, loadEp4Import, listEp4Imports, deleteEp4Import,
+  type StoredEp4Import,
+} from '@/lib/local-db';
+import type { Ep4PdfData } from '@/lib/ep4-pdf-parse';
 
 type ScenarioName = 'A' | 'B' | 'C';
 type ViewName = 'horaire' | 'decompte' | 'frais' | 'import';
@@ -21,8 +26,8 @@ const VIEWS: { id: ViewName; label: string }[] = [
 const MONTH_FR = ['Janvier','Février','Mars','Avril','Mai','Juin',
                   'Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
 
-/** Clé localStorage du dernier PDF EP4 importé. Un seul slot, écrasé à chaque
- *  nouvel import. ~30-80 Ko de JSON pour un mois complet, OK vs quota 5 Mo. */
+/** Clé localStorage du PDF EP4 (V1 historique, un seul slot). Migré vers
+ *  Dexie au boot puis supprimé. Voir importMigrationDone ci-dessous. */
 const EP4_IMPORT_LS_KEY = 'cm-ep4-pdf-import';
 
 function shiftMonth(m: string, delta: number): string {
@@ -38,31 +43,66 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
   const [error, setError]       = useState<string | null>(null);
   const [scenario, setScenario] = useState<ScenarioName>('A');
   const [view, setView]         = useState<ViewName>('horaire');
-  // State du PDF importé : remonté ici pour survivre aux switches de vue,
-  // hydraté depuis localStorage (~30-80 Ko de JSON, négligeable côté quota)
-  // pour aussi survivre aux refresh / kill app.
-  const [importState, setImportState] = useState<Ep4ImportState>(() => {
-    if (typeof window === 'undefined') return EP4_IMPORT_INITIAL;
-    try {
-      const raw = localStorage.getItem(EP4_IMPORT_LS_KEY);
-      if (!raw) return EP4_IMPORT_INITIAL;
-      const parsed = JSON.parse(raw) as Ep4ImportState;
-      // Sécurité : si une erreur a été persistée, ne pas la ressusciter.
-      if (parsed.status !== 'loaded' || !parsed.data) return EP4_IMPORT_INITIAL;
-      return parsed;
-    } catch { return EP4_IMPORT_INITIAL; }
-  });
-  // Persiste uniquement le state 'loaded' (= un PDF correctement parsé).
+  // Liste résumée des EP4 importés (un par mois). Source de vérité = Dexie.
+  const [imports, setImports] = useState<Ep4ImportSummary[]>([]);
+  // Mois actuellement affiché dans la vue Import. Garde la sélection entre
+  // les switches de vue (refresh ré-hydrate via le useEffect ci-dessous).
+  const [selectedImportMonth, setSelectedImportMonth] = useState<string | null>(null);
+  const [currentImport, setCurrentImport] = useState<StoredEp4Import | null>(null);
+
+  // Hydrate la liste depuis Dexie + migre le V1 (slot localStorage) si présent.
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      if (importState.status === 'loaded' && importState.data) {
-        localStorage.setItem(EP4_IMPORT_LS_KEY, JSON.stringify(importState));
-      } else if (importState.status === 'idle') {
-        localStorage.removeItem(EP4_IMPORT_LS_KEY);
+    void (async () => {
+      // V1 → V2 migration : un seul slot localStorage avec un Ep4ImportState
+      // qui contenait { data: Ep4PdfData }. On le rejoue dans Dexie sous le
+      // monthIso extrait du parser, puis on clean le localStorage.
+      if (typeof window !== 'undefined') {
+        const raw = localStorage.getItem(EP4_IMPORT_LS_KEY);
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw) as { data?: Ep4PdfData; fileName?: string };
+            const monthIso = parsed.data?.meta?.monthIso ?? null;
+            if (monthIso && parsed.data) {
+              await saveEp4Import(monthIso, parsed.fileName ?? '(legacy)', parsed.data);
+            }
+          } catch { /* JSON corrompu : ignore */ }
+          localStorage.removeItem(EP4_IMPORT_LS_KEY);
+        }
       }
-    } catch { /* quota dépassé : ignore silencieusement */ }
-  }, [importState]);
+      const list = await listEp4Imports();
+      setImports(list);
+      // Pré-sélectionne le mois le plus récent (la liste est triée desc).
+      if (list.length > 0) setSelectedImportMonth(list[0].monthIso);
+    })();
+  }, []);
+
+  // Charge la data Dexie quand le mois sélectionné change.
+  useEffect(() => {
+    if (!selectedImportMonth) { setCurrentImport(null); return; }
+    void loadEp4Import(selectedImportMonth).then(imp => setCurrentImport(imp));
+  }, [selectedImportMonth]);
+
+  const handleImportSuccess = useCallback(async (data: Ep4PdfData, fileName: string) => {
+    const monthIso = data.meta.monthIso;
+    if (!monthIso) return; // déjà validé côté view
+    await saveEp4Import(monthIso, fileName, data);
+    const list = await listEp4Imports();
+    setImports(list);
+    setSelectedImportMonth(monthIso);
+    setCurrentImport(await loadEp4Import(monthIso));
+  }, []);
+
+  const handleDeleteMonth = useCallback(async (monthIso: string) => {
+    await deleteEp4Import(monthIso);
+    const list = await listEp4Imports();
+    setImports(list);
+    if (selectedImportMonth === monthIso) {
+      const next = list[0]?.monthIso ?? null;
+      setSelectedImportMonth(next);
+      setCurrentImport(next ? await loadEp4Import(next) : null);
+    }
+  }, [selectedImportMonth]);
+
   const cancelRef = useRef<(() => void) | null>(null);
 
   const loadMonth = useCallback((m: string) => {
@@ -255,7 +295,14 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
             L'utilisateur peut comparer avec son EP4 papier sans avoir le calcul
             côté app pour le mois en question. */}
         {view === 'import' ? (
-          <Ep4ImportView state={importState} onStateChange={setImportState} />
+          <Ep4ImportView
+            imports={imports}
+            selectedMonth={selectedImportMonth}
+            currentImport={currentImport}
+            onSelectMonth={setSelectedImportMonth}
+            onImportSuccess={handleImportSuccess}
+            onDeleteMonth={handleDeleteMonth}
+          />
         ) : (
           <>
             {loading && (
