@@ -792,7 +792,10 @@ export function Ep4DecompteEP4Consolidee({ flights, year, month, highlightedKeys
     <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
       <h3 className="text-sm font-semibold mb-3">Feuille Décompte d&apos;Activité — {flatRows.length} lignes</h3>
       <div className="overflow-x-auto">
-        <table className="min-w-full text-[11px] font-mono">
+        {/* Sélecteurs enfants : impose px-3 + nowrap sur tous les th/td à
+            l'intérieur (specificity > px-1 inline). 23 colonnes → la table
+            dépasse l'écran, le scroll horizontal est attendu (cf. user). */}
+        <table className="min-w-full text-[11px] font-mono whitespace-nowrap [&_th]:px-3 [&_td]:px-3">
           <thead className="text-zinc-400 uppercase tracking-wide text-[9px]">
             <tr>
               <th className="text-left  px-1 py-1">#</th>

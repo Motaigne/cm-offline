@@ -357,7 +357,9 @@ function ActivitePanel({
     <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 space-y-4">
       <h3 className="text-sm font-semibold">Feuille Décompte d&apos;Activité — {rows.length} lignes</h3>
       <div className="overflow-x-auto">
-        <table className="min-w-full text-[11px] font-mono">
+        {/* px-3 + nowrap sur tous les th/td → la table déborde, scroll
+            horizontal via overflow-x-auto au-dessus (cf. user). */}
+        <table className="min-w-full text-[11px] font-mono whitespace-nowrap [&_th]:px-3 [&_td]:px-3">
           <thead className="text-zinc-400 uppercase tracking-wide text-[9px]">
             <tr>
               <th className="text-left  px-1 py-1">#</th>
