@@ -654,13 +654,15 @@ export function Ep4HoraireEP4Consolidee({ flights, year, month, highlightedKeys 
         <table className="w-full table-fixed text-[11px] font-mono">
           {/* colgroup : largeurs en % alignees IDENTIQUES dans Ep4ImportHorairePanel.
               Permet aux 2 tableaux empiles d'avoir leurs colonnes parfaitement
-              alignees verticalement, malgre des contenus differents. Total = 100%. */}
+              alignees verticalement, malgre des contenus differents. Total = 100%.
+              6 valeurs numeriques a droite uniformes a 8% chacune (avant: V.Nuit
+              monopolisait 18% → grosse marge vide apres T.A). */}
           <colgroup>
             <col style={{ width:  '3%' }} /><col style={{ width:  '5%' }} /><col style={{ width: '4%' }} />
             <col style={{ width:  '9%' }} /><col style={{ width:  '9%' }} /><col style={{ width: '4%' }} />
             <col style={{ width:  '9%' }} /><col style={{ width:  '9%' }} />
-            <col style={{ width:  '6%' }} /><col style={{ width:  '6%' }} /><col style={{ width: '6%' }} />
-            <col style={{ width:  '6%' }} /><col style={{ width:  '6%' }} /><col style={{ width: '18%' }} />
+            <col style={{ width:  '8%' }} /><col style={{ width:  '8%' }} /><col style={{ width: '8%' }} />
+            <col style={{ width:  '8%' }} /><col style={{ width:  '8%' }} /><col style={{ width: '8%' }} />
           </colgroup>
           <thead className="text-zinc-400 uppercase tracking-wide text-[9px]">
             <tr>

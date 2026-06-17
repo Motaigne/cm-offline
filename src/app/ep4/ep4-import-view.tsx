@@ -301,8 +301,8 @@ function HorairePanel({
             <col style={{ width:  '3%' }} /><col style={{ width:  '5%' }} /><col style={{ width: '4%' }} />
             <col style={{ width:  '9%' }} /><col style={{ width:  '9%' }} /><col style={{ width: '4%' }} />
             <col style={{ width:  '9%' }} /><col style={{ width:  '9%' }} />
-            <col style={{ width:  '6%' }} /><col style={{ width:  '6%' }} /><col style={{ width: '6%' }} />
-            <col style={{ width:  '6%' }} /><col style={{ width:  '6%' }} /><col style={{ width: '18%' }} />
+            <col style={{ width:  '8%' }} /><col style={{ width:  '8%' }} /><col style={{ width: '8%' }} />
+            <col style={{ width:  '8%' }} /><col style={{ width:  '8%' }} /><col style={{ width: '8%' }} />
           </colgroup>
           <thead className="text-zinc-400 uppercase tracking-wide text-[9px]">
             <tr>
