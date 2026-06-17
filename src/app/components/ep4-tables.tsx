@@ -191,6 +191,12 @@ function fmtEp4TimeLocal(ms: number, offsetH: number): string {
   return fmtEp4Time(ms + offsetH * 3_600_000);
 }
 
+/** DD | HH.cc en local (heures locales en centièmes industriels). Utilisé
+ *  par la Feuille Frais qui affiche les horaires locaux du document AF. */
+function fmtEp4TimeCentiemesLocal(ms: number, offsetH: number): string {
+  return fmtEp4TimeCentiemes(ms + offsetH * 3_600_000);
+}
+
 /** DD/MM/YY UTC */
 function fmtDateCourt(ms: number): string {
   const d = new Date(ms);
@@ -376,151 +382,151 @@ export function Ep4FraisEP4Consolidee({ flights, highlightedKeys }: {
   flights: ConsoFlight[];
   highlightedKeys?: Set<string>;
 }) {
-  // 19 colonnes de données (format document officiel EP4)
-  const NCOLS = 19;
-
-  // Pré-calcule les rotDec (utilisés à la fois pour le rendu et les totaux).
-  const rotDecs = flights.map(({ ep4 }) =>
-    ep4.services.reduce((acc, svc) => {
-      const meal = getPlanPrestation(svc.legs[0]?.flightNumber ?? '', svc.legs[0]?.dep ?? '');
-      return acc + (meal ? (meal.dej ? 1 : 0) + (meal.din ? 1 : 0) : 0);
-    }, 0),
+  // 1 row par service (comme l'EP4 PDF officiel). Aplatissement pour la
+  // numérotation # globale et le rendu sequentiel.
+  const flatRows = flights.flatMap(({ ep4, is_spillover }, ri) =>
+    ep4.services.map((svc, si) => ({
+      ep4, svc, si, is_spillover,
+      isFirstSvc:  si === 0,
+      isFirstOfRotation: si === 0,
+      rotKey: `${ep4.rotation_code ?? 'rot'}-${ep4.debut_vol_ms}-${ri}`,
+    })),
   );
 
-  // Totaux : reduce avec accumulateur object → mutation locale, pas d'effet
-  // dans le render (= ce qu'attend react-hooks/immutability).
-  const { IR: totIR, MF: totMF, totalIndem: totTotalIndem, dec: totDec } = flights.reduce(
-    (acc, { ep4, is_spillover }, i) => {
+  // Totaux annulés (calculés sur les rows non-spillover). PN 70/30 idem.
+  const totals = flights.reduce(
+    (acc, { ep4, is_spillover }) => {
       if (is_spillover) return acc;
+      const decs = ep4.services.reduce((d, s) => {
+        const m = getPlanPrestation(s.legs[0]?.flightNumber ?? '', s.legs[0]?.dep ?? '');
+        return d + (m ? (m.dej ? 1 : 0) + (m.din ? 1 : 0) : 0);
+      }, 0);
+      const tIndem = ep4.IR_eur + ep4.MF_eur;
       return {
         IR:         acc.IR + ep4.IR,
         MF:         acc.MF + ep4.MF,
-        totalIndem: acc.totalIndem + ep4.IR_eur + ep4.MF_eur,
-        dec:        acc.dec + rotDecs[i],
+        totalIndem: acc.totalIndem + tIndem,
+        pnExo:      acc.pnExo + tIndem * 0.7,
+        pnNonExo:   acc.pnNonExo + tIndem * 0.3,
+        dec:        acc.dec + decs,
       };
     },
-    { IR: 0, MF: 0, totalIndem: 0, dec: 0 },
+    { IR: 0, MF: 0, totalIndem: 0, pnExo: 0, pnNonExo: 0, dec: 0 },
   );
 
-  const rotRows: ReactNode[][] = flights.map(({ ep4, is_spillover }) => {
-    return [
-      <tr key={`sep-f-${ep4.rotation_code}-${ep4.debut_vol_ms}`}
-          className="bg-zinc-100 dark:bg-zinc-800/60 border-t-2 border-zinc-300 dark:border-zinc-600">
-        <td colSpan={NCOLS} className="px-2 py-0.5 text-[10px] font-semibold text-zinc-500 dark:text-zinc-300">
-          {ep4.rotation_code || '—'}
-          {is_spillover && <span className="ml-2 text-amber-500">↩ à cheval</span>}
-        </td>
-      </tr>,
-      ...ep4.services.map((svc, si) => {
-        const firstLeg = svc.legs[0];
-        const lastLeg  = svc.legs[svc.legs.length - 1];
-        const isFirstSvc = si === 0;
-
-        // IR/MF sur 1er service :
-        //   - spillover (retour) → côté départ (escale étrangère)
-        //   - normal (aller)    → côté arrivée (escale étrangère)
-        const showIR = isFirstSvc;
-        const irDep  = is_spillover && showIR ? ep4.IR : 0;
-        const mfDep  = is_spillover && showIR ? ep4.MF : 0;
-        const irArr  = !is_spillover && showIR ? ep4.IR : 0;
-        const mfArr  = !is_spillover && showIR ? ep4.MF : 0;
-        const totalIndem = isFirstSvc ? ep4.IR_eur + ep4.MF_eur : null;
-        // Dec = repas supprimés par prestation sur ce service
-        const meal = getPlanPrestation(firstLeg?.flightNumber ?? '', firstLeg?.dep ?? '');
-        const dec  = meal ? (meal.dej ? 1 : 0) + (meal.din ? 1 : 0) : 0;
-        // Highlight diff : seulement sur la row du 1er service (= celle qui
-        // porte les IR/MF/Indem). Pour les services suivants, pas de match.
-        const k = firstLeg ? diffKey(firstLeg.flightNumber, new Date(firstLeg.begin_ms).getUTCDate()) : '';
-        const isDiff = isFirstSvc && (highlightedKeys?.has(k) ?? false);
-
-        return (
-          <tr key={`f-${ep4.rotation_code}-${svc.service_index}`}
-              className={`border-b border-zinc-100 dark:border-zinc-800 ${is_spillover ? 'italic text-zinc-400' : ''} ${isDiff ? DIFF_ROW_CLASS : ''}`}>
-            {/* N° Ligne */}
-            <Td>{firstLeg?.flightNumber ?? ''}</Td>
-            {/* Départ */}
-            <Td>{firstLeg?.dep ?? ''}</Td>
-            <Td>{firstLeg ? fmtEp4TimeLocal(firstLeg.begin_ms, firstLeg.dep_utc_offset) : ''}</Td>
-            <Td right>{dec > 0 ? String(dec) : ''}</Td>
-            <Td>{/* Pdéj */}</Td>
-            <Td right>{irDep > 0 ? String(irDep) : ''}</Td>
-            <Td right>{mfDep > 0 ? String(mfDep) : ''}</Td>
-            {/* Arrivée */}
-            <Td>{lastLeg?.arr ?? ''}</Td>
-            <Td>{lastLeg ? fmtEp4TimeLocal(lastLeg.end_ms, lastLeg.arr_utc_offset) : ''}</Td>
-            <Td>{/* Dec arr */}</Td>
-            <Td>{/* Pdéj arr */}</Td>
-            <Td right>{irArr > 0 ? String(irArr) : ''}</Td>
-            <Td right>{mfArr > 0 ? String(mfArr) : ''}</Td>
-            {/* Indemnités */}
-            <Td right>{totalIndem != null ? fmt(totalIndem) : ''}</Td>
-            <Td>{/* Type */}</Td>
-            <Td>{/* km */}</Td>
-            <Td>{/* Mt Dec */}</Td>
-            <Td right>{isFirstSvc ? fmt(ep4.IR_eur) : ''}</Td>
-            <Td>{/* PN Non Exonéré */}</Td>
-          </tr>
-        );
-      }),
-    ];
-  });
+  const fmtVol = (n: string) => String(parseInt(n, 10) || 0).padStart(4, '0');
+  const dash = '—';
 
   return (
-    <Card title="Frais de Déplacement EP4">
+    <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
+      <h3 className="text-sm font-semibold mb-3">Frais de Déplacement — {flatRows.length} lignes</h3>
       <div className="overflow-x-auto">
-        <table className="text-[11px] font-mono w-full border-collapse">
-          <thead>
-            <tr className="bg-zinc-50 dark:bg-zinc-800 text-zinc-500 border-b border-zinc-100 dark:border-zinc-700">
-              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700 whitespace-nowrap">N° Ligne</th>
-              <th colSpan={6} className="px-2 py-1 text-center text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700">Départ</th>
-              <th colSpan={6} className="px-2 py-1 text-center text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700">Arrivée</th>
-              <th rowSpan={2} className="px-2 py-1 text-right text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700 whitespace-nowrap">Total Indem</th>
-              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700">Type</th>
-              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700">km</th>
-              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700 whitespace-nowrap">Mt Dec</th>
-              <th rowSpan={2} className="px-2 py-1 text-right text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700 whitespace-nowrap">PN Exonéré</th>
-              <th rowSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700 whitespace-nowrap">PN Non Exo.</th>
-            </tr>
-            <tr className="bg-zinc-50 dark:bg-zinc-800 text-zinc-500 border-b border-zinc-200 dark:border-zinc-700">
-              <Th>Esc.</Th>
-              <Th>Hor. TU</Th>
-              <Th>Dec</Th>
-              <Th>Pdéj</Th>
-              <Th>IR</Th>
-              <Th>MF</Th>
-              <Th>Esc.</Th>
-              <Th>Hor. TU</Th>
-              <Th>Dec</Th>
-              <Th>Pdéj</Th>
-              <Th>IR</Th>
-              <Th>MF</Th>
+        {/* whitespace-nowrap + px-3 → table déborde au besoin (scroll horizontal). */}
+        <table className="min-w-full text-[11px] font-mono whitespace-nowrap [&_th]:px-3 [&_td]:px-3">
+          <thead className="text-zinc-400 uppercase tracking-wide text-[9px]">
+            <tr>
+              <th className="text-left  py-1">#</th>
+              <th className="text-left  py-1">Ligne</th>
+              <th className="text-left  py-1">Esc dep</th>
+              <th className="text-left  py-1">Hor. dep</th>
+              <th className="text-right py-1">Dec</th>
+              <th className="text-right py-1">Pdéj</th>
+              <th className="text-right py-1">IR</th>
+              <th className="text-right py-1">MF</th>
+              <th className="text-left  py-1">Esc arr</th>
+              <th className="text-left  py-1">Hor. arr</th>
+              <th className="text-right py-1">Dec</th>
+              <th className="text-right py-1">Pdéj</th>
+              <th className="text-right py-1">IR</th>
+              <th className="text-right py-1">MF</th>
+              <th className="text-right py-1">Total</th>
+              <th className="text-left  py-1">Type</th>
+              <th className="text-right py-1">km</th>
+              <th className="text-right py-1">Mt Dec</th>
+              <th className="text-right py-1">PN Exo</th>
+              <th className="text-right py-1">PN N.Exo</th>
             </tr>
           </thead>
-          <tbody>{rotRows}</tbody>
-          {flights.length > 1 && (
-            <tfoot>
-              <tr className="border-t-2 border-zinc-400 dark:border-zinc-500 bg-zinc-50 dark:bg-zinc-800/40 font-semibold">
-                <td colSpan={3} className="px-2 py-1 text-[10px] text-zinc-500 uppercase">Totaux</td>
-                <Td right>{totDec > 0 ? String(totDec) : '—'}</Td>
-                <Td />
-                <Td right>{totIR > 0 ? String(totIR) : '—'}</Td>
-                <Td right>{totMF > 0 ? String(totMF) : '—'}</Td>
-                <td colSpan={4} />
-                <Td right>{totIR > 0 ? String(totIR) : '—'}</Td>
-                <Td right>{totMF > 0 ? String(totMF) : '—'}</Td>
-                <Td right>{fmt(totTotalIndem)}</Td>
-                <td colSpan={5} />
+          <tbody>
+            {flatRows.map((r, idx) => {
+              const { ep4, svc, is_spillover, isFirstSvc, isFirstOfRotation } = r;
+              const firstLeg = svc.legs[0];
+              const lastLeg  = svc.legs[svc.legs.length - 1];
+
+              const irDep      = is_spillover && isFirstSvc ? ep4.IR : 0;
+              const mfDep      = is_spillover && isFirstSvc ? ep4.MF : 0;
+              const irArr      = !is_spillover && isFirstSvc ? ep4.IR : 0;
+              const mfArr      = !is_spillover && isFirstSvc ? ep4.MF : 0;
+              const totalIndem = isFirstSvc ? ep4.IR_eur + ep4.MF_eur : null;
+              const pnExo      = totalIndem != null ? totalIndem * 0.7 : null;
+              const pnNonExo   = totalIndem != null ? totalIndem * 0.3 : null;
+
+              const meal = getPlanPrestation(firstLeg?.flightNumber ?? '', firstLeg?.dep ?? '');
+              const dec  = meal ? (meal.dej ? 1 : 0) + (meal.din ? 1 : 0) : 0;
+
+              const k = firstLeg ? diffKey(firstLeg.flightNumber, new Date(firstLeg.begin_ms).getUTCDate()) : '';
+              const isDiff = isFirstSvc && (highlightedKeys?.has(k) ?? false);
+
+              const rowClass = [
+                is_spillover ? 'italic text-zinc-400' : '',
+                isDiff ? DIFF_ROW_CLASS : '',
+                isFirstOfRotation && idx > 0 ? 'border-t border-zinc-200 dark:border-zinc-700' : '',
+              ].filter(Boolean).join(' ');
+
+              return (
+                <tr key={`f-${r.rotKey}-${svc.service_index}-${idx}`} className={rowClass}>
+                  <td className="py-0.5">{idx}</td>
+                  <td className="py-0.5">{firstLeg ? fmtVol(firstLeg.flightNumber) : ''}</td>
+                  <td className="py-0.5">{firstLeg?.dep ?? ''}</td>
+                  <td className="py-0.5">{firstLeg ? fmtEp4TimeCentiemesLocal(firstLeg.begin_ms, firstLeg.dep_utc_offset) : ''}</td>
+                  <td className="py-0.5 text-right">{dec > 0 ? dec : ''}</td>
+                  <td className="py-0.5 text-right">{dash}</td>
+                  <td className="py-0.5 text-right">{irDep > 0 ? irDep : ''}</td>
+                  <td className="py-0.5 text-right">{mfDep > 0 ? mfDep : ''}</td>
+                  <td className="py-0.5">{lastLeg?.arr ?? ''}</td>
+                  <td className="py-0.5">{lastLeg ? fmtEp4TimeCentiemesLocal(lastLeg.end_ms, lastLeg.arr_utc_offset) : ''}</td>
+                  <td className="py-0.5 text-right">{dash}</td>
+                  <td className="py-0.5 text-right">{dash}</td>
+                  <td className="py-0.5 text-right">{irArr > 0 ? irArr : ''}</td>
+                  <td className="py-0.5 text-right">{mfArr > 0 ? mfArr : ''}</td>
+                  <td className="py-0.5 text-right">{totalIndem != null ? fmt(totalIndem) : ''}</td>
+                  <td className="py-0.5">{dash}</td>
+                  <td className="py-0.5 text-right">{dash}</td>
+                  <td className="py-0.5 text-right">{dash}</td>
+                  <td className="py-0.5 text-right">{pnExo != null ? fmt(pnExo) : ''}</td>
+                  <td className="py-0.5 text-right">{pnNonExo != null ? fmt(pnNonExo) : ''}</td>
+                </tr>
+              );
+            })}
+            {flights.length > 1 && (
+              <tr className="font-bold border-t border-zinc-300 dark:border-zinc-700">
+                <td className="py-1" colSpan={4}>TOTAUX</td>
+                <td className="py-1 text-right">{totals.dec > 0 ? totals.dec : ''}</td>
+                <td className="py-1 text-right" />
+                <td className="py-1 text-right">{totals.IR > 0 ? totals.IR : ''}</td>
+                <td className="py-1 text-right">{totals.MF > 0 ? totals.MF : ''}</td>
+                <td className="py-1" colSpan={2} />
+                <td className="py-1 text-right" />
+                <td className="py-1 text-right" />
+                <td className="py-1 text-right">{totals.IR > 0 ? totals.IR : ''}</td>
+                <td className="py-1 text-right">{totals.MF > 0 ? totals.MF : ''}</td>
+                <td className="py-1 text-right">{fmt(totals.totalIndem)}</td>
+                <td className="py-1" />
+                <td className="py-1 text-right" />
+                <td className="py-1 text-right" />
+                <td className="py-1 text-right">{fmt(totals.pnExo)}</td>
+                <td className="py-1 text-right">{fmt(totals.pnNonExo)}</td>
               </tr>
-            </tfoot>
-          )}
+            )}
+          </tbody>
         </table>
       </div>
       {flights.some(f => f.ep4.IR_missingRateEscales.length > 0) && (
-        <p className="px-4 py-2 text-[10px] text-amber-600 dark:text-amber-400">
+        <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-2">
           Taux IR manquants : {[...new Set(flights.flatMap(f => f.ep4.IR_missingRateEscales))].join(', ')}
         </p>
       )}
-    </Card>
+    </section>
   );
 }
 
@@ -645,7 +651,17 @@ export function Ep4HoraireEP4Consolidee({ flights, year, month, highlightedKeys 
     <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
       <h3 className="text-sm font-semibold mb-3">Feuille Horaire — {totalRows} lignes</h3>
       <div className="overflow-x-auto">
-        <table className="min-w-full text-[11px] font-mono">
+        <table className="w-full table-fixed text-[11px] font-mono">
+          {/* colgroup : largeurs en % alignees IDENTIQUES dans Ep4ImportHorairePanel.
+              Permet aux 2 tableaux empiles d'avoir leurs colonnes parfaitement
+              alignees verticalement, malgre des contenus differents. Total = 100%. */}
+          <colgroup>
+            <col style={{ width:  '3%' }} /><col style={{ width:  '5%' }} /><col style={{ width: '4%' }} />
+            <col style={{ width:  '9%' }} /><col style={{ width:  '9%' }} /><col style={{ width: '4%' }} />
+            <col style={{ width:  '9%' }} /><col style={{ width:  '9%' }} />
+            <col style={{ width:  '6%' }} /><col style={{ width:  '6%' }} /><col style={{ width: '6%' }} />
+            <col style={{ width:  '6%' }} /><col style={{ width:  '6%' }} /><col style={{ width: '18%' }} />
+          </colgroup>
           <thead className="text-zinc-400 uppercase tracking-wide text-[9px]">
             <tr>
               <th className="text-left px-1 py-1">#</th>

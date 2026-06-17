@@ -294,7 +294,16 @@ function HorairePanel({
     <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
       <h3 className="text-sm font-semibold mb-3">Feuille Horaire — {rows.length} lignes</h3>
       <div className="overflow-x-auto">
-        <table className="min-w-full text-[11px] font-mono">
+        <table className="w-full table-fixed text-[11px] font-mono">
+          {/* colgroup : MÊMES largeurs que Ep4HoraireEP4Consolidee (ep4-tables.tsx)
+              pour l'alignement vertical des 2 tableaux empilés. */}
+          <colgroup>
+            <col style={{ width:  '3%' }} /><col style={{ width:  '5%' }} /><col style={{ width: '4%' }} />
+            <col style={{ width:  '9%' }} /><col style={{ width:  '9%' }} /><col style={{ width: '4%' }} />
+            <col style={{ width:  '9%' }} /><col style={{ width:  '9%' }} />
+            <col style={{ width:  '6%' }} /><col style={{ width:  '6%' }} /><col style={{ width: '6%' }} />
+            <col style={{ width:  '6%' }} /><col style={{ width:  '6%' }} /><col style={{ width: '18%' }} />
+          </colgroup>
           <thead className="text-zinc-400 uppercase tracking-wide text-[9px]">
             <tr>
               <th className="text-left px-1 py-1">#</th>

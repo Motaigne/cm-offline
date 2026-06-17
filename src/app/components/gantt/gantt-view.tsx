@@ -2665,7 +2665,6 @@ export function GanttView({
                       value={nbJours || '1'}
                       onChange={e => handleNbJoursChange(e.target.value)}
                       className="w-20 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-center font-semibold"
-                      autoFocus
                     >
                       {Array.from({ length: 31 }, (_, i) => i + 1).map(n => (
                         <option key={n} value={n}>{n}</option>
