@@ -5,7 +5,7 @@ import { NavBar } from '@/app/components/nav';
 import { Ep4HoraireEP4Consolidee, Ep4DecompteEP4Consolidee, Ep4FraisEP4Consolidee } from '@/app/components/ep4-tables';
 import { getEp4ForMonth, type Ep4MonthResponse } from '@/app/actions/ep4';
 import { loadEp4ForMonthLocal } from '@/lib/ep4-local';
-import { Ep4ImportView } from './ep4-import-view';
+import { Ep4ImportView, EP4_IMPORT_INITIAL, type Ep4ImportState } from './ep4-import-view';
 
 type ScenarioName = 'A' | 'B' | 'C';
 type ViewName = 'horaire' | 'decompte' | 'frais' | 'import';
@@ -34,6 +34,10 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
   const [error, setError]       = useState<string | null>(null);
   const [scenario, setScenario] = useState<ScenarioName>('A');
   const [view, setView]         = useState<ViewName>('horaire');
+  // State du PDF importé : remonté ici pour survivre aux switches de vue
+  // (Ep4ImportView est démonté quand view !== 'import', sinon on perdait
+  // le PDF déjà chargé à chaque aller-retour).
+  const [importState, setImportState] = useState<Ep4ImportState>(EP4_IMPORT_INITIAL);
   const cancelRef = useRef<(() => void) | null>(null);
 
   const loadMonth = useCallback((m: string) => {
@@ -226,7 +230,7 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
             L'utilisateur peut comparer avec son EP4 papier sans avoir le calcul
             côté app pour le mois en question. */}
         {view === 'import' ? (
-          <Ep4ImportView />
+          <Ep4ImportView state={importState} onStateChange={setImportState} />
         ) : (
           <>
             {loading && (

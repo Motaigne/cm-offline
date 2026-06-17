@@ -6,38 +6,47 @@
 // calculé. L'objectif est de permettre une validation visuelle "à l'œil" avant
 // d'aller plus loin. Cf. étape 4 du plan d'import PDF EP4.
 
-import { useState, useRef } from 'react';
+import { useRef } from 'react';
 import {
   parseEp4PdfFile, Ep4FormatError,
   type Ep4PdfData,
 } from '@/lib/ep4-pdf-extract';
 
-type Status = 'idle' | 'parsing' | 'loaded' | 'error';
+export type Ep4ImportStatus = 'idle' | 'parsing' | 'loaded' | 'error';
 
-interface State {
-  status:   Status;
+export interface Ep4ImportState {
+  status:   Ep4ImportStatus;
   fileName: string | null;
   data:     Ep4PdfData | null;
   error:    string | null;
 }
 
-const INITIAL: State = { status: 'idle', fileName: null, data: null, error: null };
+export const EP4_IMPORT_INITIAL: Ep4ImportState = {
+  status: 'idle', fileName: null, data: null, error: null,
+};
 
-export function Ep4ImportView() {
-  const [state, setState] = useState<State>(INITIAL);
+// Le state est PROPS — il vit dans Ep4PageClient pour persister entre les
+// switches de vue (Feuille Horaire → Import PDF par exemple). Sans ça,
+// l'unmount du composant à chaque switch perdait le PDF déjà chargé.
+export function Ep4ImportView({
+  state, onStateChange,
+}: {
+  state:         Ep4ImportState;
+  onStateChange: (next: Ep4ImportState) => void;
+}) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function handleFile(file: File) {
-    setState({ status: 'parsing', fileName: file.name, data: null, error: null });
+    onStateChange({ status: 'parsing', fileName: file.name, data: null, error: null });
     try {
       const buffer = await file.arrayBuffer();
       const data = await parseEp4PdfFile(buffer);
-      setState({ status: 'loaded', fileName: file.name, data, error: null });
+      onStateChange({ status: 'loaded', fileName: file.name, data, error: null });
     } catch (e) {
       const msg = e instanceof Ep4FormatError
         ? `Format non reconnu : ${e.message}`
         : `Erreur de parsing : ${String((e as Error)?.message ?? e)}`;
-      setState({ status: 'error', fileName: file.name, data: null, error: msg });
+      onStateChange({ status: 'error', fileName: file.name, data: null, error: msg });
     }
   }
 
