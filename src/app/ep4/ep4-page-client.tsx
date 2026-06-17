@@ -5,15 +5,17 @@ import { NavBar } from '@/app/components/nav';
 import { Ep4HoraireEP4Consolidee, Ep4DecompteEP4Consolidee, Ep4FraisEP4Consolidee } from '@/app/components/ep4-tables';
 import { getEp4ForMonth, type Ep4MonthResponse } from '@/app/actions/ep4';
 import { loadEp4ForMonthLocal } from '@/lib/ep4-local';
+import { Ep4ImportView } from './ep4-import-view';
 
 type ScenarioName = 'A' | 'B' | 'C';
-type ViewName = 'horaire' | 'decompte' | 'frais';
+type ViewName = 'horaire' | 'decompte' | 'frais' | 'import';
 
 const SCENARIOS: ScenarioName[] = ['A', 'B', 'C'];
 const VIEWS: { id: ViewName; label: string }[] = [
   { id: 'horaire',  label: 'Feuille Horaire'      },
   { id: 'decompte', label: 'Feuille Décompte'     },
   { id: 'frais',    label: 'Frais de Déplacement' },
+  { id: 'import',   label: 'Import PDF'           },
 ];
 
 const MONTH_FR = ['Janvier','Février','Mars','Avril','Mai','Juin',
@@ -220,46 +222,55 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
       )}
 
       <main className="print:hidden flex-1 p-4 max-w-[1400px] w-full mx-auto">
-        {loading && (
-          <div className="flex items-center justify-center gap-3 py-16 text-zinc-400">
-            <span className="animate-spin text-xl">⟳</span>
-            <span className="text-sm">Calcul EP4 en cours…</span>
-          </div>
-        )}
-        {error === 'offline' ? (
-          <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-xl p-4 text-sm text-amber-700 dark:text-amber-400">
-            <p className="font-semibold">📵 EP4 indisponible hors ligne</p>
-            <p className="text-xs mt-1 opacity-80">
-              Cette page nécessite une connexion (calculs EP4 server-side via raw_detail).
-              Repasse en ligne ou attends d&apos;être connecté pour voir les feuilles d&apos;activité.
-            </p>
-          </div>
-        ) : error ? (
-          <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-xl p-4 text-sm text-red-700 dark:text-red-400">
-            Erreur EP4 : {error}
-          </div>
-        ) : null}
+        {/* Vue Import PDF : indépendante de l'EP4 calculé (mois, scénario, etc.).
+            L'utilisateur peut comparer avec son EP4 papier sans avoir le calcul
+            côté app pour le mois en question. */}
+        {view === 'import' ? (
+          <Ep4ImportView />
+        ) : (
+          <>
+            {loading && (
+              <div className="flex items-center justify-center gap-3 py-16 text-zinc-400">
+                <span className="animate-spin text-xl">⟳</span>
+                <span className="text-sm">Calcul EP4 en cours…</span>
+              </div>
+            )}
+            {error === 'offline' ? (
+              <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-xl p-4 text-sm text-amber-700 dark:text-amber-400">
+                <p className="font-semibold">📵 EP4 indisponible hors ligne</p>
+                <p className="text-xs mt-1 opacity-80">
+                  Cette page nécessite une connexion (calculs EP4 server-side via raw_detail).
+                  Repasse en ligne ou attends d&apos;être connecté pour voir les feuilles d&apos;activité.
+                </p>
+              </div>
+            ) : error ? (
+              <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-xl p-4 text-sm text-red-700 dark:text-red-400">
+                Erreur EP4 : {error}
+              </div>
+            ) : null}
 
-        {data && scenarioFlights.length === 0 && !error && (
-          <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-6 text-center space-y-1">
-            <p className="text-sm text-zinc-400">
-              Aucun vol EP4 sur le scénario {scenario} pour {MONTH_FR[mo - 1]} {y}.
-            </p>
-            <p className="text-xs text-zinc-400/70">
-              Si un vol apparaît dans le calendrier, il n&apos;a pas de données EP4 liées
-              (pairing_instance_id manquant — vol ajouté sans passer par la recherche catalogue).
-            </p>
-          </div>
-        )}
+            {data && scenarioFlights.length === 0 && !error && (
+              <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-6 text-center space-y-1">
+                <p className="text-sm text-zinc-400">
+                  Aucun vol EP4 sur le scénario {scenario} pour {MONTH_FR[mo - 1]} {y}.
+                </p>
+                <p className="text-xs text-zinc-400/70">
+                  Si un vol apparaît dans le calendrier, il n&apos;a pas de données EP4 liées
+                  (pairing_instance_id manquant — vol ajouté sans passer par la recherche catalogue).
+                </p>
+              </div>
+            )}
 
-        {data && scenarioFlights.length > 0 && (
-          view === 'horaire' ? (
-            <Ep4HoraireEP4Consolidee flights={scenarioFlights} year={y} month={mo} />
-          ) : view === 'decompte' ? (
-            <Ep4DecompteEP4Consolidee flights={scenarioFlights} year={y} month={mo} />
-          ) : (
-            <Ep4FraisEP4Consolidee flights={scenarioFlights} />
-          )
+            {data && scenarioFlights.length > 0 && (
+              view === 'horaire' ? (
+                <Ep4HoraireEP4Consolidee flights={scenarioFlights} year={y} month={mo} />
+              ) : view === 'decompte' ? (
+                <Ep4DecompteEP4Consolidee flights={scenarioFlights} year={y} month={mo} />
+              ) : (
+                <Ep4FraisEP4Consolidee flights={scenarioFlights} />
+              )
+            )}
+          </>
         )}
       </main>
     </div>
