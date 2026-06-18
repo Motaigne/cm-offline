@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { NavBar } from '@/app/components/nav';
 import { Ep4HoraireEP4Consolidee, Ep4DecompteEP4Consolidee, Ep4FraisEP4Consolidee } from '@/app/components/ep4-tables';
 import { getEp4ForMonth, type Ep4MonthResponse } from '@/app/actions/ep4';
-import { loadEp4ForMonthLocal } from '@/lib/ep4-local';
+import { loadEp4ForMonthLocal, type Ep4LocalSkip } from '@/lib/ep4-local';
 import {
   Ep4ImportView, type Ep4ImportSummary,
   Ep4ImportHorairePanel, Ep4ImportActivitePanel, Ep4ImportFraisPanel,
@@ -47,6 +47,10 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
   const [error, setError]       = useState<string | null>(null);
   const [scenario, setScenario] = useState<ScenarioName>('A');
   const [view, setView]         = useState<ViewName>('horaire');
+  // Vols présents en items mais exclus du calcul EP4 (pairing/instance/sig/
+  // raw_detail manquant). Renseigné par le path Dexie (offline) — le path
+  // serveur ne remonte pas cette info car le user ne voit pas le filtre.
+  const [skipped, setSkipped]   = useState<Ep4LocalSkip[]>([]);
   // Liste résumée des EP4 importés (un par mois). Source de vérité = Dexie.
   const [imports, setImports] = useState<Ep4ImportSummary[]>([]);
   // Mois actuellement affiché dans la vue Import. Garde la sélection entre
@@ -176,10 +180,12 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
       if (cancelled) return;
       if (local) {
         localOk = true;
-        applyData(local);
+        applyData(local.data);
+        setSkipped(local.skipped);
         setError(null);
         setLoading(false);
       } else if (!navigator.onLine) {
+        setSkipped([]);
         setError('offline');
         setLoading(false);
       }
@@ -203,6 +209,7 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
           return;
         }
         applyData(res);
+        setSkipped([]); // data serveur écrase la data locale → on flush l'état diag
         setError(null);
       })
       .catch(e => {
@@ -235,6 +242,17 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
   const flightCountByScenario = (name: ScenarioName) =>
     data?.scenarios.find(s => s.name === name)?.flights.length ?? 0;
 
+  const skippedForScenario = skipped.filter(s => s.scenario === scenario);
+  const skipReasonLabel: Record<Ep4LocalSkip['reason'], string> = {
+    'no-pairing':    'pas de pairing_instance_id (vol ajouté hors recherche catalogue)',
+    'no-draft':      'draft (planning A/B/C) absent du cache Dexie',
+    'no-instance':   'pairing_instance absente du cache (sync rotations incomplet)',
+    'no-sig':        'signature absente du cache (sync rotations incomplet)',
+    'no-raw-detail': 'raw_detail manquant — repasse en ligne pour le pré-cacher',
+  };
+  const skipCountByScenario = (name: ScenarioName) =>
+    skipped.reduce((n, s) => n + (s.scenario === name ? 1 : 0), 0);
+
   // Diff calc ↔ PDF importé pour le mois courant. Sert de Set<key> à passer
   // aux 2 onglets Horaire/Décompte pour highlight des rows divergentes.
   // Memoizé pour éviter le recompute à chaque re-render (les inputs sont
@@ -264,6 +282,7 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
         <div className="flex items-center gap-1 border-l border-zinc-200 dark:border-zinc-700 pl-3">
           {SCENARIOS.map(s => {
             const count = flightCountByScenario(s);
+            const skipCount = skipCountByScenario(s);
             const active = scenario === s;
             return (
               <button
@@ -279,6 +298,14 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
                 {s}
                 {data && count > 0 && (
                   <span className="ml-1 text-[10px] font-normal opacity-60">{count}</span>
+                )}
+                {skipCount > 0 && (
+                  <span
+                    className={`ml-0.5 text-[10px] font-normal ${active ? 'text-amber-300' : 'text-amber-600 dark:text-amber-500'}`}
+                    title={`${skipCount} vol(s) filtré(s) — voir détail sous le tableau`}
+                  >
+                    ⚠{skipCount}
+                  </span>
                 )}
               </button>
             );
@@ -380,14 +407,35 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
               </div>
             ) : null}
 
+            {skippedForScenario.length > 0 && (
+              <div className="mb-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-xl p-3 text-xs space-y-1.5">
+                <p className="font-semibold text-amber-700 dark:text-amber-400">
+                  ⚠ {skippedForScenario.length} vol{skippedForScenario.length > 1 ? 's' : ''} du scénario {scenario} non affiché{skippedForScenario.length > 1 ? 's' : ''} (données EP4 manquantes en cache local)
+                </p>
+                <ul className="font-mono text-[11px] text-amber-700/85 dark:text-amber-400/85 space-y-0.5">
+                  {skippedForScenario.map(s => (
+                    <li key={s.flightItemId}>
+                      <span className="font-semibold">{s.startDate}</span>
+                      {s.rotationCode ? <span className="opacity-80"> · {s.rotationCode}</span> : null}
+                      <span className="opacity-80"> — {skipReasonLabel[s.reason]}</span>
+                      {s.pairingInstanceId && (
+                        <span className="opacity-50"> · inst {s.pairingInstanceId.slice(0, 8)}</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {data && scenarioFlights.length === 0 && !error && (
               <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-6 text-center space-y-1">
                 <p className="text-sm text-zinc-400">
                   Aucun vol EP4 sur le scénario {scenario} pour {MONTH_FR[mo - 1]} {y}.
                 </p>
                 <p className="text-xs text-zinc-400/70">
-                  Si un vol apparaît dans le calendrier, il n&apos;a pas de données EP4 liées
-                  (pairing_instance_id manquant — vol ajouté sans passer par la recherche catalogue).
+                  {skippedForScenario.length > 0
+                    ? 'Voir le panneau ⚠ ci-dessus pour les vols filtrés et leur raison.'
+                    : 'Si un vol apparaît dans le calendrier, il n’a pas de données EP4 liées (pairing_instance_id manquant — vol ajouté sans passer par la recherche catalogue).'}
                 </p>
               </div>
             )}

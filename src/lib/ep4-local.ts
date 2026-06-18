@@ -32,28 +32,74 @@ function pickIrRates(rows: Awaited<ReturnType<typeof loadAnnexeRowsLocal>>, mont
   return (best?.data ?? []) as IrMfRate[];
 }
 
+/** Diagnostic d'un flight item exclu du résultat EP4 — sert à expliquer en UI
+ *  pourquoi un vol présent au calendrier n'apparaît pas en EP4 offline.
+ *  Reasons :
+ *   - 'no-pairing'    : item.kind=flight mais pairing_instance_id NULL (vol
+ *                       ajouté manuellement, jamais le cas online non plus)
+ *   - 'no-draft'      : draft introuvable dans Dexie (cache désync)
+ *   - 'no-instance'   : pairing_instance absent de db.rotations (sync rotations
+ *                       incomplet ou instance supprimée serveur)
+ *   - 'no-sig'        : signature absente — théoriquement impossible si l'inst
+ *                       est trouvée (sig parent), gardé par défense
+ *   - 'no-raw-detail' : sig OK mais raw_detail manquant en db.rotation_details
+ *                       (pré-cache incomplet — typique cold offline) */
+export type Ep4LocalSkip = {
+  scenario: 'A' | 'B' | 'C' | '?';
+  flightItemId: string;
+  startDate: string;
+  pairingInstanceId: string | null;
+  rotationCode: string | null;
+  reason: 'no-pairing' | 'no-draft' | 'no-instance' | 'no-sig' | 'no-raw-detail';
+};
+
+export type Ep4LocalResult = { data: Ep4MonthResponse; skipped: Ep4LocalSkip[] };
+
 /** Charge tous les vols EP4 du mois (3 scenarios) depuis Dexie. Renvoie un
- *  Ep4MonthResponse identique à `getEp4ForMonth`. Null si Dexie n'a aucune
- *  signature avec `raw_detail` pour le mois (cache lite ancien ou pas encore
- *  rempli). */
-export async function loadEp4ForMonthLocal(month: string): Promise<Ep4MonthResponse | null> {
+ *  Ep4MonthResponse identique à `getEp4ForMonth` + la liste des flights filtrés
+ *  (skipped) pour debug UI. Null si Dexie n'a aucune signature avec `raw_detail`
+ *  pour le mois (cache lite ancien ou pas encore rempli). */
+export async function loadEp4ForMonthLocal(month: string): Promise<Ep4LocalResult | null> {
   const [y, m] = month.split('-').map(Number);
   const prevMonth = shiftMonth(month, -1);
+  const skipped: Ep4LocalSkip[] = [];
+  const emptyData: Ep4MonthResponse = {
+    scenarios: [{ name: 'A', flights: [] }, { name: 'B', flights: [] }, { name: 'C', flights: [] }],
+  };
 
   const drafts = await db.drafts
     .where('target_month').anyOf([month, prevMonth])
     .toArray();
   if (drafts.length === 0) {
-    return { scenarios: [{ name: 'A', flights: [] }, { name: 'B', flights: [] }, { name: 'C', flights: [] }] };
+    return { data: emptyData, skipped };
   }
 
   const draftById = new Map(drafts.map(d => [d.id, d]));
   const draftIds = drafts.map(d => d.id);
 
   const items = await db.items.where('draft_id').anyOf(draftIds).toArray();
-  const flightItems = items.filter(it => it.kind === 'flight' && it.pairing_instance_id);
+
+  // Filtre 1 : kind=flight. Track les flights sans pairing_instance_id (skip
+  // identique au serveur, mais on l'expose en UI pour diagnostic).
+  const allFlights = items.filter(it => it.kind === 'flight');
+  const flightItems: typeof allFlights = [];
+  for (const it of allFlights) {
+    if (!it.pairing_instance_id) {
+      const draft = draftById.get(it.draft_id);
+      skipped.push({
+        scenario: (draft?.name as 'A' | 'B' | 'C') ?? '?',
+        flightItemId: it.id,
+        startDate: it.start_date,
+        pairingInstanceId: null,
+        rotationCode: null,
+        reason: 'no-pairing',
+      });
+      continue;
+    }
+    flightItems.push(it);
+  }
   if (flightItems.length === 0) {
-    return { scenarios: [{ name: 'A', flights: [] }, { name: 'B', flights: [] }, { name: 'C', flights: [] }] };
+    return { data: emptyData, skipped };
   }
 
   const filteredItems = flightItems.filter(it => {
@@ -110,18 +156,34 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4MonthRespo
     ],
   };
 
+  const trackSkip = (
+    it: typeof filteredItems[number],
+    reason: Ep4LocalSkip['reason'],
+    rotationCode: string | null,
+  ) => {
+    const draft = draftById.get(it.draft_id);
+    skipped.push({
+      scenario: (draft?.name as 'A' | 'B' | 'C') ?? '?',
+      flightItemId: it.id,
+      startDate: it.start_date,
+      pairingInstanceId: (it.pairing_instance_id as string | null) ?? null,
+      rotationCode,
+      reason,
+    });
+  };
+
   for (const it of filteredItems) {
     const draft = draftById.get(it.draft_id);
-    if (!draft) continue;
+    if (!draft) { trackSkip(it, 'no-draft', null); continue; }
     const scenarioName = draft.name as 'A' | 'B' | 'C';
     if (scenarioName !== 'A' && scenarioName !== 'B' && scenarioName !== 'C') continue;
 
     const inst = instById.get(it.pairing_instance_id as string);
-    if (!inst) continue;
+    if (!inst) { trackSkip(it, 'no-instance', null); continue; }
     const sig = sigById.get(inst.signature_id);
-    if (!sig) continue;
+    if (!sig) { trackSkip(it, 'no-sig', null); continue; }
     const rawDetail = detailById.get(sig.id);
-    if (!rawDetail) continue;
+    if (!rawDetail) { trackSkip(it, 'no-raw-detail', sig.rotation_code); continue; }
 
     const briefMs = inst.scheduled_begin_duty_at ? new Date(inst.scheduled_begin_duty_at).getTime()
                    : inst.depart_at  ? new Date(inst.depart_at).getTime()  - MANEX_BRIEF_MS : null;
@@ -153,7 +215,11 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4MonthRespo
     s.flights.sort((a, b) => a.start_date.localeCompare(b.start_date));
   }
 
-  return result;
+  if (skipped.length > 0) {
+    console.warn('[ep4-local] flights skipped', { month, count: skipped.length, items: skipped });
+  }
+
+  return { data: result, skipped };
 }
 
 /** Charge raw_detail + taux_app + irRates pour une signature donnée depuis
