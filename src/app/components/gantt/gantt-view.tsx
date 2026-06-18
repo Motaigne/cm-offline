@@ -761,6 +761,7 @@ function DraggableBar({
       {!isRpcOnly && (
         <div
           ref={setNodeRef}
+          data-gantt-bar="true"
           style={{
             position: 'absolute',
             left: `${leftPct}%`,
@@ -789,7 +790,7 @@ function DraggableBar({
           {hasMep && (
             <div
               className="absolute top-0 left-0 right-0 pointer-events-none rounded-t-md"
-              style={{ height: BAR_H / 8, backgroundColor: 'rgba(236, 72, 153, 0.4)' }}
+              style={{ height: BAR_H / 8, backgroundColor: '#EC4899' }}
               aria-hidden
             />
           )}
@@ -1578,6 +1579,28 @@ export function GanttView({
     }
   }
 
+  // ── swipe horizontal mois ‹/› ──────────────────────────────────────────────
+  // Tap+drag horizontal sur le calendrier change le mois (swipe gauche → mois
+  // suivant, droite → précédent). Ignoré si le touch démarre sur un bloc Gantt
+  // (`data-gantt-bar`) — dnd-kit gère le drag du vol via ses propres listeners.
+  const swipeStart = useRef<{ x: number; y: number } | null>(null);
+  const onSwipeStart = (e: React.TouchEvent) => {
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('[data-gantt-bar]')) { swipeStart.current = null; return; }
+    const t = e.touches[0];
+    swipeStart.current = { x: t.clientX, y: t.clientY };
+  };
+  const onSwipeEnd = (e: React.TouchEvent) => {
+    const start = swipeStart.current;
+    swipeStart.current = null;
+    if (!start || monthLoading) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy)) return;
+    void changeMonth(shiftMonth(currentMonth, dx < 0 ? 1 : -1));
+  };
+
   // ── sheet helpers ───────────────────────────────────────────────────────────
 
   function openAdd(scenarioId: string, scenarioName: ScenarioName, date: string) {
@@ -1805,7 +1828,11 @@ export function GanttView({
 
   return (
     <DndContext id="cm-gantt" sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-      <div className="flex flex-col h-screen bg-white dark:bg-zinc-950 overflow-hidden select-none">
+      <div
+        className="flex flex-col h-screen bg-white dark:bg-zinc-950 overflow-hidden select-none"
+        onTouchStart={onSwipeStart}
+        onTouchEnd={onSwipeEnd}
+      >
 
         <NavBar />
         <EmptyCacheBanner />
