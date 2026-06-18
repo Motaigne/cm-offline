@@ -232,7 +232,7 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4LocalResul
     }));
     return { draft: `${d.name}@${d.target_month}`, flights: dItems };
   });
-  console.warn('[ep4-local DIAG]', { month, drafts: dumpDrafts, itemsByDraft: dumpItemsByDraft });
+  console.warn('[ep4-local DIAG] ' + JSON.stringify({ month, drafts: dumpDrafts, itemsByDraft: dumpItemsByDraft }));
 
   return { data: result, skipped };
 }
