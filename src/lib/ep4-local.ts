@@ -43,14 +43,17 @@ function pickIrRates(rows: Awaited<ReturnType<typeof loadAnnexeRowsLocal>>, mont
  *   - 'no-sig'        : signature absente — théoriquement impossible si l'inst
  *                       est trouvée (sig parent), gardé par défense
  *   - 'no-raw-detail' : sig OK mais raw_detail manquant en db.rotation_details
- *                       (pré-cache incomplet — typique cold offline) */
+ *                       (pré-cache incomplet — typique cold offline)
+ *   - 'stale-instance': les seules versions de l'instance en Dexie ont un
+ *                       depart_at > 30 j du item.start_date (l'instance a été
+ *                       déplacée serveur, le rescue n'a pas encore re-sync) */
 export type Ep4LocalSkip = {
   scenario: 'A' | 'B' | 'C' | '?';
   flightItemId: string;
   startDate: string;
   pairingInstanceId: string | null;
   rotationCode: string | null;
-  reason: 'no-pairing' | 'no-draft' | 'no-instance' | 'no-sig' | 'no-raw-detail';
+  reason: 'no-pairing' | 'no-draft' | 'no-instance' | 'no-sig' | 'no-raw-detail' | 'stale-instance';
 };
 
 export type Ep4LocalResult = { data: Ep4MonthResponse; skipped: Ep4LocalSkip[] };
@@ -114,14 +117,19 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4LocalResul
   // ~1 kB / sig — raw_detail est dans rotation_details, chargé à la demande).
   const allRotations = await db.rotations.toArray();
   type SigSubset = { id: string; rotation_code: string; zone: string | null };
-  type InstSubset = { id: string; signature_id: string; depart_at: string | null; arrivee_at: string | null;
+  type InstSubset = { id: string; signature_id: string; sigTargetMonth: string;
+                      depart_at: string | null; arrivee_at: string | null;
                       scheduled_begin_duty_at: string | null; scheduled_end_duty_at: string | null; };
   const sigById  = new Map<string, SigSubset>();
   // Map<pairing_instance_id, candidates[]> — une instance peut apparaître nestée
-  // dans plusieurs sigs Dexie (cas où AF a re-scrapé et déplacé l'instance d'une
-  // sig vers une autre : l'ancienne sig reste cachée avec la version stale, la
-  // nouvelle est apportée par le rescue de getRotationsForMonth). On garde tous
-  // les candidats et on choisit plus loin par proximité au start_date de l'item.
+  // dans plusieurs sigs Dexie (cas où AF a re-scrapé et splitté une rotation
+  // signée différemment selon le snapshot : 2 sigs distinctes contiennent la
+  // même instance avec depart_at identique mais raw_detail divergents — sig
+  // courante a raw_detail aligné, sig stale a raw_detail d'un autre mois).
+  // On garde tous les candidats et on choisit plus loin :
+  //   1. priorité à la sig dont target_month === mois du item.start_date
+  //   2. fallback : proximité depart_at vs item.start_date
+  //   3. garde-fou : si delta > 30 j, l'instance est obsolète → skip
   const instCandidates = new Map<string, InstSubset[]>();
   for (const sig of allRotations) {
     sigById.set(sig.id, { id: sig.id, rotation_code: sig.rotation_code ?? '', zone: sig.zone ?? null });
@@ -129,6 +137,7 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4LocalResul
       const candidate: InstSubset = {
         id: inst.id,
         signature_id: sig.id,
+        sigTargetMonth: sig.target_month,
         depart_at: inst.depart_at ?? null,
         arrivee_at: inst.arrivee_at ?? null,
         scheduled_begin_duty_at: inst.scheduled_begin_duty_at ?? null,
@@ -139,27 +148,39 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4LocalResul
       else instCandidates.set(inst.id, [candidate]);
     }
   }
-  /** Choisit le candidat dont `depart_at` est le plus proche de `it.start_date`.
-   *  Sans depart_at → départage par index naturel (premier candidat). */
-  const pickInstance = (instanceId: string, startDate: string): InstSubset | null => {
+  /** Retourne le candidat le plus pertinent + un flag `stale` (true si delta
+   *  >30j entre depart_at et item.start_date — l'instance Dexie est obsolète). */
+  const pickInstance = (instanceId: string, startDate: string): { inst: InstSubset; stale: boolean } | null => {
     const list = instCandidates.get(instanceId);
     if (!list || list.length === 0) return null;
-    if (list.length === 1) return list[0];
+    const itemMonth = startDate.slice(0, 7);
+    // 1. Filtre par target_month identique au mois de l'item (résout les ties
+    //    où 2 sigs ont la même instance avec même depart_at mais raw_detail
+    //    divergents — la sig au target_month correct a le raw_detail aligné).
+    const sameMonth = list.filter(c => c.sigTargetMonth === itemMonth);
+    const candidates = sameMonth.length > 0 ? sameMonth : list;
+    // 2. Proximité depart_at vs start_date (au sein des candidates restantes).
     const targetMs = new Date(`${startDate}T00:00:00Z`).getTime();
-    let best = list[0];
-    let bestDelta = Infinity;
-    for (const c of list) {
+    let best = candidates[0];
+    let bestDelta = best.depart_at
+      ? Math.abs(new Date(best.depart_at).getTime() - targetMs)
+      : Infinity;
+    for (const c of candidates) {
       if (!c.depart_at) continue;
       const delta = Math.abs(new Date(c.depart_at).getTime() - targetMs);
       if (delta < bestDelta) { best = c; bestDelta = delta; }
     }
-    return best;
+    // 3. Garde-fou : si même le meilleur est très loin (>30j), la version Dexie
+    //    est obsolète → on signale comme stale pour éviter d'afficher des legs
+    //    fantômes (ex: vol planifié 12 juin avec leg0 calculé au 27 juillet).
+    const stale = bestDelta / 86_400_000 > 30;
+    return { inst: best, stale };
   };
   // Charge en bulk les raw_detail des sigs utilisés dans les flights filtrés.
   const neededSigIds = new Set<string>();
   for (const it of filteredItems) {
-    const inst = pickInstance(it.pairing_instance_id as string, it.start_date);
-    if (inst) neededSigIds.add(inst.signature_id);
+    const pick = pickInstance(it.pairing_instance_id as string, it.start_date);
+    if (pick) neededSigIds.add(pick.inst.signature_id);
   }
   const detailRows = await db.rotation_details.bulkGet([...neededSigIds]);
   const detailById = new Map<string, PairingDetail>();
@@ -202,8 +223,10 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4LocalResul
     const scenarioName = draft.name as 'A' | 'B' | 'C';
     if (scenarioName !== 'A' && scenarioName !== 'B' && scenarioName !== 'C') continue;
 
-    const inst = pickInstance(it.pairing_instance_id as string, it.start_date);
-    if (!inst) { trackSkip(it, 'no-instance', null); continue; }
+    const pick = pickInstance(it.pairing_instance_id as string, it.start_date);
+    if (!pick) { trackSkip(it, 'no-instance', null); continue; }
+    if (pick.stale) { trackSkip(it, 'stale-instance', null); continue; }
+    const inst = pick.inst;
     const sig = sigById.get(inst.signature_id);
     if (!sig) { trackSkip(it, 'no-sig', null); continue; }
     const rawDetail = detailById.get(sig.id);
@@ -242,35 +265,6 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4LocalResul
   if (skipped.length > 0) {
     console.warn('[ep4-local] flights skipped', { month, count: skipped.length, items: skipped });
   }
-
-  // DEBUG TEMP : dump les instances avec plusieurs candidats (= cas stale)
-  // pour confirmer si pickInstance a quelque chose à choisir, ou si une seule
-  // version stale est en Dexie. À retirer après fix.
-  const multi: Array<{ inst8: string; candidates: Array<{ sig8: string; dep: string | null }> }> = [];
-  for (const [instId, candidates] of instCandidates) {
-    if (candidates.length > 1) {
-      multi.push({
-        inst8: instId.slice(0, 8),
-        candidates: candidates.map(c => ({ sig8: c.signature_id.slice(0, 8), dep: c.depart_at })),
-      });
-    }
-  }
-  console.warn(`[ep4-local MULTI ${month}] totalInsts=${instCandidates.size} multi=${multi.length} ` + JSON.stringify(multi));
-
-  // DEBUG TEMP : dump structure drafts+items pour identifier les drafts stale
-  // qui causent l'italique fantôme (item HND draft de mai apparait en spillover
-  // alors que le serveur l'a deja deplace vers juin). À retirer une fois fixé.
-  const dumpDrafts = drafts.map(d => ({ id: d.id.slice(0, 8), name: d.name, tm: d.target_month }));
-  const dumpItemsByDraft = drafts.map(d => {
-    const dItems = items.filter(it => it.draft_id === d.id && it.kind === 'flight').map(it => ({
-      id: it.id.slice(0, 8),
-      sd: it.start_date,
-      ed: it.end_date,
-      inst: it.pairing_instance_id?.slice(0, 8) ?? null,
-    }));
-    return { draft: `${d.name}@${d.target_month}`, flights: dItems };
-  });
-  console.warn('[ep4-local DIAG] ' + JSON.stringify({ month, drafts: dumpDrafts, itemsByDraft: dumpItemsByDraft }));
 
   return { data: result, skipped };
 }

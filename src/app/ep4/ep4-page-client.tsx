@@ -163,25 +163,11 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
     localStorage.setItem('cm-selected-month', m);
 
     let localOk = false;
-    const applyData = (res: Ep4MonthResponse, source: 'local' | 'server') => {
+    const applyData = (res: Ep4MonthResponse) => {
       if (cancelled) return;
       setData(res);
       const first = res.scenarios.find(s => s.flights.length > 0);
       if (first) setScenario(first.name);
-      // DEBUG TEMP : dump dates leg0 de chaque flight par scenario, pour comparer
-      // ce que renvoie Dexie vs serveur (cas HND italique→normal). À retirer.
-      const dumpFlights = res.scenarios.flatMap(sc => sc.flights.map(f => {
-        const leg0 = f.ep4.services[0]?.legs[0];
-        return {
-          sc: sc.name,
-          item: f.flight_item_id.slice(0, 8),
-          rot: f.ep4.rotation_code,
-          sd: f.start_date,
-          sp: f.is_spillover,
-          leg0b: leg0 ? new Date(leg0.begin_ms).toISOString() : null,
-        };
-      }));
-      console.warn(`[ep4-page APPLY ${source}] ` + JSON.stringify(dumpFlights));
     };
 
     // 1. Lecture Dexie d'abord (raw_detail + taux_app pré-cachés au sync).
@@ -194,7 +180,7 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
       if (cancelled) return;
       if (local) {
         localOk = true;
-        applyData(local.data, 'local');
+        applyData(local.data);
         setSkipped(local.skipped);
         setError(null);
         setLoading(false);
@@ -222,7 +208,7 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
           if (!localOk) setError(res.error === 'timeout' ? 'offline' : res.error);
           return;
         }
-        applyData(res, 'server');
+        applyData(res);
         setSkipped([]); // data serveur écrase la data locale → on flush l'état diag
         setError(null);
       })
@@ -258,11 +244,12 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
 
   const skippedForScenario = skipped.filter(s => s.scenario === scenario);
   const skipReasonLabel: Record<Ep4LocalSkip['reason'], string> = {
-    'no-pairing':    'pas de pairing_instance_id (vol ajouté hors recherche catalogue)',
-    'no-draft':      'draft (planning A/B/C) absent du cache Dexie',
-    'no-instance':   'pairing_instance absente du cache (sync rotations incomplet)',
-    'no-sig':        'signature absente du cache (sync rotations incomplet)',
-    'no-raw-detail': 'raw_detail manquant — repasse en ligne pour le pré-cacher',
+    'no-pairing':     'pas de pairing_instance_id (vol ajouté hors recherche catalogue)',
+    'no-draft':       'draft (planning A/B/C) absent du cache Dexie',
+    'no-instance':    'pairing_instance absente du cache (sync rotations incomplet)',
+    'no-sig':         'signature absente du cache (sync rotations incomplet)',
+    'no-raw-detail':  'raw_detail manquant — repasse en ligne pour le pré-cacher',
+    'stale-instance': 'cache obsolète (instance a changé serveur) — force un Sync NavBar',
   };
   const skipCountByScenario = (name: ScenarioName) =>
     skipped.reduce((n, s) => n + (s.scenario === name ? 1 : 0), 0);
