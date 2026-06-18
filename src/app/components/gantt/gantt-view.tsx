@@ -483,7 +483,7 @@ const REST_H = 6;
 function DraggableBar({
   item, clip, dim, year, mo, onEdit, isDragSource,
   scenarioItems, rpcChevauchement, isFictive = false,
-  pvei = PVEI, ksp = KSP,
+  pvei = PVEI, ksp = KSP, hasMep = false,
 }: {
   item: CalendarItem;
   clip: { start: number; end: number };
@@ -505,6 +505,9 @@ function DraggableBar({
    *  passe pour aligner la valeur affichée sur la bar avec le popup/détail. */
   pvei?: number;
   ksp?: number;
+  /** True si la rotation comporte au moins une MEP (sig.dead_head). Rend un
+   *  bandeau magenta translucide en haut du bloc, par-dessus tout. */
+  hasMep?: boolean;
 }) {
   const readOnly = !!item._isSpillover;
   // RPC-only spillover : vol dont le corps est en M-1 et dont la queue RPC
@@ -783,6 +786,13 @@ function DraggableBar({
           onClick={readOnly ? undefined : (e) => { e.stopPropagation(); onEdit(item); }}
           title={readOnly ? 'Vol à cheval (mois précédent) — modifiable depuis le mois de départ' : undefined}
         >
+          {hasMep && (
+            <div
+              className="absolute top-0 left-0 right-0 pointer-events-none rounded-t-md"
+              style={{ height: BAR_H / 8, backgroundColor: 'rgba(236, 72, 153, 0.4)' }}
+              aria-hidden
+            />
+          )}
           <div className="flex flex-col min-w-0 flex-1 gap-px">
             <span className="text-[11px] font-semibold truncate leading-none">{label}</span>
             {euroVal !== null && (
@@ -2201,6 +2211,9 @@ export function GanttView({
                     {scenario.items.map(item => {
                       const clip = clipItem(item, year, mo);
                       if (!clip) return null;
+                      const hasMep = item.pairing_instance_id
+                        ? signaturesByInstId.get(item.pairing_instance_id)?.dead_head === true
+                        : false;
                       return (
                         <DraggableBar
                           key={item.id}
@@ -2216,6 +2229,7 @@ export function GanttView({
                           isFictive={fictiveMonths.includes(item.start_date.slice(0, 7))}
                           pvei={finBaseState?.pvei ?? PVEI}
                           ksp={finBaseState?.ksp ?? KSP}
+                          hasMep={hasMep}
                         />
                       );
                     })}
