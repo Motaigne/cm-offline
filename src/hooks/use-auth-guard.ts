@@ -96,8 +96,8 @@ export function useAuthGuard(): AuthState {
       }
 
       // Revalidation background avec timeout — ne bloque pas le rendu.
-      // Si online + session expirée → log + redirect login.
-      // Si offline/captif → timeout silencieux, on garde la session locale.
+      // Si online + 401 confirme → log + redirect login.
+      // Si offline / captif / erreur reseau : trust la session locale.
       void (async () => {
         const ac = new AbortController();
         const timer = setTimeout(() => ac.abort(), GETUSER_TIMEOUT_MS);
@@ -105,17 +105,19 @@ export function useAuthGuard(): AuthState {
           const { data, error } = await supabase.auth.getUser();
           clearTimeout(timer);
           if (cancelled) return;
-          if (error || !data.user) {
-            // Anti-boucle offline : Supabase peut renvoyer error/user=null
-            // sans throw quand le réseau est coupé. Si on est offline, on
-            // trust la session locale au lieu de rediriger vers /login.
-            if (typeof navigator !== 'undefined' && !navigator.onLine) {
-              return;
-            }
-            try { localStorage.removeItem(HAS_SESSION_KEY); } catch { /* */ }
-            await logSessionLostClient(supabase, session?.user.email, '401');
-            router.replace('/login');
-          }
+          if (!error && data.user) return;
+          // Anti-boucle offline : si pas de signal reseau, ne pas rediriger.
+          if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+          // 4g/wifi captif : navigator.onLine peut etre true alors que les
+          // requetes Supabase sont droppees par le firewall du reseau pro.
+          // On ne redirige que si l'erreur est un vrai 401 (status explicite).
+          // Toute autre erreur (network, timeout, fetch failed, captif HTML)
+          // est traitee comme "transient" → on garde la session locale.
+          const status = (error as { status?: number } | null)?.status;
+          if (status !== 401) return;
+          try { localStorage.removeItem(HAS_SESSION_KEY); } catch { /* */ }
+          await logSessionLostClient(supabase, session?.user.email, '401');
+          router.replace('/login');
         } catch {
           // timeout / réseau coupé / portail captif : trust local session
         }
@@ -123,7 +125,7 @@ export function useAuthGuard(): AuthState {
     })();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, newSession) => {
+      async (event, newSession) => {
         if (cancelled) return;
         if (event === 'SIGNED_OUT') {
           // Anti-boucle offline : Supabase peut fire SIGNED_OUT quand le
@@ -131,6 +133,34 @@ export function useAuthGuard(): AuthState {
           // on ignore et on garde la session locale telle quelle.
           if (typeof navigator !== 'undefined' && !navigator.onLine) {
             console.warn('[auth-guard] SIGNED_OUT ignored (offline)');
+            return;
+          }
+          // 4g/wifi captif au travail : navigator.onLine === true mais les
+          // requetes Supabase sont droppees par le firewall, ce qui fait
+          // hang le refresh token et Supabase fire SIGNED_OUT en faux positif.
+          // Sans gate, router.replace('/login') part dans le vide (RSC fetch
+          // hang sur captif) → shell coince sur SkeletonShell. On confirme
+          // via getUser avec timeout court : timeout = captif → ignore.
+          const probe = await Promise.race([
+            supabase.auth.getUser()
+              .then(r => ({ kind: 'resolved' as const, status: (r.error as { status?: number } | null)?.status, hasUser: !r.error && !!r.data?.user }))
+              .catch(() => ({ kind: 'resolved' as const, status: undefined, hasUser: false })),
+            new Promise<{ kind: 'timeout' }>(r => setTimeout(() => r({ kind: 'timeout' as const }), 3000)),
+          ]);
+          if (cancelled) return;
+          if (probe.kind === 'timeout') {
+            console.warn('[auth-guard] SIGNED_OUT not confirmed (probe timeout — captif ?) → ignore');
+            return;
+          }
+          if (probe.hasUser) {
+            console.warn('[auth-guard] SIGNED_OUT false alarm — getUser returned a user → ignore');
+            return;
+          }
+          // Sur 4g captif, Supabase peut renvoyer une erreur non-401 (fetch
+          // failed, parse JSON sur HTML de portail). On ne redirige que sur
+          // un vrai 401 explicite. Sinon → suppose transient → garde session.
+          if (probe.status !== 401) {
+            console.warn('[auth-guard] SIGNED_OUT not confirmed by 401 → ignore (status=' + String(probe.status) + ')');
             return;
           }
           try { localStorage.removeItem(HAS_SESSION_KEY); } catch { /* */ }

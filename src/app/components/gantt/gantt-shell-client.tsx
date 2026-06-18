@@ -14,20 +14,31 @@ import { REGIME_NB30E } from '@/lib/finance';
 import { getScenariosWithItems } from '@/app/actions/planning';
 import { hydrateDB } from '@/lib/local-db';
 
-function monthFromParam(raw: string | null): string {
-  return raw && /^\d{4}-\d{2}$/.test(raw) ? raw : new Date().toISOString().slice(0, 7);
-}
-
 /** Lit `?m=YYYY-MM` une seule fois au mount. NON réactif aux changements
  *  d'URL via `window.history.replaceState` (utilisé par changeMonth dans
  *  gantt-view pour ne PAS déclencher de re-fetch shell à chaque navigation
  *  inter-mois). En cas de navigation Next.js réelle (Link → /), le shell
- *  se remonte de toute façon, donc la valeur est relue. */
+ *  se remonte de toute façon, donc la valeur est relue.
+ *
+ *  Fallback `cm-selected-month` (localStorage) quand l'URL n'a pas `?m=` :
+ *  la NavBar pointe vers `/` (sans query), et sans ce fallback la shell
+ *  chargeait scenarios du mois courant tandis que le gantt-view, dans son
+ *  init effect, relançait un `changeMonth(stored)` qui partait en race avec
+ *  le `[scenarios] → maybeRefresh` effect (loadFromDB([], current) résout
+ *  instantanément et `setLocalScenarios([])` arrivait en dernier → 0 ligne
+ *  visible). En faisant pointer la shell sur le bon mois dès le mount, le
+ *  init effect tombe dans son else branch normal et la race disparaît. */
 function useInitialMonth(): string {
   const [month] = useState(() => {
     if (typeof window === 'undefined') return new Date().toISOString().slice(0, 7);
     const url = new URL(window.location.href);
-    return monthFromParam(url.searchParams.get('m'));
+    const urlM = url.searchParams.get('m');
+    if (urlM && /^\d{4}-\d{2}$/.test(urlM)) return urlM;
+    try {
+      const stored = localStorage.getItem('cm-selected-month');
+      if (stored && /^\d{4}-\d{2}$/.test(stored)) return stored;
+    } catch { /* localStorage indispo (mode privé ?) → fall through */ }
+    return new Date().toISOString().slice(0, 7);
   });
   return month;
 }
