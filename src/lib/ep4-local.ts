@@ -219,6 +219,21 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4LocalResul
     console.warn('[ep4-local] flights skipped', { month, count: skipped.length, items: skipped });
   }
 
+  // DEBUG TEMP : dump structure drafts+items pour identifier les drafts stale
+  // qui causent l'italique fantôme (item HND draft de mai apparait en spillover
+  // alors que le serveur l'a deja deplace vers juin). À retirer une fois fixé.
+  const dumpDrafts = drafts.map(d => ({ id: d.id.slice(0, 8), name: d.name, tm: d.target_month }));
+  const dumpItemsByDraft = drafts.map(d => {
+    const dItems = items.filter(it => it.draft_id === d.id && it.kind === 'flight').map(it => ({
+      id: it.id.slice(0, 8),
+      sd: it.start_date,
+      ed: it.end_date,
+      inst: it.pairing_instance_id?.slice(0, 8) ?? null,
+    }));
+    return { draft: `${d.name}@${d.target_month}`, flights: dItems };
+  });
+  console.warn('[ep4-local DIAG]', { month, drafts: dumpDrafts, itemsByDraft: dumpItemsByDraft });
+
   return { data: result, skipped };
 }
 
