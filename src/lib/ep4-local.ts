@@ -266,6 +266,22 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4LocalResul
     console.warn('[ep4-local] flights skipped', { month, count: skipped.length, items: skipped });
   }
 
+  // DEBUG TEMP : dump les candidates de chaque pairing_instance_id utilisé par
+  // un planning_item du mois courant, avec leur sigTargetMonth + depart_at +
+  // la décision finale de pickInstance. À retirer après fix.
+  const dumpPicks = filteredItems.map(it => {
+    const list = instCandidates.get(it.pairing_instance_id as string) ?? [];
+    const pick = pickInstance(it.pairing_instance_id as string, it.start_date);
+    return {
+      item: it.id.slice(0, 8),
+      sd: it.start_date,
+      cands: list.map(c => ({ sig8: c.signature_id.slice(0, 8), tm: c.sigTargetMonth, dep: c.depart_at })),
+      pickedSig: pick?.inst.signature_id.slice(0, 8) ?? null,
+      stale: pick?.stale ?? null,
+    };
+  });
+  console.warn(`[ep4-local PICKS ${month}] ` + JSON.stringify(dumpPicks));
+
   return { data: result, skipped };
 }
 
