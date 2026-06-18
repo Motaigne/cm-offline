@@ -719,6 +719,19 @@ export function Ep4HoraireEP4Consolidee({ flights, year, month, highlightedKeys 
             {flatRows.map((r, idx) => {
               const { leg, svc, ep4, is_spillover, isFirstOfRotation, isLastLegOfSvc, isLastSvcOfRot } = r;
               const isSpillover = is_spillover || leg.end_ms < monthStart || leg.begin_ms >= monthEnd;
+              // DEBUG TEMP : dump cause de l'italique pour traquer le HND fantôme.
+              if (typeof window !== 'undefined' && isSpillover) {
+                console.warn('[ep4-tables ITAL]', JSON.stringify({
+                  rot: ep4.rotation_code, flightNum: leg.flightNumber, dep: leg.dep, arr: leg.arr,
+                  begin: new Date(leg.begin_ms).toISOString(),
+                  end:   new Date(leg.end_ms).toISOString(),
+                  monthStart: new Date(monthStart).toISOString(),
+                  monthEnd:   new Date(monthEnd).toISOString(),
+                  is_spillover_flight: is_spillover,
+                  endBeforeStart: leg.end_ms < monthStart,
+                  beginAfterEnd:  leg.begin_ms >= monthEnd,
+                }));
+              }
               const k = diffKey(leg.flightNumber, new Date(leg.begin_ms).getUTCDate());
               const isDiff = !isSpillover && (highlightedKeys?.has(k) ?? false);
               const rowClass = [
