@@ -44,9 +44,10 @@ function pickIrRates(rows: Awaited<ReturnType<typeof loadAnnexeRowsLocal>>, mont
  *                       est trouvée (sig parent), gardé par défense
  *   - 'no-raw-detail' : sig OK mais raw_detail manquant en db.rotation_details
  *                       (pré-cache incomplet — typique cold offline)
- *   - 'stale-instance': les seules versions de l'instance en Dexie ont un
- *                       depart_at > 30 j du item.start_date (l'instance a été
- *                       déplacée serveur, le rescue n'a pas encore re-sync) */
+ *   - 'stale-instance': sig en Dexie OK mais son raw_detail vient d'une autre
+ *                       occurrence — leg0 calculé est >30j du item.start_date
+ *                       (le rescue n'a pas amené la sig courante avec le bon
+ *                       raw_detail). Force un Sync ou réimport via catalogue. */
 export type Ep4LocalSkip = {
   scenario: 'A' | 'B' | 'C' | '?';
   flightItemId: string;
@@ -249,6 +250,19 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4LocalResul
       y, m, tauxRows, irRates, override,
     );
 
+    // Détection raw_detail stale : `buildEp4Rotation` extrait les legs depuis
+    // raw_detail sans les shifter par override. Si le raw_detail vient d'une
+    // autre occurrence de la même sig (cas où une sig est partagée par plusieurs
+    // dates et le sync a caché la version d'une autre date), leg0.begin_ms peut
+    // être à 45j du item.start_date → row italique fantôme. On skip avec une
+    // raison dédiée pour que le panneau jaune oriente vers un re-Sync.
+    const leg0 = ep4.services[0]?.legs[0];
+    if (leg0) {
+      const itemMs = new Date(`${it.start_date}T00:00:00Z`).getTime();
+      const deltaDays = Math.abs(leg0.begin_ms - itemMs) / 86_400_000;
+      if (deltaDays > 30) { trackSkip(it, 'stale-instance', sig.rotation_code); continue; }
+    }
+
     result.scenarios.find(s => s.name === scenarioName)!.flights.push({
       flight_item_id: it.id,
       start_date: it.start_date,
@@ -265,22 +279,6 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4LocalResul
   if (skipped.length > 0) {
     console.warn('[ep4-local] flights skipped', { month, count: skipped.length, items: skipped });
   }
-
-  // DEBUG TEMP : dump les candidates de chaque pairing_instance_id utilisé par
-  // un planning_item du mois courant, avec leur sigTargetMonth + depart_at +
-  // la décision finale de pickInstance. À retirer après fix.
-  const dumpPicks = filteredItems.map(it => {
-    const list = instCandidates.get(it.pairing_instance_id as string) ?? [];
-    const pick = pickInstance(it.pairing_instance_id as string, it.start_date);
-    return {
-      item: it.id.slice(0, 8),
-      sd: it.start_date,
-      cands: list.map(c => ({ sig8: c.signature_id.slice(0, 8), tm: c.sigTargetMonth, dep: c.depart_at })),
-      pickedSig: pick?.inst.signature_id.slice(0, 8) ?? null,
-      stale: pick?.stale ?? null,
-    };
-  });
-  console.warn(`[ep4-local PICKS ${month}] ` + JSON.stringify(dumpPicks));
 
   return { data: result, skipped };
 }
