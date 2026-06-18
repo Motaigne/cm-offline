@@ -170,23 +170,80 @@ export async function getRotationsForMonth(
     if (sigIdsWhitelist.size === 0) return [];
   }
 
+  const SIG_SELECT = 'id, rotation_code, nb_on_days, aircraft_code, zone, hc, hcr_crew, hdv, a81, heure_debut, heure_fin, temps_sej, legs_number, prime, rest_before_h, rest_after_h, tsv_nuit, dead_head, mep_flight, peq, first_layover, layovers, debut_sejour_at, fin_sejour_at, escale_debut, escale_fin, raw_detail';
+
   let sigsQuery = supabase
     .from('pairing_signature')
-    .select('id, rotation_code, nb_on_days, aircraft_code, zone, hc, hcr_crew, hdv, a81, heure_debut, heure_fin, temps_sej, legs_number, prime, rest_before_h, rest_after_h, tsv_nuit, dead_head, mep_flight, peq, first_layover, layovers, debut_sejour_at, fin_sejour_at, escale_debut, escale_fin, raw_detail')
+    .select(SIG_SELECT)
     .eq('snapshot_id', snap.id);
   if (sigIdsWhitelist) {
     sigsQuery = sigsQuery.in('id', Array.from(sigIdsWhitelist));
   }
   const { data: sigs } = await sigsQuery;
 
-  if (!sigs?.length) return [];
+  let allSigs = sigs ?? [];
+
+  // Mode full : ajouter aussi les sigs "orphelines au snapshot" — référencées
+  // par un planning_item.pairing_instance_id du mois M (et M-1 pour spillover)
+  // mais hors du snapshot actif. Cas typique : vol importé depuis un snapshot
+  // précédent, le nouveau snapshot AF ne contient plus cette rotation, mais
+  // l'item garde son pairing_instance_id. Sans rescue, le calendrier affiche
+  // le vol mais /ep4 offline le filtre (no-instance) car cacheRotations n'a
+  // jamais vu la sig parent.
+  if (mode === 'full') {
+    const prevMonth = (() => {
+      const [yy, mm] = month.split('-').map(Number);
+      const d = new Date(Date.UTC(yy, mm - 2, 1));
+      return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+    })();
+    const { data: drafts } = await supabase
+      .from('planning_draft')
+      .select('id')
+      .eq('user_id', user.id)
+      .in('target_month', [`${month}-01`, `${prevMonth}-01`]);
+    const draftIds = (drafts ?? []).map(d => d.id);
+    if (draftIds.length > 0) {
+      const { data: items } = await supabase
+        .from('planning_item')
+        .select('pairing_instance_id')
+        .in('draft_id', draftIds)
+        .eq('kind', 'flight')
+        .not('pairing_instance_id', 'is', null);
+      const plannedInstanceIds = Array.from(new Set(
+        (items ?? []).map(i => i.pairing_instance_id).filter(Boolean) as string[],
+      ));
+      if (plannedInstanceIds.length > 0) {
+        const plannedInstances = await fetchAllPaginated<{ signature_id: string }>((from, to) =>
+          supabase.from('pairing_instance')
+            .select('signature_id')
+            .in('id', plannedInstanceIds)
+            .range(from, to),
+        );
+        const plannedSigIds = Array.from(new Set(plannedInstances.map(i => i.signature_id)));
+        const existingIds = new Set(allSigs.map(s => s.id));
+        const missingSigIds = plannedSigIds.filter(id => !existingIds.has(id));
+        if (missingSigIds.length > 0) {
+          const { data: orphanSigs } = await supabase
+            .from('pairing_signature')
+            .select(SIG_SELECT)
+            .in('id', missingSigIds);
+          if (orphanSigs?.length) {
+            allSigs = [...allSigs, ...orphanSigs];
+            console.warn(`[getRotationsForMonth] ${orphanSigs.length} sig(s) orpheline(s) au snapshot rescued pour ${month}:`, orphanSigs.map(s => s.id).slice(0, 5));
+          }
+        }
+      }
+    }
+  }
+
+  if (!allSigs.length) return [];
 
   // Pré-calcul IR/MF par signature (besoin pour l'agrégation offline côté client).
   const irRowData = await loadAnnexeRowForMonth('ir_mf_rates', month);
   const irRates = (irRowData ?? []) as unknown as IrMfRate[];
   const irMfBySig = new Map<string, IrMfResult>();
   const sejourOffsetsBySig = new Map<string, SejourOffsets>();
-  for (const s of sigs) {
+  for (const s of allSigs) {
     if (!s.raw_detail) continue;
     const detail = s.raw_detail as unknown as PairingDetail;
     try {
@@ -196,7 +253,7 @@ export async function getRotationsForMonth(
     if (off) sejourOffsetsBySig.set(s.id, off);
   }
 
-  const sigIds = sigs.map(s => s.id);
+  const sigIds = allSigs.map(s => s.id);
   const instances = await fetchAllPaginated<{
     id: string; activity_id: string; signature_id: string;
     depart_date: string; depart_at: string; arrivee_at: string;
@@ -214,7 +271,7 @@ export async function getRotationsForMonth(
   );
 
   const sigMap = new Map<string, RotationSignature>();
-  for (const s of sigs) {
+  for (const s of allSigs) {
     const irMf = irMfBySig.get(s.id);
     // raw_detail embarqué dans la signature (mig 0031 + session 2026-06-17) pour
     // permettre EP4 + Metadata offline-first. ~1–5 kB / sig × ~30–50 sigs / mois.
