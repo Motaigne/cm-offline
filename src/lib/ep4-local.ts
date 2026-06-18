@@ -117,24 +117,48 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4LocalResul
   type InstSubset = { id: string; signature_id: string; depart_at: string | null; arrivee_at: string | null;
                       scheduled_begin_duty_at: string | null; scheduled_end_duty_at: string | null; };
   const sigById  = new Map<string, SigSubset>();
-  const instById = new Map<string, InstSubset>();
+  // Map<pairing_instance_id, candidates[]> — une instance peut apparaître nestée
+  // dans plusieurs sigs Dexie (cas où AF a re-scrapé et déplacé l'instance d'une
+  // sig vers une autre : l'ancienne sig reste cachée avec la version stale, la
+  // nouvelle est apportée par le rescue de getRotationsForMonth). On garde tous
+  // les candidats et on choisit plus loin par proximité au start_date de l'item.
+  const instCandidates = new Map<string, InstSubset[]>();
   for (const sig of allRotations) {
     sigById.set(sig.id, { id: sig.id, rotation_code: sig.rotation_code ?? '', zone: sig.zone ?? null });
     for (const inst of sig.instances) {
-      instById.set(inst.id, {
+      const candidate: InstSubset = {
         id: inst.id,
         signature_id: sig.id,
         depart_at: inst.depart_at ?? null,
         arrivee_at: inst.arrivee_at ?? null,
         scheduled_begin_duty_at: inst.scheduled_begin_duty_at ?? null,
         scheduled_end_duty_at: inst.scheduled_end_duty_at ?? null,
-      });
+      };
+      const list = instCandidates.get(inst.id);
+      if (list) list.push(candidate);
+      else instCandidates.set(inst.id, [candidate]);
     }
   }
+  /** Choisit le candidat dont `depart_at` est le plus proche de `it.start_date`.
+   *  Sans depart_at → départage par index naturel (premier candidat). */
+  const pickInstance = (instanceId: string, startDate: string): InstSubset | null => {
+    const list = instCandidates.get(instanceId);
+    if (!list || list.length === 0) return null;
+    if (list.length === 1) return list[0];
+    const targetMs = new Date(`${startDate}T00:00:00Z`).getTime();
+    let best = list[0];
+    let bestDelta = Infinity;
+    for (const c of list) {
+      if (!c.depart_at) continue;
+      const delta = Math.abs(new Date(c.depart_at).getTime() - targetMs);
+      if (delta < bestDelta) { best = c; bestDelta = delta; }
+    }
+    return best;
+  };
   // Charge en bulk les raw_detail des sigs utilisés dans les flights filtrés.
   const neededSigIds = new Set<string>();
   for (const it of filteredItems) {
-    const inst = instById.get(it.pairing_instance_id as string);
+    const inst = pickInstance(it.pairing_instance_id as string, it.start_date);
     if (inst) neededSigIds.add(inst.signature_id);
   }
   const detailRows = await db.rotation_details.bulkGet([...neededSigIds]);
@@ -178,7 +202,7 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4LocalResul
     const scenarioName = draft.name as 'A' | 'B' | 'C';
     if (scenarioName !== 'A' && scenarioName !== 'B' && scenarioName !== 'C') continue;
 
-    const inst = instById.get(it.pairing_instance_id as string);
+    const inst = pickInstance(it.pairing_instance_id as string, it.start_date);
     if (!inst) { trackSkip(it, 'no-instance', null); continue; }
     const sig = sigById.get(inst.signature_id);
     if (!sig) { trackSkip(it, 'no-sig', null); continue; }
