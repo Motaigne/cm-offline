@@ -243,6 +243,20 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4LocalResul
     console.warn('[ep4-local] flights skipped', { month, count: skipped.length, items: skipped });
   }
 
+  // DEBUG TEMP : dump les instances avec plusieurs candidats (= cas stale)
+  // pour confirmer si pickInstance a quelque chose à choisir, ou si une seule
+  // version stale est en Dexie. À retirer après fix.
+  const multi: Array<{ inst8: string; candidates: Array<{ sig8: string; dep: string | null }> }> = [];
+  for (const [instId, candidates] of instCandidates) {
+    if (candidates.length > 1) {
+      multi.push({
+        inst8: instId.slice(0, 8),
+        candidates: candidates.map(c => ({ sig8: c.signature_id.slice(0, 8), dep: c.depart_at })),
+      });
+    }
+  }
+  console.warn(`[ep4-local MULTI ${month}] totalInsts=${instCandidates.size} multi=${multi.length} ` + JSON.stringify(multi));
+
   // DEBUG TEMP : dump structure drafts+items pour identifier les drafts stale
   // qui causent l'italique fantôme (item HND draft de mai apparait en spillover
   // alors que le serveur l'a deja deplace vers juin). À retirer une fois fixé.
