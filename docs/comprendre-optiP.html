@@ -1,0 +1,739 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>optiP — Comprendre ce qu'il y a sous le capot</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    color: #18181b;
+    background: #fafafa;
+    font-size: 10.5pt;
+    line-height: 1.45;
+  }
+
+  @page { size: A4 portrait; margin: 0; }
+  .page {
+    width: 210mm;
+    min-height: 297mm;
+    padding: 14mm 14mm 12mm 14mm;
+    margin: 8mm auto;
+    background: #fff;
+    box-shadow: 0 4px 24px rgba(0,0,0,.08);
+    page-break-after: always;
+    display: flex;
+    flex-direction: column;
+  }
+  .page:last-child { page-break-after: auto; }
+  @media print {
+    body { background: #fff; }
+    .page { margin: 0; box-shadow: none; }
+  }
+
+  h1 {
+    font-size: 22pt;
+    font-weight: 700;
+    margin: 0 0 2mm 0;
+    color: #0a0a0a;
+    letter-spacing: -0.5px;
+  }
+  h1 .accent { color: #2563eb; }
+  .subtitle {
+    font-size: 10pt;
+    color: #71717a;
+    margin: 0 0 6mm 0;
+    padding-bottom: 3mm;
+    border-bottom: 1.5px solid #e4e4e7;
+  }
+  h2 {
+    font-size: 12pt;
+    font-weight: 700;
+    margin: 5mm 0 2mm 0;
+    color: #2563eb;
+    display: flex;
+    align-items: center;
+    gap: 2mm;
+  }
+  h2 .num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 6mm;
+    height: 6mm;
+    border-radius: 50%;
+    background: #2563eb;
+    color: white;
+    font-size: 9pt;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  h3 {
+    font-size: 10.5pt;
+    font-weight: 600;
+    margin: 3mm 0 1mm 0;
+    color: #27272a;
+  }
+  p, li { margin: 0 0 1.5mm 0; }
+  ol, ul { margin: 0 0 2mm 0; padding-left: 6mm; }
+  li { margin-bottom: 1mm; }
+  code, .mono {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    background: #f4f4f5;
+    padding: 0.2mm 1.2mm;
+    border-radius: 1.5mm;
+    font-size: 9.5pt;
+    color: #2563eb;
+  }
+  strong { color: #0a0a0a; }
+
+  .card {
+    background: #f4f4f5;
+    border-left: 2.5px solid #2563eb;
+    padding: 3mm 4mm;
+    border-radius: 0 2mm 2mm 0;
+    margin: 2mm 0 3mm 0;
+  }
+  .card.warn {
+    background: #fef3c7;
+    border-left-color: #d97706;
+  }
+  .card.warn strong { color: #92400e; }
+  .card.tip {
+    background: #d1fae5;
+    border-left-color: #059669;
+  }
+  .card.tip strong { color: #065f46; }
+  .card.info {
+    background: #dbeafe;
+    border-left-color: #2563eb;
+  }
+  .card.info strong { color: #1e40af; }
+
+  .analogy {
+    background: #faf5ff;
+    border-left: 2.5px solid #9333ea;
+    padding: 3mm 4mm;
+    border-radius: 0 2mm 2mm 0;
+    margin: 2mm 0 3mm 0;
+    font-style: italic;
+    color: #581c87;
+  }
+  .analogy strong { color: #6b21a8; font-style: normal; }
+
+  .schema {
+    background: #fafafa;
+    border: 1px solid #e4e4e7;
+    border-radius: 2mm;
+    padding: 4mm;
+    margin: 3mm 0;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 9pt;
+    line-height: 1.5;
+    color: #3f3f46;
+    white-space: pre;
+    overflow: hidden;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 2mm 0 3mm 0;
+    font-size: 9.5pt;
+  }
+  th, td {
+    text-align: left;
+    padding: 1.5mm 2mm;
+    border-bottom: 1px solid #e4e4e7;
+    vertical-align: top;
+  }
+  th {
+    background: #f4f4f5;
+    color: #2563eb;
+    font-weight: 600;
+    font-size: 9pt;
+  }
+
+  .footer {
+    margin-top: auto;
+    padding-top: 4mm;
+    border-top: 1px solid #e4e4e7;
+    font-size: 8pt;
+    color: #a1a1aa;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .lead {
+    font-size: 11pt;
+    color: #3f3f46;
+    margin-bottom: 4mm;
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PAGE 1 — Qu'est-ce qu'optiP
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="page">
+  <h1>opti<span class="accent">P</span> — Sous le capot</h1>
+  <p class="subtitle">Comprendre la technologie de l'app, sans être développeur</p>
+
+  <p class="lead">Ce guide explique <strong>en français simple</strong> ce qu'est optiP, comment ça marche, et qui sont les acteurs (Supabase, GitHub, Vercel). L'objectif : que tu puisses suivre une conversation technique et savoir ce que désigne chaque mot, sans pour autant savoir coder.</p>
+
+  <h2><span class="num">1</span> Qu'est-ce qu'optiP ?</h2>
+  <p>optiP est une <strong>application web</strong> — comme un site internet, mais qui se comporte comme une vraie app sur ton iPhone ou ton iPad. Une fois installée sur l'écran d'accueil, elle ressemble à n'importe quelle app native, sauf qu'elle est servie par un serveur distant.</p>
+  <p>Son rôle : aider un pilote Air France à <strong>visualiser son planning</strong>, <strong>simuler sa paie</strong>, suivre son <strong>Article 81</strong>, comparer des scénarios de rotations, et garder tout ça accessible <strong>même sans réseau</strong>.</p>
+
+  <div class="analogy">
+    <strong>Analogie :</strong> optiP, c'est comme un tableur Excel très spécialisé pour pilotes, qui sait aller chercher tout seul tes rotations dans CrewBidd, qui se synchronise entre ton iPhone et ton iPad, et qui se met à jour automatiquement quand on corrige une formule.
+  </div>
+
+  <h2><span class="num">2</span> Les trois mondes qui font tourner optiP</h2>
+  <p>Toute app web moderne repose sur trois grandes briques. optiP suit ce schéma classique :</p>
+
+  <div class="schema">┌────────────────┐    ┌────────────────┐    ┌────────────────┐
+│   GITHUB       │    │    VERCEL      │    │   SUPABASE     │
+│  (le code)     │ →  │ (l'hébergeur)  │ ←→ │  (la data)     │
+│                │    │                │    │                │
+│  Versionne     │    │  Construit et  │    │  Stocke les    │
+│  l'historique  │    │  publie l'app  │    │  données et    │
+│  du code       │    │  sur internet  │    │  authentifie   │
+└────────────────┘    └────────────────┘    └────────────────┘
+                              ↑
+                              │
+                       ┌──────┴──────┐
+                       │  TON iPAD   │
+                       │  (le client)│
+                       └─────────────┘</div>
+
+  <ul>
+    <li><strong>GitHub</strong> garde une trace de <strong>chaque ligne de code</strong> écrite pour optiP, et de qui l'a modifiée et quand.</li>
+    <li><strong>Vercel</strong> transforme ce code en site web accessible à l'adresse <code>cm-offline.vercel.app</code>.</li>
+    <li><strong>Supabase</strong> joue à la fois le rôle de <strong>base de données</strong> (où sont stockées tes rotations, plannings, profils) et de <strong>serveur d'authentification</strong> (qui vérifie que c'est bien toi qui te connectes).</li>
+    <li><strong>Ton iPad</strong> télécharge l'app depuis Vercel, garde une copie locale des données, et discute avec Supabase quand il a du réseau.</li>
+  </ul>
+
+  <div class="card info">
+    <strong>À retenir :</strong> ces trois briques sont des services payants à l'usage, hébergés ailleurs dans le monde. Tu ne possèdes pas de serveur — tu loues une part de très gros serveurs.
+  </div>
+
+  <div class="footer">
+    <span>optiP · Sous le capot · Page 1/10</span>
+    <span>Néophyte friendly</span>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PAGE 2 — GitHub
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="page">
+  <h1><span class="accent">GitHub</span> — La mémoire du code</h1>
+  <p class="subtitle">Où le code vit, où l'historique se garde, où on collabore</p>
+
+  <h2><span class="num">1</span> C'est quoi GitHub ?</h2>
+  <p><strong>GitHub</strong> est un service en ligne (racheté par Microsoft en 2018) qui héberge le <strong>code source</strong> des projets logiciels. C'est l'équivalent d'un Google Drive, mais spécialisé pour les développeurs.</p>
+  <p>La différence : GitHub n'héberge pas que des fichiers, il héberge <strong>tout l'historique des modifications</strong>. Chaque caractère ajouté, supprimé ou déplacé est tracé, avec son auteur et sa date.</p>
+
+  <div class="analogy">
+    <strong>Analogie :</strong> imagine un grand cahier où chaque page contient le code de l'app à un instant précis. Chaque fois qu'on modifie une virgule, on ne gomme pas — on tourne la page et on recopie tout avec la modif. GitHub garde le cahier entier, indéfiniment.
+  </div>
+
+  <h2><span class="num">2</span> Vocabulaire utile</h2>
+  <table>
+    <tr><th>Mot</th><th>Sens</th></tr>
+    <tr><td><strong>Repository</strong> (repo)</td><td>Un projet. optiP a un repo qui contient tous ses fichiers.</td></tr>
+    <tr><td><strong>Commit</strong></td><td>Une modification enregistrée. Chaque commit a un identifiant unique (<code>6b2d9c7</code>) et un message qui décrit ce qui a changé.</td></tr>
+    <tr><td><strong>Branch</strong></td><td>Une ligne d'évolution du code. La branche principale s'appelle <code>main</code>.</td></tr>
+    <tr><td><strong>Push</strong></td><td>Envoyer des commits de ton ordinateur vers GitHub.</td></tr>
+    <tr><td><strong>Pull</strong></td><td>L'inverse — récupérer les commits depuis GitHub.</td></tr>
+    <tr><td><strong>Pull Request</strong> (PR)</td><td>Proposer de fusionner une branche dans une autre, avec discussion.</td></tr>
+  </table>
+
+  <h2><span class="num">3</span> Comment c'est utilisé sur optiP</h2>
+  <p>Quand on modifie une ligne de code dans optiP (ajout d'une fonctionnalité, correction d'un bug, refonte d'une page), voici le flux :</p>
+  <ol>
+    <li>La modif est faite localement, sur ton ordinateur.</li>
+    <li>Un <strong>commit</strong> est créé avec un message du type <code>fix gantt : bandeau MEP magenta opaque</code>.</li>
+    <li>Le commit est <strong>poussé</strong> vers GitHub avec la commande <code>git push</code>.</li>
+    <li>GitHub conserve le commit dans l'historique de la branche <code>main</code>.</li>
+    <li>Vercel (qu'on verra page suivante) est <strong>notifié automatiquement</strong> et déclenche un nouveau déploiement.</li>
+  </ol>
+
+  <h2><span class="num">4</span> Pourquoi c'est précieux</h2>
+  <ul>
+    <li>Si une modif casse l'app, on peut <strong>revenir en arrière</strong> en un commit.</li>
+    <li>On voit <strong>qui a modifié quoi</strong> et pourquoi (le message du commit explique).</li>
+    <li>Le code est <strong>sauvegardé</strong> ailleurs que sur ton ordinateur : disque dur grillé, c'est pas grave.</li>
+    <li>Plusieurs personnes peuvent <strong>collaborer</strong> sans se marcher dessus.</li>
+  </ul>
+
+  <div class="card tip">
+    <strong>Concrètement sur optiP :</strong> au démarrage de la conversation, on m'a indiqué que le dernier commit poussé sur GitHub est <code>6b2d9c7 revert swipe horizontal mois (Q1) — garde MEP opaque</code>. Ça veut dire que la version en ligne de l'app reflète ce commit.
+  </div>
+
+  <div class="footer">
+    <span>optiP · Sous le capot · Page 2/10</span>
+    <span>github.com</span>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PAGE 3 — Vercel
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="page">
+  <h1><span class="accent">Vercel</span> — L'hébergeur</h1>
+  <p class="subtitle">Le service qui transforme ton code en site web accessible</p>
+
+  <h2><span class="num">1</span> C'est quoi Vercel ?</h2>
+  <p><strong>Vercel</strong> est une entreprise américaine fondée en 2015. Elle propose un service qui prend ton code, le <strong>compile</strong> (= prépare pour le navigateur), puis le <strong>publie</strong> sur internet à une adresse de ton choix. Vercel est aussi le créateur de Next.js, le framework qui structure optiP.</p>
+  <p>L'adresse publique d'optiP est <code>https://cm-offline.vercel.app</code> — c'est Vercel qui gère ce domaine.</p>
+
+  <div class="analogy">
+    <strong>Analogie :</strong> Vercel, c'est comme un imprimeur. Tu envoies un manuscrit (le code), il l'imprime joliment et il le met sur les présentoirs des kiosques du monde entier (les serveurs). Quand quelqu'un veut lire (= ouvrir l'URL), c'est lui qui lui tend le livre.
+  </div>
+
+  <h2><span class="num">2</span> Le déploiement automatique</h2>
+  <p>Vercel est connecté à GitHub. Dès qu'un commit est poussé sur la branche <code>main</code>, ça déclenche cette chaîne :</p>
+  <ol>
+    <li>Vercel détecte le push (notification GitHub).</li>
+    <li>Vercel récupère le code à jour.</li>
+    <li>Vercel installe les <strong>dépendances</strong> (les briques de code tierces, comme React).</li>
+    <li>Vercel lance le <strong>build</strong> : <code>next build</code> — il transforme le code source en fichiers optimisés.</li>
+    <li>Si tout réussit, la nouvelle version <strong>remplace l'ancienne</strong> en quelques secondes.</li>
+    <li>Si le build échoue, l'ancienne version reste en ligne (rien ne casse).</li>
+  </ol>
+
+  <h2><span class="num">3</span> Ce que Vercel fait en plus</h2>
+  <ul>
+    <li><strong>CDN mondial</strong> : copies de ton site sur des serveurs partout dans le monde. Quand tu ouvres l'app depuis Paris, tu touches un serveur à Paris, pas un à San Francisco. Résultat : c'est rapide.</li>
+    <li><strong>HTTPS automatique</strong> : le petit cadenas vert dans la barre d'adresse, c'est lui qui s'en occupe (gratuit, automatique).</li>
+    <li><strong>Logs</strong> : si quelque chose plante côté serveur, Vercel garde des traces consultables.</li>
+    <li><strong>Aperçus</strong> : pour chaque branche autre que <code>main</code>, Vercel peut publier une version d'essai temporaire.</li>
+  </ul>
+
+  <h2><span class="num">4</span> Côté serveur vs côté client</h2>
+  <p>Un point important pour comprendre la suite : il y a deux endroits où du code peut tourner.</p>
+  <table>
+    <tr><th>Côté</th><th>Où ?</th><th>Quoi ?</th></tr>
+    <tr><td><strong>Serveur</strong></td><td>Sur les machines de Vercel</td><td>Logique sensible, requêtes à Supabase avec clés secrètes, génération initiale des pages.</td></tr>
+    <tr><td><strong>Client</strong></td><td>Dans ton navigateur Safari</td><td>L'interface, les interactions, le rendu Gantt, le calcul de paie hors ligne.</td></tr>
+  </table>
+  <p>Sur optiP, on a <strong>maximisé la part client</strong> pour pouvoir tout faire fonctionner hors ligne. Vercel sert surtout des fichiers statiques pré-construits et quelques fonctions serveur (les <em>server actions</em>).</p>
+
+  <div class="card info">
+    <strong>Plan Vercel utilisé :</strong> le plan gratuit (Hobby) suffit pour optiP — c'est une app pour quelques utilisateurs, pas un site grand public.
+  </div>
+
+  <div class="footer">
+    <span>optiP · Sous le capot · Page 3/10</span>
+    <span>vercel.com</span>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PAGE 4 — Supabase
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="page">
+  <h1><span class="accent">Supabase</span> — La base de données</h1>
+  <p class="subtitle">Le coffre-fort des données et le gardien des comptes utilisateurs</p>
+
+  <h2><span class="num">1</span> C'est quoi Supabase ?</h2>
+  <p><strong>Supabase</strong> est un service en ligne qui propose <strong>tout ce dont une app a besoin côté serveur</strong> : base de données, authentification, stockage de fichiers, fonctions serveur. Il joue le rôle de "backend" pour optiP.</p>
+  <p>Au cœur de Supabase, il y a <strong>PostgreSQL</strong>, une base de données très réputée et open-source utilisée par énormément de gros services dans le monde.</p>
+
+  <div class="analogy">
+    <strong>Analogie :</strong> Supabase, c'est ta banque. Tes données (rotations, profils, A81) y sont rangées dans des coffres (= des tables). Pour y accéder, tu dois prouver ton identité (= login). Le banquier vérifie que tu n'as le droit de toucher qu'à <strong>tes propres coffres</strong>, pas à ceux du voisin.
+  </div>
+
+  <h2><span class="num">2</span> Les tables d'optiP</h2>
+  <p>Une <strong>table</strong>, dans une base de données, c'est l'équivalent d'un onglet Excel : des colonnes (les champs) et des lignes (les enregistrements). Voici les principales tables d'optiP :</p>
+  <table>
+    <tr><th>Table</th><th>Ce qu'elle contient</th></tr>
+    <tr><td><code>user_profile</code></td><td>Ton profil paie : PVEI, KSP, base, fonctions, etc.</td></tr>
+    <tr><td><code>planning_item</code></td><td>Chaque vol, congé, sim, repos planifié.</td></tr>
+    <tr><td><code>pairing_signature</code></td><td>Le détail d'une rotation type (legs, escales, durées).</td></tr>
+    <tr><td><code>pairing_instance</code></td><td>Une instance datée d'une rotation (départ le 15 janvier).</td></tr>
+    <tr><td><code>annexe_table</code></td><td>Les barèmes officiels : DDA, A81, IR/MF, etc.</td></tr>
+    <tr><td><code>user_notes</code></td><td>Tes notes libres sur des dates ou des scénarios.</td></tr>
+    <tr><td><code>auth_log</code></td><td>Historique des connexions (audit de sécurité).</td></tr>
+  </table>
+
+  <h2><span class="num">3</span> Les migrations SQL</h2>
+  <p>Quand on veut <strong>changer la structure</strong> d'une table (ajouter une colonne, par exemple), on n'édite pas la base directement. On écrit un fichier appelé <strong>migration SQL</strong> qui décrit le changement.</p>
+  <p>Dans optiP, ces fichiers sont dans le dossier <code>supabase/migrations/</code>. On en compte aujourd'hui plus de 40, numérotés <code>0001_init.sql</code> jusqu'à <code>0040_auth_log_session_lost.sql</code>. Chacun raconte une évolution de la base.</p>
+
+  <div class="card info">
+    <strong>Pourquoi c'est utile :</strong> les migrations sont versionnées avec le code dans Git. Si on remet la base à zéro, on rejoue les migrations dans l'ordre et on retrouve exactement la même structure.
+  </div>
+
+  <h2><span class="num">4</span> Row Level Security (RLS)</h2>
+  <p>C'est <strong>la</strong> fonctionnalité qui protège tes données. Au lieu de faire confiance à l'app pour ne te montrer que tes lignes, on dit à PostgreSQL lui-même : <em>« cet utilisateur n'a le droit de voir que les lignes dont la colonne user_id correspond au sien »</em>.</p>
+  <p>Même si quelqu'un trouvait une faille dans l'app, il ne pourrait pas accéder aux données d'un autre utilisateur — la sécurité est <strong>au niveau de la base</strong>, pas seulement de l'app.</p>
+
+  <h2><span class="num">5</span> Authentification</h2>
+  <p>Supabase gère aussi les comptes utilisateurs : email, mot de passe, sessions, tokens. Quand tu te logues, Supabase te délivre un <strong>jeton de session</strong> (un JWT) que ton iPad conserve. Ce jeton prouve à chaque requête que c'est bien toi.</p>
+
+  <div class="footer">
+    <span>optiP · Sous le capot · Page 4/10</span>
+    <span>supabase.com</span>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PAGE 5 — La stack frontend
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="page">
+  <h1>La stack <span class="accent">frontend</span></h1>
+  <p class="subtitle">Next.js, React, TypeScript, Tailwind : les couches de l'app</p>
+
+  <p class="lead">Le "frontend" c'est tout ce que tu vois et avec quoi tu interagis dans l'app. Voici les outils qui le composent.</p>
+
+  <h2><span class="num">1</span> Next.js (le framework)</h2>
+  <p><strong>Next.js</strong> est un framework qui sert de squelette à l'app. Il gère le routage des pages (URL → page affichée), la performance, le rendu serveur, le pré-chargement.</p>
+  <p>optiP utilise la version <strong>16</strong> de Next.js (très récente, sortie fin 2025). C'est pour ça que le fichier <code>AGENTS.md</code> du projet précise : <em>« This is NOT the Next.js you know »</em> — les conventions ont évolué.</p>
+
+  <div class="analogy">
+    <strong>Analogie :</strong> Next.js, c'est comme la charpente d'une maison. Tu n'y touches pas tous les jours, mais elle décide où vont les murs, où sont les portes, et comment l'électricité circule.
+  </div>
+
+  <h2><span class="num">2</span> React (la bibliothèque d'interface)</h2>
+  <p><strong>React</strong> est une bibliothèque créée par Facebook qui permet de construire l'interface utilisateur en assemblant des <strong>composants</strong> (boutons, cartes, listes, formulaires).</p>
+  <p>Chaque composant a un état (les données qu'il affiche) et se redessine automatiquement quand cet état change. Quand tu cliques sur "+ Nouveau profil", c'est un composant qui passe d'un état "fermé" à un état "ouvert".</p>
+
+  <h2><span class="num">3</span> TypeScript (le typage)</h2>
+  <p><strong>TypeScript</strong> est une version améliorée de JavaScript (le langage du web). Il ajoute des <strong>types</strong> : on déclare qu'une variable est un nombre, une chaîne de caractères, une date, etc. L'éditeur de code peut alors prévenir avant même de tester quand on essaie de faire une opération impossible.</p>
+  <div class="card tip">
+    <strong>Concrètement :</strong> ça évite des bugs du type <em>« on a essayé de calculer une moyenne sur une date »</em>. L'erreur est attrapée pendant l'écriture du code, pas dans l'app en production.
+  </div>
+
+  <h2><span class="num">4</span> Tailwind CSS (le style)</h2>
+  <p><strong>Tailwind</strong> est un système de styles qui permet d'habiller l'app (couleurs, espacements, polices, ombres) en collant des étiquettes directement sur les éléments. Par exemple, <code>className="bg-blue-500 text-white p-4 rounded-lg"</code> rend un bouton bleu, texte blanc, padding moyen, coins arrondis.</p>
+
+  <h2><span class="num">5</span> Les autres briques d'optiP</h2>
+  <table>
+    <tr><th>Outil</th><th>Rôle</th></tr>
+    <tr><td><strong>Dexie</strong></td><td>Stockage local dans le navigateur (IndexedDB). C'est lui qui garde tes données quand tu es offline.</td></tr>
+    <tr><td><strong>Zustand</strong></td><td>Gère l'état partagé entre composants (par exemple, le mois actuellement sélectionné).</td></tr>
+    <tr><td><strong>Zod</strong></td><td>Validation des données. Vérifie qu'un PVEI est bien un nombre, qu'une date est bien une date.</td></tr>
+    <tr><td><strong>Serwist</strong></td><td>Gère le Service Worker (le proxy local qui sert l'app quand tu es hors ligne).</td></tr>
+    <tr><td><strong>pdfjs-dist</strong></td><td>Lit les fichiers PDF (utilisé pour l'import EP4).</td></tr>
+    <tr><td><strong>date-fns</strong></td><td>Manipule les dates (ajout de jours, formatage, fuseaux horaires).</td></tr>
+    <tr><td><strong>Lucide</strong></td><td>Bibliothèque d'icônes (les nuages, la corbeille, les chevrons).</td></tr>
+  </table>
+
+  <div class="footer">
+    <span>optiP · Sous le capot · Page 5/10</span>
+    <span>Frontend</span>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PAGE 6 — L'offline
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="page">
+  <h1>L'<span class="accent">offline</span> — Le cœur d'optiP</h1>
+  <p class="subtitle">PWA, Service Worker, IndexedDB : pourquoi ça marche sans réseau</p>
+
+  <p class="lead">La règle d'or d'optiP, c'est que <strong>tout doit fonctionner sans internet</strong>. Pas de WiFi en altitude, pas de 4G en escale lointaine : aucune importance. Voici comment c'est possible.</p>
+
+  <h2><span class="num">1</span> Une PWA, c'est quoi ?</h2>
+  <p><strong>PWA</strong> veut dire <em>Progressive Web App</em>. C'est un site web qui sait :</p>
+  <ul>
+    <li>S'installer sur l'écran d'accueil de ton téléphone (comme une vraie app).</li>
+    <li>Fonctionner <strong>sans réseau</strong> (les données et le code sont en cache local).</li>
+    <li>Recevoir des notifications push (pas encore activé sur optiP, mais possible).</li>
+  </ul>
+  <p>L'avantage : pas besoin de passer par l'App Store. La mise à jour se fait au prochain démarrage.</p>
+
+  <h2><span class="num">2</span> Le Service Worker</h2>
+  <p>Le <strong>Service Worker</strong> est un mini-programme JavaScript qui tourne en arrière-plan dans ton navigateur, séparé de l'app. Il intercepte les requêtes réseau et décide :</p>
+  <ul>
+    <li>« J'ai déjà la réponse en cache → je la renvoie sans demander à internet. »</li>
+    <li>« Pas en cache → je demande à internet ET je mets en cache. »</li>
+    <li>« Pas de réseau → je sers la version en cache. »</li>
+  </ul>
+  <p>C'est lui qui permet à l'app de s'ouvrir <strong>instantanément même offline</strong>. Sur optiP, il est généré par <code>Serwist</code>.</p>
+
+  <div class="analogy">
+    <strong>Analogie :</strong> le Service Worker, c'est un majordome devant la porte de ton iPad. Quand l'app demande "donne-moi la page Gantt", il regarde d'abord dans son armoire (le cache). Si elle y est, il la sert tout de suite. Sinon, il va sonner chez le voisin (le serveur).
+  </div>
+
+  <h2><span class="num">3</span> IndexedDB (la base locale)</h2>
+  <p>Toutes les données dont l'app a besoin sont copiées dans une base de données <strong>dans ton iPad</strong>, appelée <strong>IndexedDB</strong>. Sur optiP, on l'utilise via une bibliothèque qui s'appelle <strong>Dexie</strong> (plus simple à manipuler).</p>
+  <p>Ce qui y est stocké :</p>
+  <ul>
+    <li>Tes <strong>rotations</strong> (les vols catalogués pour les mois courants).</li>
+    <li>Tes <strong>plannings</strong> (scénarios A, B, C avec leurs vols, congés, sim).</li>
+    <li>Ton <strong>profil paie</strong> (toutes les versions).</li>
+    <li>Tes <strong>overrides A81</strong> et tes notes.</li>
+    <li>Les <strong>barèmes</strong> (DDA, IR/MF, taux A81 par zone).</li>
+  </ul>
+
+  <h2><span class="num">4</span> Le flux Push / Pull</h2>
+  <p>Quand tu es offline et que tu modifies un vol, la modif part dans une <strong>file d'attente locale</strong>. Le badge orange sur le bouton Push compte les modifs en attente.</p>
+  <p>Quand tu retrouves le réseau :</p>
+  <ol>
+    <li><strong>Push</strong> : tes modifs locales sont envoyées vers Supabase.</li>
+    <li><strong>Pull</strong> : optiP redemande à Supabase les rotations / plannings à jour pour les mois proches, et écrase la copie locale.</li>
+  </ol>
+  <p>Le Pull est parallélisé (plusieurs mois en même temps) — gain de 27 secondes à environ 5 secondes pour 8 mois.</p>
+
+  <div class="card warn">
+    <strong>Risque connu :</strong> si tu modifies les mêmes données sur 2 appareils sans pousser entre les deux, il peut y avoir des conflits. Pour l'instant le dernier qui pousse gagne. Une vraie gestion de conflit est un chantier ouvert.
+  </div>
+
+  <div class="footer">
+    <span>optiP · Sous le capot · Page 6/10</span>
+    <span>Offline-first</span>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PAGE 7 — Le parcours d'une donnée
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="page">
+  <h1>Le parcours d'une <span class="accent">donnée</span></h1>
+  <p class="subtitle">Du PDF EP4 jusqu'au calcul de paie affiché sur ton écran</p>
+
+  <p class="lead">Suivons concrètement le voyage d'un vol, depuis qu'il existe dans CrewBidd jusqu'à ce qu'il alimente ton estimation de paie. Cela permet de voir comment toutes les briques s'enchaînent.</p>
+
+  <h2><span class="num">1</span> Récupération depuis CrewBidd (le scraper)</h2>
+  <p>CrewBidd est l'outil d'Air France qui publie les <strong>rotations disponibles</strong> chaque mois. optiP a un module appelé <strong>scraper</strong> qui se connecte à CrewBidd avec tes identifiants et télécharge les rotations dans la base Supabase.</p>
+  <p>Pour économiser les requêtes (règle stricte : environ 300 par mois maximum), le scraper ne télécharge que <strong>ce qui a changé</strong> depuis la dernière fois.</p>
+
+  <h2><span class="num">2</span> Stockage dans Supabase</h2>
+  <p>Chaque rotation est éclatée en deux objets :</p>
+  <ul>
+    <li>Une <strong>signature</strong> (<code>pairing_signature</code>) : le type de rotation, identique pour plusieurs occurrences. Ex. : un Paris-Tokyo avec ces escales, ces durées de vol, ces avions.</li>
+    <li>Des <strong>instances</strong> (<code>pairing_instance</code>) : les occurrences datées de cette signature. Ex. : Paris-Tokyo qui part le 5 janvier, le 12 janvier, etc.</li>
+  </ul>
+
+  <h2><span class="num">3</span> Synchronisation vers ton iPad</h2>
+  <p>Au prochain Pull (bouton ↻ dans la barre du haut), ces rotations sont copiées dans la base IndexedDB locale de ton iPad.</p>
+  <p>Tu peux maintenant les voir dans le <strong>Catalogue</strong> de l'app, même offline.</p>
+
+  <h2><span class="num">4</span> Placement dans ton planning</h2>
+  <p>Tu choisis un vol dans le Catalogue (ou via la recherche sur une date) et tu le poses sur l'un des trois scénarios A / B / C. Cette opération crée un <code>planning_item</code> dans IndexedDB localement.</p>
+  <p>Au prochain Push, le <code>planning_item</code> est envoyé vers Supabase.</p>
+
+  <h2><span class="num">5</span> Calcul de paie en local</h2>
+  <p>Quand tu regardes la colonne paie sur le Gantt, optiP fait tout le calcul <strong>dans ton iPad</strong>, sans aller au serveur :</p>
+  <ol>
+    <li>Il prend ton <strong>profil paie</strong> (PVEI, KSP, fonctions, etc.) pour le mois affiché.</li>
+    <li>Il prend tous les <code>planning_item</code> du mois et leurs signatures associées.</li>
+    <li>Il applique les formules : <code>HCv</code>, <code>HCvr</code>, <code>PV</code>, <code>HS</code>, <code>MGA</code>, <code>BRUT</code>, <code>A81</code>.</li>
+    <li>Il croise avec les barèmes (taux A81 par zone, primes 1er mai, IR/MF, etc.).</li>
+    <li>Il affiche le résultat.</li>
+  </ol>
+
+  <div class="card info">
+    <strong>Pourquoi tout en local :</strong> tu peux simuler un scénario complet à 35 000 pieds au-dessus de la Sibérie. Aucune requête réseau, et tes données ne quittent pas l'appareil tant que tu n'as pas Push.
+  </div>
+
+  <h2><span class="num">6</span> EP4 : l'inverse</h2>
+  <p>L'onglet <strong>EP4</strong> compare ton planning estimé avec ton vrai bulletin EP4 (le PDF officiel). Tu importes le PDF, optiP le lit avec <code>pdfjs-dist</code>, en extrait les chiffres, et te montre les écarts ligne par ligne.</p>
+
+  <div class="footer">
+    <span>optiP · Sous le capot · Page 7/10</span>
+    <span>Le chemin d'un vol</span>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PAGE 8 — Vie d'une modif de code
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="page">
+  <h1>La vie d'une <span class="accent">modif de code</span></h1>
+  <p class="subtitle">Du clic dans la conversation à l'app à jour sur ton iPad</p>
+
+  <p class="lead">Tu me demandes "ajoute un bouton X" ou "corrige le calcul Y". Voici ce qui se passe ensuite, étape par étape.</p>
+
+  <div class="schema">
+   ┌──────────────────────────┐
+   │ 1. Tu me décris le besoin│  Conversation Claude
+   └────────────┬─────────────┘
+                ▼
+   ┌──────────────────────────┐
+   │ 2. Je lis le code        │  Tools Read, Grep, Glob
+   │    concerné              │
+   └────────────┬─────────────┘
+                ▼
+   ┌──────────────────────────┐
+   │ 3. J'écris la modif      │  Tool Edit
+   │    dans tes fichiers     │
+   └────────────┬─────────────┘
+                ▼
+   ┌──────────────────────────┐
+   │ 4. On teste localement   │  npm run dev
+   │    si besoin             │
+   └────────────┬─────────────┘
+                ▼
+   ┌──────────────────────────┐
+   │ 5. On commit + push      │  git commit + git push
+   └────────────┬─────────────┘
+                ▼
+   ┌──────────────────────────┐
+   │ 6. Vercel build + déploie│  ~1 à 2 min
+   └────────────┬─────────────┘
+                ▼
+   ┌──────────────────────────┐
+   │ 7. Ton iPad voit la MAJ  │  Point bleu sur la corbeille
+   │    via Service Worker    │
+   └────────────┬─────────────┘
+                ▼
+   ┌──────────────────────────┐
+   │ 8. Tu cliques corbeille  │  Wipe cache + reload
+   │    → nouvelle version    │
+   └──────────────────────────┘</div>
+
+  <h2><span class="num">1</span> Le détail des étapes</h2>
+  <ol>
+    <li><strong>Lecture du code</strong> : j'explore les fichiers concernés pour comprendre l'existant avant de toucher quoi que ce soit.</li>
+    <li><strong>Modification</strong> : j'utilise des outils d'édition précis (remplacement de texte) pour ne pas casser ce qui marche.</li>
+    <li><strong>Vérification locale</strong> : on lance <code>npm run dev</code> pour ouvrir la version en cours de modif dans un navigateur. C'est l'équivalent d'un brouillon imprimé avant publication.</li>
+    <li><strong>Commit</strong> : on enregistre la modification avec un message clair. C'est une étape réversible.</li>
+    <li><strong>Push</strong> : on envoie le commit à GitHub.</li>
+    <li><strong>Vercel</strong> détecte le push, construit la nouvelle version et la met en ligne.</li>
+    <li>Ton iPad, quand tu rouvres l'app, détecte qu'une nouvelle version existe (le <strong>point bleu</strong> apparaît sur l'icône corbeille de la barre du haut).</li>
+    <li>Tu cliques sur la corbeille → l'ancien cache est vidé, l'app recharge la nouvelle version.</li>
+  </ol>
+
+  <div class="card tip">
+    <strong>Ce qui rend ça fluide :</strong> aucune étape ne demande d'aller sur le serveur, d'installer quoi que ce soit en SSH, ou de manipuler une base de données à la main. Tout est automatisé par les outils.
+  </div>
+
+  <h2><span class="num">2</span> Quand la base doit changer</h2>
+  <p>Si la modif demande aussi une évolution de la base Supabase (ex. ajouter une colonne à <code>user_profile</code>), il faut <strong>en plus</strong> écrire une migration SQL et l'appliquer manuellement via le tableau de bord Supabase (ou via la CLI Supabase).</p>
+  <p>C'est pour ça que tu vois 40+ fichiers numérotés dans <code>supabase/migrations/</code>.</p>
+
+  <div class="footer">
+    <span>optiP · Sous le capot · Page 8/10</span>
+    <span>De l'idée au déploiement</span>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PAGE 9 — Sécurité et données privées
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="page">
+  <h1>Sécurité et <span class="accent">données privées</span></h1>
+  <p class="subtitle">Qui voit quoi, où sont stockées tes données, comment elles sont protégées</p>
+
+  <h2><span class="num">1</span> Où sont tes données ?</h2>
+  <table>
+    <tr><th>Endroit</th><th>Quoi</th><th>Sécurité</th></tr>
+    <tr><td>Sur Supabase</td><td>Toutes tes données serveur (rotations, planning, profil, A81)</td><td>HTTPS + RLS Postgres</td></tr>
+    <tr><td>Sur ton iPad</td><td>Copie locale dans IndexedDB</td><td>Isolée à ton compte iOS</td></tr>
+    <tr><td>Sur GitHub</td><td>Le <strong>code</strong>, jamais tes données</td><td>Repo privé</td></tr>
+    <tr><td>Sur Vercel</td><td>Le code construit, des logs serveur</td><td>HTTPS</td></tr>
+  </table>
+
+  <div class="card info">
+    <strong>Important :</strong> tes données métier (planning, paie) ne sont <strong>jamais</strong> dans le code source. Le code dit "comment afficher" et "comment calculer", mais pas "voici les rotations de Mickaël".
+  </div>
+
+  <h2><span class="num">2</span> Comment ton identité est vérifiée</h2>
+  <ol>
+    <li>Tu saisis email + mot de passe.</li>
+    <li>Supabase vérifie que c'est correct et te renvoie un <strong>token JWT</strong> (un long code chiffré).</li>
+    <li>Ce token est stocké dans Safari (cookie + localStorage).</li>
+    <li>À chaque requête vers Supabase, le token est envoyé. Supabase l'inspecte et sait que c'est toi.</li>
+    <li>Si le token expire, ton iPad demande automatiquement un nouveau (refresh token), tant que la session est valide.</li>
+  </ol>
+
+  <h2><span class="num">3</span> La whitelist</h2>
+  <p>optiP n'est pas ouvert à n'importe qui. Une table <strong>whitelist</strong> contient les emails autorisés. Un inconnu qui tente de créer un compte avec un email non listé est refusé.</p>
+  <p>Tu es <strong>administrateur</strong> (<code>is_admin = true</code>) : tu peux gérer cette whitelist, déclencher des actions sensibles (release, snapshots, scrape), et accéder à des pages d'admin que les autres ne voient pas.</p>
+
+  <h2><span class="num">4</span> Sauvegarde et restauration</h2>
+  <ul>
+    <li>Supabase fait des <strong>backups automatiques</strong> de la base (selon le plan).</li>
+    <li>Il existe une fonction d'<strong>export</strong> (snapshot JSON) qu'on peut télécharger en admin.</li>
+    <li>Il existe une fonction d'<strong>import</strong> CSV pour recharger des mois entiers depuis les extracts d'origine.</li>
+  </ul>
+
+  <h2><span class="num">5</span> En cas de perte d'iPad</h2>
+  <ol>
+    <li>Tu te logues sur un nouvel appareil avec ton email + mot de passe.</li>
+    <li>Tu cliques sur le nuage circulaire (Pull).</li>
+    <li>Tout ton historique est récupéré depuis Supabase.</li>
+  </ol>
+  <p>La seule chose qui pourrait être perdue : les modifs faites offline avant la perte de l'appareil, si tu n'avais pas pu Push.</p>
+
+  <div class="card warn">
+    <strong>Bonne pratique :</strong> avant un long trip offline, fais un Push si tu as des modifs en attente. Au retour, fais un Pull pour redescendre les MAJ serveur (collègue qui a complété un mois, scraper qui a tourné).
+  </div>
+
+  <div class="footer">
+    <span>optiP · Sous le capot · Page 9/10</span>
+    <span>Sécurité</span>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PAGE 10 — Glossaire
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="page">
+  <h1><span class="accent">Glossaire</span> express</h1>
+  <p class="subtitle">Les mots techniques qu'on a croisés, en une phrase chacun</p>
+
+  <h2><span class="num">1</span> Briques et services</h2>
+  <table>
+    <tr><td><strong>Backend</strong></td><td>Tout ce qui tourne côté serveur : base de données, authentification, logique sensible. Sur optiP = Supabase + actions Vercel.</td></tr>
+    <tr><td><strong>Frontend</strong></td><td>L'interface visible dans le navigateur. Sur optiP = Next.js + React.</td></tr>
+    <tr><td><strong>Framework</strong></td><td>Squelette de base qui structure le code. Ici : Next.js.</td></tr>
+    <tr><td><strong>Bibliothèque</strong></td><td>Boîte à outils prête à l'emploi qu'on intègre au code. Ex : React, Dexie, Tailwind.</td></tr>
+    <tr><td><strong>PWA</strong></td><td>Progressive Web App. Site web installable et utilisable hors ligne.</td></tr>
+    <tr><td><strong>CDN</strong></td><td>Réseau de serveurs distribués mondialement qui livrent rapidement le contenu.</td></tr>
+  </table>
+
+  <h2><span class="num">2</span> Code et déploiement</h2>
+  <table>
+    <tr><td><strong>Git</strong></td><td>L'outil qui versionne le code (la mécanique). GitHub est le service en ligne qui l'héberge.</td></tr>
+    <tr><td><strong>Commit</strong></td><td>Une modification de code enregistrée, identifiée par un code court (ex : <code>6b2d9c7</code>).</td></tr>
+    <tr><td><strong>Push / Pull</strong></td><td>Envoyer ou récupérer des commits entre l'ordinateur et GitHub. (Dans optiP, Push/Pull désigne aussi les boutons de sync data.)</td></tr>
+    <tr><td><strong>Build</strong></td><td>Étape où le code source est transformé en fichiers optimisés pour le navigateur.</td></tr>
+    <tr><td><strong>Déploiement</strong></td><td>Mise en ligne d'une nouvelle version du site.</td></tr>
+  </table>
+
+  <h2><span class="num">3</span> Base de données</h2>
+  <table>
+    <tr><td><strong>PostgreSQL</strong></td><td>Le moteur de base de données qu'utilise Supabase.</td></tr>
+    <tr><td><strong>Table</strong></td><td>Un "onglet" de la base, équivalent d'un onglet Excel.</td></tr>
+    <tr><td><strong>Migration SQL</strong></td><td>Fichier qui décrit un changement de structure de la base.</td></tr>
+    <tr><td><strong>RLS</strong></td><td>Row Level Security. Règle qui filtre les lignes selon l'utilisateur connecté.</td></tr>
+    <tr><td><strong>RPC</strong></td><td>Remote Procedure Call. Une fonction qu'on appelle côté serveur depuis le client. (Dans optiP, RPC désigne aussi la Période de Repos Compensateur — c'est un sigle métier homonyme.)</td></tr>
+  </table>
+
+  <h2><span class="num">4</span> Client et offline</h2>
+  <table>
+    <tr><td><strong>Service Worker</strong></td><td>Mini-programme qui intercepte les requêtes réseau et sert le cache local.</td></tr>
+    <tr><td><strong>IndexedDB</strong></td><td>Base de données embarquée dans le navigateur.</td></tr>
+    <tr><td><strong>Dexie</strong></td><td>Bibliothèque qui simplifie l'usage d'IndexedDB.</td></tr>
+    <tr><td><strong>Cache</strong></td><td>Copie locale rapide d'éléments téléchargés depuis le serveur.</td></tr>
+    <tr><td><strong>JWT</strong></td><td>JSON Web Token. Le "passeport" chiffré qui prouve qui tu es.</td></tr>
+  </table>
+
+  <h2><span class="num">5</span> Pour aller plus loin</h2>
+  <ul>
+    <li>Pour Git/GitHub : <code>learngitbranching.js.org</code> — apprend Git de manière visuelle.</li>
+    <li>Pour Supabase : <code>supabase.com/docs</code> — la doc officielle, beaucoup d'exemples.</li>
+    <li>Pour Next.js : <code>nextjs.org/learn</code> — tutoriel pas à pas par les auteurs.</li>
+    <li>Pour les PWA : <code>web.dev/progressive-web-apps</code> — articles courts par Google.</li>
+  </ul>
+
+  <div class="card tip">
+    <strong>Le mot de la fin :</strong> tu n'as pas besoin de tout savoir coder pour piloter intelligemment le développement d'optiP. Comprendre <em>quelles briques font quoi</em> suffit à formuler des demandes précises, à anticiper les coûts, et à juger ce qui est faisable ou coûteux à changer.
+  </div>
+
+  <div class="footer">
+    <span>optiP · Sous le capot · Page 10/10</span>
+    <span>Bons vols et bonne lecture</span>
+  </div>
+</section>
+
+</body>
+</html>
