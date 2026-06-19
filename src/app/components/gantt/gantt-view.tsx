@@ -1428,6 +1428,25 @@ export function GanttView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [month]);
 
+  // ── Pre-cache initial M+1..M+3 ───────────────────────────────────────────
+  // Sans ça, le 1er next/next/next paie un round-trip réseau (cache-first OK
+  // mais Dexie vide pour les mois non encore visités). Ce ric s'aligne sur le
+  // sync lite (M..M+3) et complète preCacheMonthBg(±1) déclenché par
+  // changeMonth. Fail-silent offline.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !navigator.onLine) return;
+    const run = () => {
+      void preCacheMonthBg(shiftMonth(month, 1));
+      void preCacheMonthBg(shiftMonth(month, 2));
+      void preCacheMonthBg(shiftMonth(month, 3));
+    };
+    type RIC = (cb: () => void, opts?: { timeout: number }) => number;
+    const ric = (window as unknown as { requestIdleCallback?: RIC }).requestIdleCallback;
+    if (typeof ric === 'function') ric(run, { timeout: 3000 });
+    else setTimeout(run, 1500);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Mise à jour depuis le serveur après le bouton Sync (router.refresh) ────
   // Quand `scenarios` change (nouveau RSC remonté par router.refresh post-Sync),
   // on resync localScenarios — MAIS depuis Dexie, pas depuis les props serveur :
@@ -1503,7 +1522,18 @@ export function GanttView({
     if (preCacheInFlightRef.current.has(m)) return;
     preCacheInFlightRef.current.add(m);
     try {
-      const [scs, rots] = await Promise.all([getScenariosWithItems(m), getRotationsForMonth(m)]);
+      // Timeout 15s : sur 4G captif (firewall qui drop sans répondre), les
+      // server actions hangent indéfiniment. Sans cette garde, la promise
+      // reste en vol pour toujours et le ref reste pollué → next pre-cache
+      // sur le même mois no-op silencieux. 15s = ample marge online, et on
+      // skip proprement sur captif.
+      const TIMEOUT_MS = 15000;
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('preCacheMonthBg timeout')), TIMEOUT_MS));
+      const [scs, rots] = await Promise.race([
+        Promise.all([getScenariosWithItems(m), getRotationsForMonth(m)]),
+        timeout,
+      ]);
       await hydrateDB(scs, m);
       await cacheRotations(rots, m);
     } catch { /* ignore — arrière-plan */ }
@@ -1565,8 +1595,12 @@ export function GanttView({
       setLocalNotes(await loadNotesForMonth(newMonth));
       setMonthLoading(false);
       // Pré-cache silencieux des mois adjacents
-      void preCacheMonthBg(shiftMonth(newMonth, 1));
+      // Pre-cache la fenêtre lite (M..M+3) + M-1. preCacheMonthBg dédoublonne
+      // via preCacheInFlightRef, donc safe si déjà en vol.
       void preCacheMonthBg(shiftMonth(newMonth, -1));
+      void preCacheMonthBg(shiftMonth(newMonth, 1));
+      void preCacheMonthBg(shiftMonth(newMonth, 2));
+      void preCacheMonthBg(shiftMonth(newMonth, 3));
       // FinBase : calculé client-side via useMemo(currentMonth) à partir de
       // annexeRows + financeProfile (passés en props). Aucun fetch ici.
       // IR/MF + A81 cumul : recalculés par les useEffect dédiés sur
