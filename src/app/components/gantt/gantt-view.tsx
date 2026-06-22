@@ -261,6 +261,10 @@ function computeStats(
   /** Décomposition par vol pour le panneau détail : PV ventilé HCr / PVnuit. */
   const flightBreakdown: { destination: string; hcrEur: number; pvNuitEur: number; instanceId: string | null }[] = [];
   for (const item of items) {
+    // RPC-only spillover : corps + tSej + HCr déjà comptés en M-1. En M, seul le
+    // bandeau RPC est dessiné (DraggableBar). Surtout pas de +1 onDays, ni de
+    // push dans flightBreakdown (sinon ICN fantôme à 0€ + compteur ON faussé).
+    if (item._rpcOnlySpillover) continue;
     const clip = clipItem(item, year, mo);
     if (clip) {
       const days = clip.end - clip.start + 1;
@@ -2152,7 +2156,10 @@ export function GanttView({
                     <button
                       onClick={e => {
                         if (isDetailOpen) { setDetailPanel(null); return; }
-                        const rowEl = (e.currentTarget as HTMLElement).closest<HTMLElement>('[data-sr]');
+                        // Anchor sur la row (pas sur le bouton, qui est en bas de la
+                        // colonne label et donne un rect mid/bottom de viewport →
+                        // panneau qui déborde ou disparaît pour B/C).
+                        const rowEl = scenarioRowsRef.current.get(scenario.name);
                         const rect  = rowEl?.getBoundingClientRect() ?? e.currentTarget.getBoundingClientRect();
                         const pveiEff   = finBaseState?.pvei ?? PVEI;
                         const kspEff    = finBaseState?.ksp  ?? KSP;
@@ -2195,7 +2202,6 @@ export function GanttView({
                           brut: stats.brut,
                         });
                       }}
-                      data-sr
                       className={`mt-1 flex-shrink-0 text-[9px] font-mono select-none px-2 py-0.5 rounded transition-colors ${isDetailOpen ? 'bg-zinc-700 text-white' : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-300 hover:bg-zinc-300 dark:hover:bg-zinc-600'}`}
                     >
                       {isDetailOpen ? '◀ fermer' : '▶ détail'}
