@@ -48,10 +48,13 @@ function usableRows(ep4: Ep4PdfData): Ep4HoraireRow[] {
   // On inclut TOUS les kinds (normal + spillover_info + spillover_prorata).
   // Les rows italique servent à reconstituer les rotations à cheval rattachées
   // à un autre mois — sans elles, NBJ 31 déc-4 jan n'apparaît jamais si l'user
-  // n'a que le PDF janvier. La dédup côté caller gère le cas où on a aussi le
-  // PDF de l'autre mois (= la même rotation en kind='normal').
+  // n'a que le PDF janvier.
+  //
+  // On ignore les rows escDep === escArr (= avion parti puis revenu au parking,
+  // ex CDG→CDG). Elles polluent le bucket dans extractRotationsFromEp4 (escDep
+  // = base lui ouvrirait une rotation fantôme).
   return ep4.horaire.rows.filter(r =>
-    !!r.escDep && !!r.escArr &&
+    !!r.escDep && !!r.escArr && r.escDep !== r.escArr &&
     !!r.reelDep && !!r.reelArr,
   );
 }
@@ -162,6 +165,16 @@ export function extractRotationsFromEp4(ep4: Ep4PdfData): Ep4Rotation[] {
   }
 
   for (const s of stamped) {
+    // Si on rencontre un nouveau départ-base alors qu'une rotation n'est pas
+    // fermée, on émet ce qu'on a et on redémarre. Sans ce reset, les rows de
+    // la nouvelle rotation polluent le bucket précédent et on émet une
+    // rotation fantôme du genre "EZE → HKG" (escale_debut de la 1ère, escale_fin
+    // de la 2e).
+    if (state === 'in_rotation' && s.row.escDep === base) {
+      emitBucket();
+      bucket = [];
+      state = 'idle';
+    }
     if (state === 'idle') {
       if (s.row.escDep === base) {
         state = 'in_rotation';

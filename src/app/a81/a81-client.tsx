@@ -364,7 +364,13 @@ export function A81Client({
                 </tr>
               )}
               {data.rows.map(r => {
-                  const monthIdx = Number(r.debut_rotation.slice(5, 7)) - 1;
+                  // On classe les lignes par MOIS DU SÉJOUR (1er block ON), pas
+                  // par mois du début de rotation. Une rotation NBJ partie le
+                  // 31 déc avec atterrissage le 1er jan apparaît donc dans la
+                  // section "Janvier" (l'A81 se calcule sur le séjour, pas sur
+                  // le départ). debut_rotation reste affiché tel quel dans la
+                  // 1ère colonne pour info.
+                  const monthIdx = Number(r.debut_sejour_at.slice(5, 7)) - 1;
                   const anyOverride = r.debut_sejour_overridden || r.fin_sejour_overridden;
                   const isM0 = r.split_part === 'm0';
                   const isM1 = r.split_part === 'm1';
