@@ -295,12 +295,21 @@ export async function computeA81ForYearLocal(
     // Source EP4 si dispo : on REMPLACE debutOrigin/finOrigin par les valeurs
     // recomposées depuis les block-off/block-on réels du PDF. Les overrides
     // user (`ov.*_sejour_at`) s'appliquent toujours par-dessus.
+    //
+    // Règle stricte : si un EP4 est importé pour le mois de la rotation (=
+    // mois du debutRotation), l'EP4 fait FOI. Les rotations du calendrier qui
+    // ne matchent aucune row de l'EP4 sont considérées comme des fantômes du
+    // planning AF (vol annulé, échangé, etc.) et écartées du tableau A81.
     let source: 'ep4' | 'calendrier' = 'calendrier';
     const ep4Match = findEp4SejourMatch(escaleDebut, escaleFin, debutOrigin, finOrigin, ep4ByMonth);
     if (ep4Match) {
       debutOrigin = ep4Match.debut_sejour_at;
       finOrigin   = ep4Match.fin_sejour_at;
       source = 'ep4';
+    } else if (ep4ByMonth.has(debutRotation.slice(0, 7))) {
+      // EP4 dispo pour le mois mais aucun match → drop (rotation absente du
+      // décompte AF réel).
+      continue;
     }
 
     const debutMs = (ov?.debut_sejour_at ? new Date(ov.debut_sejour_at).getTime() : new Date(debutOrigin).getTime());
