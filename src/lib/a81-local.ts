@@ -177,16 +177,34 @@ export async function computeA81ForYearLocal(
   // 5. Overrides indexés
   const ovByInstId = new Map(overrides.map(o => [o.pairing_instance_id, o]));
 
-  // 5b. EP4 imports de l'année : si présent pour un mois donné, on s'en sert
-  //     comme source de vérité (block-off/block-on REELS) à la place du
-  //     raw_detail. Cf src/lib/a81-ep4-match.ts. On charge tous les mois en
-  //     une fois pour ne pas multiplier les reads Dexie.
+  // 5b. EP4 imports : on charge TOUS les PDFs Dexie (pas seulement ceux de
+  //     l'année), car une rotation à cheval `year-1`/`year` ou `year`/`year+1`
+  //     peut être présente dans le PDF du mois adjacent. Pour chaque rotation
+  //     extraite, on filtre ensuite sur "touche l'année courante".
   const ep4ByMonth = new Map<string, Ep4PdfData>();
   {
-    const all = await db.ep4_imports
-      .where('monthIso').startsWith(String(year))
-      .toArray();
+    const all = await db.ep4_imports.toArray();
     for (const e of all) ep4ByMonth.set(e.monthIso, e.data);
+  }
+
+  // Lookup zone par rotation_code (table annexe `rotation_zones`, seedée par
+  // la mig 0042 depuis le CSV `AF_Paie_Rot81 - zone.csv`). Surclasse le
+  // fallback `zoneByEscale` (signatures cachées) pour les rotations EP4 qui
+  // n'ont pas de correspondance dans le calendrier.
+  const rotationZonesRow = pickAnnexeRowForMonth(annexeRows, 'rotation_zones', `${year}-01`);
+  const zoneByRotationCode = new Map<string, string>();
+  if (rotationZonesRow && typeof rotationZonesRow === 'object' && 'rotations' in rotationZonesRow) {
+    const arr = (rotationZonesRow as { rotations: unknown }).rotations;
+    if (Array.isArray(arr)) {
+      for (const entry of arr) {
+        if (entry && typeof entry === 'object' && 'rot' in entry && 'zone' in entry) {
+          const e = entry as { rot: unknown; zone: unknown };
+          if (typeof e.rot === 'string' && typeof e.zone === 'string') {
+            zoneByRotationCode.set(e.rot, e.zone);
+          }
+        }
+      }
+    }
   }
 
   // 6. Helper valeur_jour par mois (cache local). Retourne aussi le breakdown
@@ -281,21 +299,36 @@ export async function computeA81ForYearLocal(
   const deletedRows: A81DeletedRow[] = [];
 
   // ─── Branche EP4 ──────────────────────────────────────────────────────────
+  // Set des mois "couverts" par un PDF EP4 (= les items calendrier de ces
+  // mois sont ignorés dans la branche calendrier ci-dessous).
+  const monthsCoveredByEp4 = new Set<string>();
   for (const [month, ep4] of ep4ByMonth) {
+    monthsCoveredByEp4.add(month);
     const rotations = extractRotationsFromEp4(ep4);
     for (let i = 0; i < rotations.length; i++) {
       const rot = rotations[i];
       const debutMs = new Date(rot.debut_sejour_at).getTime();
       const finMs   = new Date(rot.fin_sejour_at).getTime();
       if (finMs <= debutMs) continue;
+      // Filtre année : on garde la rotation si AU MOINS une de ses bornes
+      // touche l'année courante. Une rotation à cheval `year-1`/`year` sera
+      // donc émise depuis le PDF de `year-1` mais visible dans A81 `year`
+      // (et splittée par `splitRotationAtMonth` en m0/m1).
+      const debutYear = new Date(debutMs).getUTCFullYear();
+      const finYear   = new Date(finMs).getUTCFullYear();
+      if (debutYear !== year && finYear !== year) continue;
+
       const tempsSejH = (finMs - debutMs) / 3600000;
       const tSej24    = computeTSej24(tempsSejH);
-      const zone      = zoneByEscale.get(rot.escale_debut) ?? null;
+      // Lookup zone : (1) rotation_code exact, (2) escale_debut seule,
+      // (3) fallback sigs Dexie. Null si tout échoue → montant = 0.
+      const zone = zoneByRotationCode.get(rot.rotation_code)
+                ?? zoneByRotationCode.get(rot.escale_debut)
+                ?? zoneByEscale.get(rot.escale_debut)
+                ?? null;
       const taux      = lookupTauxSej(article81Data, zone, tempsSejH);
       const monthOfDepart = new Date(debutMs).toISOString().slice(0, 7);
       const vjResult = computeValeurJourForMonth(monthOfDepart);
-      // ID stable : préfixe + mois + index dans le PDF. Permet aux overrides
-      // futurs (si on en ajoute) de cibler une rotation EP4 spécifique.
       const instId = `ep4-${month}-${i}`;
       rows.push({
         instance_id: instId,
@@ -325,7 +358,7 @@ export async function computeA81ForYearLocal(
   // ─── Branche calendrier (uniquement mois SANS EP4 importé) ────────────────
   for (const it of items) {
     const itemMonth = it.start_date.slice(0, 7);
-    if (ep4ByMonth.has(itemMonth)) continue; // EP4 fait foi pour ce mois
+    if (monthsCoveredByEp4.has(itemMonth)) continue; // EP4 fait foi pour ce mois
     const instId = it.pairing_instance_id as string;
     const ov = ovByInstId.get(instId);
     const sig = sigByInstId.get(instId);

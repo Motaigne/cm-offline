@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState, useTransition, useEffect, Fragment } from 'react';
+import { useState, useTransition, useEffect } from 'react';
 import type { A81YearData, A81Row } from '@/app/actions/a81';
 import { loadAllA81Overrides } from '@/app/actions/a81';
 import { computeA81ForYearLocal } from '@/lib/a81-local';
@@ -363,17 +363,8 @@ export function A81Client({
                   </td>
                 </tr>
               )}
-              {(() => {
-                // Pré-calcul des "nouveau mois" pour éviter d'écrire dans une
-                // variable mutable pendant le map (interdit par le compileur React).
-                const monthIdxOf = (r: A81Row) => Number(r.debut_rotation.slice(5, 7)) - 1;
-                const newMonthFlags: boolean[] = data.rows.map(
-                  (r, i) => i === 0 || monthIdxOf(data.rows[i - 1]) !== monthIdxOf(r),
-                );
-                return data.rows.map((r, idx) => {
-                  const monthIdx = monthIdxOf(r);
-                  const isNewMonth = newMonthFlags[idx];
-                  const isFirstRow = idx === 0;
+              {data.rows.map(r => {
+                  const monthIdx = Number(r.debut_rotation.slice(5, 7)) - 1;
                   const anyOverride = r.debut_sejour_overridden || r.fin_sejour_overridden;
                   const isM0 = r.split_part === 'm0';
                   const isM1 = r.split_part === 'm1';
@@ -394,11 +385,7 @@ export function A81Client({
                       : 'Source calendrier (estimation raw_detail)';
                   const tpsNearBoundary = !isM0 && isNearSejourBoundary(r.temps_sej_h);
                   return (
-                <Fragment key={`${r.instance_id}${r.split_part ?? ''}`}>
-                  {isNewMonth && !isFirstRow && (
-                    <tr aria-hidden><td colSpan={12} className="h-2 bg-zinc-100 dark:bg-zinc-900/60 border-y border-zinc-200 dark:border-zinc-800" /></tr>
-                  )}
-                  <tr className={rowBg}>
+                  <tr key={`${r.instance_id}${r.split_part ?? ''}`} className={rowBg}>
                     <td className="px-2 py-1.5 whitespace-nowrap text-zinc-700 dark:text-zinc-200 italic">
                       {fmtDate(r.debut_rotation)}
                       <div className="text-[9px] text-zinc-400 leading-none">{MONTHS_FR_SHORT[monthIdx]}</div>
@@ -468,10 +455,8 @@ export function A81Client({
                       )}
                     </td>
                   </tr>
-                </Fragment>
                 );
-                });
-              })()}
+              })}
             </tbody>
             {data.rows.length > 0 && (
               <tfoot className="bg-zinc-100 dark:bg-zinc-800/80 border-t-2 border-zinc-300 dark:border-zinc-700 font-semibold">

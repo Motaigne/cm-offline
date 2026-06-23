@@ -353,7 +353,7 @@ function HorairePanel({
                 && base != null
                 && r.escDep === base;
               return (
-              <tr key={r.index} className={`${kindRowClass(r.kind)} ${isDiff ? DIFF_ROW_CLASS : ''} ${isNewRotation ? 'border-t-2 border-zinc-300 dark:border-zinc-600' : ''}`}>
+              <tr key={r.index} className={`${kindRowClass(r.kind)} ${isDiff ? DIFF_ROW_CLASS : ''} ${isNewRotation ? 'border-t border-zinc-200 dark:border-zinc-700' : ''}`}>
                 <td className="px-1 py-0.5">{r.index}</td>
                 <td className="px-1 py-0.5">{String(parseInt(r.numLigne ?? '0', 10) || 0).padStart(3, '0')}</td>
                 <td className="px-1 py-0.5">{r.escDep}</td>
