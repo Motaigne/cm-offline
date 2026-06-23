@@ -127,6 +127,10 @@ export interface Ep4Rotation {
   /** Escales visitées hors-base, séparées par un espace. Sert au lookup
    *  zone via la table annexe `rotation_zones`. */
   rotation_code:    string;
+  /** Escales individuelles visitées (ordonnées, dédup successifs). Sert au
+   *  lookup zone fallback : si `rotation_code` exact ne matche pas (bucket
+   *  pollué par des rows spillover), on cherche chaque escale dans la table. */
+  escales_visitees: string[];
 }
 
 /** Extrait les rotations contenues dans un EP4 PDF. */
@@ -155,12 +159,13 @@ export function extractRotationsFromEp4(ep4: Ep4PdfData): Ep4Rotation[] {
       ? (finRow.row.escDep ?? '')
       : (escales[escales.length - 1] ?? finRow.row.escDep ?? '');
     out.push({
-      debut_rotation:  new Date(debutRow.depMs).toISOString().slice(0, 10),
-      debut_sejour_at: new Date(debutRow.arrMs + DEBUT_OFFSET_MS).toISOString(),
-      fin_sejour_at:   new Date(finRow.depMs   + FIN_OFFSET_MS).toISOString(),
-      escale_debut:    debutRow.row.escArr!,
-      escale_fin:      lastEscDep,
-      rotation_code:   escales.join(' '),
+      debut_rotation:    new Date(debutRow.depMs).toISOString().slice(0, 10),
+      debut_sejour_at:   new Date(debutRow.arrMs + DEBUT_OFFSET_MS).toISOString(),
+      fin_sejour_at:     new Date(finRow.depMs   + FIN_OFFSET_MS).toISOString(),
+      escale_debut:      debutRow.row.escArr!,
+      escale_fin:        lastEscDep,
+      rotation_code:     escales.join(' '),
+      escales_visitees:  escales,
     });
   }
 

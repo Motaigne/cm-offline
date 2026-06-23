@@ -320,12 +320,23 @@ export async function computeA81ForYearLocal(
 
       const tempsSejH = (finMs - debutMs) / 3600000;
       const tSej24    = computeTSej24(tempsSejH);
-      // Lookup zone : (1) rotation_code exact, (2) escale_debut seule,
-      // (3) fallback sigs Dexie. Null si tout échoue → montant = 0.
-      const zone = zoneByRotationCode.get(rot.rotation_code)
-                ?? zoneByRotationCode.get(rot.escale_debut)
-                ?? zoneByEscale.get(rot.escale_debut)
-                ?? null;
+      // Lookup zone (cascade) :
+      //   1. rotation_code exact (ex "BZV PNR")
+      //   2. chaque escale individuelle visitée (fallback si rotation_code
+      //      pollué par des rows spillover ajoutant des escales hors-base
+      //      étrangères à la rotation A81)
+      //   3. escale_debut seule (cas où la table a juste l'escale principale)
+      //   4. signatures cachées Dexie (zoneByEscale)
+      //   5. null → taux et montant = 0
+      let zone: string | null = zoneByRotationCode.get(rot.rotation_code) ?? null;
+      if (!zone) {
+        for (const esc of rot.escales_visitees) {
+          zone = zoneByRotationCode.get(esc) ?? null;
+          if (zone) break;
+        }
+      }
+      if (!zone) zone = zoneByRotationCode.get(rot.escale_debut) ?? null;
+      if (!zone) zone = zoneByEscale.get(rot.escale_debut) ?? null;
       const taux      = lookupTauxSej(article81Data, zone, tempsSejH);
       const monthOfDepart = new Date(debutMs).toISOString().slice(0, 7);
       const vjResult = computeValeurJourForMonth(monthOfDepart);

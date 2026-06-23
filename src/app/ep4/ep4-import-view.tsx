@@ -288,11 +288,26 @@ function rawH(h: { raw: string } | null): string { return h?.raw ?? '—'; }
 /** Détecte la base AF du pilote = escale la plus fréquente dans les escDep
  *  et escArr du mois. Sert à insérer un séparateur visuel entre rotations
  *  (= chaque retour à la base ouvre une nouvelle rotation). */
-function detectBase(rows: Ep4PdfData['horaire']['rows']): string | null {
+function detectBase<T extends { escDep?: string | null; escArr?: string | null }>(rows: readonly T[]): string | null {
   const counts = new Map<string, number>();
   for (const r of rows) {
     if (r.escDep) counts.set(r.escDep, (counts.get(r.escDep) ?? 0) + 1);
     if (r.escArr) counts.set(r.escArr, (counts.get(r.escArr) ?? 0) + 1);
+  }
+  let best: { code: string; n: number } | null = null;
+  for (const [code, n] of counts) {
+    if (!best || n > best.n) best = { code, n };
+  }
+  return best?.code ?? null;
+}
+
+/** Variante pour Ep4ActiviteRow qui utilise `depart`/`arrivee` au lieu de
+ *  `escDep`/`escArr`. */
+function detectBaseActivite(rows: Ep4PdfData['activite']['rows']): string | null {
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    if (r.depart)  counts.set(r.depart,  (counts.get(r.depart)  ?? 0) + 1);
+    if (r.arrivee) counts.set(r.arrivee, (counts.get(r.arrivee) ?? 0) + 1);
   }
   let best: { code: string; n: number } | null = null;
   for (const [code, n] of counts) {
@@ -316,16 +331,18 @@ function HorairePanel({
           {/* colgroup : MÊMES largeurs que Ep4HoraireEP4Consolidee (ep4-tables.tsx)
               pour l'alignement vertical des 2 tableaux empilés. */}
           <colgroup>
-            <col style={{ width:  '3%' }} /><col style={{ width:  '5%' }} /><col style={{ width: '4%' }} />
-            <col style={{ width:  '9%' }} /><col style={{ width:  '9%' }} /><col style={{ width: '4%' }} />
-            <col style={{ width:  '9%' }} /><col style={{ width:  '9%' }} />
-            <col style={{ width:  '8%' }} /><col style={{ width:  '8%' }} /><col style={{ width: '8%' }} />
-            <col style={{ width:  '8%' }} /><col style={{ width:  '8%' }} /><col style={{ width: '8%' }} />
+            <col style={{ width:  '3%' }} /><col style={{ width:  '5%' }} />
+            <col style={{ width:  '3%' }} /><col style={{ width: '4%' }} />
+            <col style={{ width:  '8%' }} /><col style={{ width:  '8%' }} /><col style={{ width: '4%' }} />
+            <col style={{ width:  '8%' }} /><col style={{ width:  '8%' }} />
+            <col style={{ width:  '7%' }} /><col style={{ width:  '7%' }} /><col style={{ width: '7%' }} />
+            <col style={{ width:  '7%' }} /><col style={{ width:  '7%' }} /><col style={{ width: '7%' }} />
           </colgroup>
           <thead className="text-zinc-400 uppercase tracking-wide text-[9px]">
             <tr>
               <th className="text-left px-1 py-1">#</th>
               <th className="text-left px-1 py-1">N°</th>
+              <th className="text-left px-1 py-1" title="Situation à bord — TP = leg effectuée en MEP">SAB</th>
               <th className="text-left px-1 py-1">Esc</th>
               <th className="text-left px-1 py-1">Réel dep</th>
               <th className="text-left px-1 py-1">Prog dep</th>
@@ -356,6 +373,8 @@ function HorairePanel({
               <tr key={r.index} className={`${kindRowClass(r.kind)} ${isDiff ? DIFF_ROW_CLASS : ''} ${isNewRotation ? 'border-t border-zinc-200 dark:border-zinc-700' : ''}`}>
                 <td className="px-1 py-0.5">{r.index}</td>
                 <td className="px-1 py-0.5">{String(parseInt(r.numLigne ?? '0', 10) || 0).padStart(3, '0')}</td>
+                <td className={`px-1 py-0.5 ${r.sab === 'TP' ? 'font-semibold text-pink-600 dark:text-pink-400' : 'text-zinc-400'}`}
+                    title={r.sab === 'TP' ? 'Leg effectuée en MEP (Title Passenger)' : undefined}>{r.sab ?? '—'}</td>
                 <td className="px-1 py-0.5">{r.escDep}</td>
                 <td className="px-1 py-0.5">{rawH(r.reelDep)}</td>
                 <td className="px-1 py-0.5">{rawH(r.progDep)}</td>
@@ -422,13 +441,19 @@ function ActivitePanel({
             </tr>
           </thead>
           <tbody>
-            {rows.map(r => {
+            {(() => {
+              const base = detectBaseActivite(rows);
+              return rows.map((r, idx) => {
               const dayStr = r.date?.split('/')[0];
               const day = dayStr ? parseInt(dayStr, 10) : null;
               const k = diffKey(r.numVol, day);
               const isDiff = r.kind === 'normal' && (highlightedKeys?.has(k) ?? false);
+              const isNewRotation = idx > 0
+                && r.kind === 'normal'
+                && base != null
+                && r.depart === base;
               return (
-              <tr key={r.index} className={`${kindRowClass(r.kind)} ${isDiff ? DIFF_ROW_CLASS : ''}`}>
+              <tr key={r.index} className={`${kindRowClass(r.kind)} ${isDiff ? DIFF_ROW_CLASS : ''} ${isNewRotation ? 'border-t border-zinc-200 dark:border-zinc-700' : ''}`}>
                 <td className="px-1 py-0.5">{r.index}</td>
                 <td className="px-1 py-0.5">{r.date}</td>
                 <td className="px-1 py-0.5">{r.numVol}</td>
@@ -453,7 +478,8 @@ function ActivitePanel({
                 <td className="px-1 py-0.5 text-right">{fmt(r.primeCdb)}</td>
               </tr>
               );
-            })}
+            });
+            })()}
             <tr className="font-bold border-t border-zinc-300 dark:border-zinc-700">
               <td className="px-1 py-1" colSpan={12}>TOTAL</td>
               <td className="px-1 py-1 text-right">{fmt(totaux.h2hc)}</td>
@@ -544,12 +570,18 @@ function FraisPanel({
             </tr>
           </thead>
           <tbody>
-            {rows.map(r => {
+            {(() => {
+              const base = detectBase(rows);
+              return rows.map((r, idx) => {
               const day = r.horaireDep?.day ?? r.horaireArr?.day ?? null;
               const k = diffKey(r.numLigne, day);
               const isDiff = r.kind !== 'spillover_info' && (highlightedKeys?.has(k) ?? false);
+              const isNewRotation = idx > 0
+                && r.kind === 'normal'
+                && base != null
+                && r.escDep === base;
               return (
-              <tr key={r.index} className={`${kindRowClass(r.kind)} ${isDiff ? DIFF_ROW_CLASS : ''}`}>
+              <tr key={r.index} className={`${kindRowClass(r.kind)} ${isDiff ? DIFF_ROW_CLASS : ''} ${isNewRotation ? 'border-t border-zinc-200 dark:border-zinc-700' : ''}`}>
                 <td className="px-1 py-0.5">{r.index}</td>
                 <td className="px-1 py-0.5">{r.numLigne}</td>
                 <td className="px-1 py-0.5">{r.escDep}</td>
@@ -569,7 +601,8 @@ function FraisPanel({
                 <td className="px-1 py-0.5 text-right">{fmt(r.pnNonExonere)}</td>
               </tr>
               );
-            })}
+            });
+            })()}
             <tr className="font-bold border-t border-zinc-300 dark:border-zinc-700">
               <td className="px-1 py-1" colSpan={6}>TOTAUX</td>
               <td className="px-1 py-1 text-right">{fmt(totaux.irDep)}</td>

@@ -691,16 +691,18 @@ export function Ep4HoraireEP4Consolidee({ flights, year, month, highlightedKeys 
               6 valeurs numeriques a droite uniformes a 8% chacune (avant: V.Nuit
               monopolisait 18% → grosse marge vide apres T.A). */}
           <colgroup>
-            <col style={{ width:  '3%' }} /><col style={{ width:  '5%' }} /><col style={{ width: '4%' }} />
-            <col style={{ width:  '9%' }} /><col style={{ width:  '9%' }} /><col style={{ width: '4%' }} />
-            <col style={{ width:  '9%' }} /><col style={{ width:  '9%' }} />
-            <col style={{ width:  '8%' }} /><col style={{ width:  '8%' }} /><col style={{ width: '8%' }} />
-            <col style={{ width:  '8%' }} /><col style={{ width:  '8%' }} /><col style={{ width: '8%' }} />
+            <col style={{ width:  '3%' }} /><col style={{ width:  '5%' }} />
+            <col style={{ width:  '3%' }} /><col style={{ width: '4%' }} />
+            <col style={{ width:  '8%' }} /><col style={{ width:  '8%' }} /><col style={{ width: '4%' }} />
+            <col style={{ width:  '8%' }} /><col style={{ width:  '8%' }} />
+            <col style={{ width:  '7%' }} /><col style={{ width:  '7%' }} /><col style={{ width: '7%' }} />
+            <col style={{ width:  '7%' }} /><col style={{ width:  '7%' }} /><col style={{ width: '7%' }} />
           </colgroup>
           <thead className="text-zinc-400 uppercase tracking-wide text-[9px]">
             <tr>
               <th className="text-left px-1 py-1">#</th>
               <th className="text-left px-1 py-1">N°</th>
+              <th className="text-left px-1 py-1" title="Situation à bord — TP = leg en MEP">SAB</th>
               <th className="text-left px-1 py-1">Esc</th>
               <th className="text-left px-1 py-1">Réel dep</th>
               <th className="text-left px-1 py-1">Prog dep</th>
@@ -730,6 +732,8 @@ export function Ep4HoraireEP4Consolidee({ flights, year, month, highlightedKeys 
                 <tr key={`h-${leg.flightNumber}-${leg.begin_ms}-${idx}`} className={rowClass}>
                   <td className="px-1 py-0.5">{idx}</td>
                   <td className="px-1 py-0.5">{String(parseInt(leg.flightNumber, 10) || 0).padStart(3, '0')}</td>
+                  <td className={`px-1 py-0.5 ${leg.dead_head ? 'font-semibold text-pink-600 dark:text-pink-400' : 'text-zinc-400'}`}
+                      title={leg.dead_head ? 'Leg en MEP (Title Passenger)' : undefined}>{leg.dead_head ? 'TP' : '—'}</td>
                   <td className="px-1 py-0.5">{leg.dep}</td>
                   <td className="px-1 py-0.5">—</td>
                   <td className="px-1 py-0.5">{fmtEp4TimeCentiemes(leg.begin_ms)}</td>
