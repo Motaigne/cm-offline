@@ -89,6 +89,15 @@ export interface StoredEp4Import {
   data:       Ep4PdfData;   // structure complète extraite
 }
 
+/** Etat de sync d'un mois côté client. Sert au Pull différentiel : on stocke le
+ *  timestamp local du dernier Pull réussi pour ce mois, par mode (full /
+ *  planning_only). Si > `lastModifiedAt` côté serveur, on skip ce mois. */
+export interface StoredMonthSyncState {
+  month: string;                        // PK — "YYYY-MM"
+  last_full_pulled_at?: number;         // ms (handlePull mode 'full')
+  last_planning_only_pulled_at?: number;// ms (handlePull mode 'planning_only')
+}
+
 class CmDatabase extends Dexie {
   drafts!:           Table<StoredDraft,        string>;
   items!:            Table<StoredItem,         string>;
@@ -103,6 +112,7 @@ class CmDatabase extends Dexie {
   a81_year_data!:    Table<A81YearDataLocal,   number>; // PK = year
   taux_app!:         Table<StoredTauxAppRow,   string>; // PK = `${rot_code}|${min_h}|${max_h}`
   ep4_imports!:      Table<StoredEp4Import,    string>; // PK = monthIso (YYYY-MM)
+  month_sync_state!: Table<StoredMonthSyncState, string>; // PK = month "YYYY-MM"
 
   constructor() {
     super('optip');
@@ -167,6 +177,12 @@ class CmDatabase extends Dexie {
     // sans re-uploader le PDF, et survit kill/refresh PWA.
     this.version(10).stores({
       ep4_imports: 'monthIso, importedAt',
+    });
+    // v11 : month_sync_state — timestamps locaux de dernier Pull réussi par
+    // mois et par mode (full / planning_only). Utilisé par handlePull pour
+    // skipper les mois inchangés côté serveur.
+    this.version(11).stores({
+      month_sync_state: 'month',
     });
   }
 }
@@ -695,4 +711,36 @@ export async function listEp4Imports(): Promise<Array<{ monthIso: string; import
 /** Supprime l'EP4 importé pour un mois donné. */
 export async function deleteEp4Import(monthIso: string): Promise<void> {
   await db.ep4_imports.delete(monthIso);
+}
+
+// ─── month_sync_state (Pull différentiel) ─────────────────────────────────────
+
+/** Stamp un Pull réussi pour un mois et un mode. Le timestamp local sert de
+ *  borne inférieure : prochain Pull, si `serverLastModified[m] <= stamp`, le
+ *  mois est skippé. */
+export async function stampMonthSync(
+  month: string,
+  mode: 'full' | 'planning_only',
+  at: number = Date.now(),
+): Promise<void> {
+  const existing = await db.month_sync_state.get(month);
+  const next: StoredMonthSyncState = {
+    month,
+    last_full_pulled_at:          existing?.last_full_pulled_at,
+    last_planning_only_pulled_at: existing?.last_planning_only_pulled_at,
+  };
+  if (mode === 'full') next.last_full_pulled_at = at;
+  else next.last_planning_only_pulled_at = at;
+  await db.month_sync_state.put(next);
+}
+
+/** Lit l'état de sync pour un set de mois. Retourne une Map. */
+export async function loadMonthSyncStates(
+  months: string[],
+): Promise<Map<string, StoredMonthSyncState>> {
+  if (months.length === 0) return new Map();
+  const rows = await db.month_sync_state.bulkGet(months);
+  const out = new Map<string, StoredMonthSyncState>();
+  rows.forEach((row, i) => { if (row) out.set(months[i], row); });
+  return out;
 }

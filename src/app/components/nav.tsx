@@ -9,7 +9,8 @@ import { loadAllProfileVersions } from '@/app/actions/profile-version';
 import { loadAllAnnexeRows } from '@/app/actions/annexe';
 import { loadAllA81Overrides, loadAllA81YearData } from '@/app/actions/a81';
 import { getTauxApp } from '@/app/actions/ep4';
-import { cacheRotations, hydrateDB, cacheProfileVersions, cacheAnnexeRows, cacheA81Overrides, cacheA81YearData, cacheTauxApp } from '@/lib/local-db';
+import { cacheRotations, hydrateDB, cacheProfileVersions, cacheAnnexeRows, cacheA81Overrides, cacheA81YearData, cacheTauxApp, stampMonthSync, loadMonthSyncStates } from '@/lib/local-db';
+import { getMonthsLastModified } from '@/app/actions/sync-state';
 import { syncNow, pendingOpsCount, PENDING_CHANGED_EVENT } from '@/lib/sync-service';
 import {
   downloadPlanning, downloadDatabase,
@@ -269,6 +270,35 @@ export function NavBar() {
   // hit garanti hors ligne). Reste persistant tant que NavBar n'est pas démonté
   // (= soft nav OK, kill reset l'indicateur). Re-vérifié après chaque Sync.
   const [precacheReady, setPrecacheReady] = useState(false);
+
+  // Long-press du bouton Pull (800 ms) = force full pull, bypass du
+  // différentiel. Sert de filet si le user soupçonne une donnée stale.
+  const pullPressRef = useRef<{ timer: ReturnType<typeof setTimeout> | null; longFired: boolean }>({ timer: null, longFired: false });
+  function onPullPointerDown() {
+    if (syncing) return;
+    pullPressRef.current.longFired = false;
+    if (pullPressRef.current.timer) clearTimeout(pullPressRef.current.timer);
+    pullPressRef.current.timer = setTimeout(() => {
+      pullPressRef.current.longFired = true;
+      pullPressRef.current.timer = null;
+      void handlePull({ force: true });
+    }, 800);
+  }
+  function onPullPointerUp() {
+    if (pullPressRef.current.timer) {
+      clearTimeout(pullPressRef.current.timer);
+      pullPressRef.current.timer = null;
+    }
+  }
+  function onPullClick() {
+    // Si long-press a déjà déclenché un pull forcé, on consomme l'event click
+    // fantôme (iOS déclenche onClick après onPointerUp même si on a annulé).
+    if (pullPressRef.current.longFired) {
+      pullPressRef.current.longFired = false;
+      return;
+    }
+    void handlePull();
+  }
   // Statut réseau via useSyncExternalStore (hook dédié) : pas de
   // set-state-in-effect et pas de mismatch d'hydration (SSR snapshot = true).
   const online = useOnlineStatus();
@@ -458,8 +488,14 @@ export function NavBar() {
 
   /** PULL : télécharge depuis Supabase et hydrate l'IndexedDB pour les mois
    *  du SyncPlan (Lite ou Perso). Mois traités en PARALLÈLE (Promise.allSettled)
-   *  — gain ~5× sur la phase pull par rapport à la boucle séquentielle. */
-  async function handlePull() {
+   *  — gain ~5× sur la phase pull par rapport à la boucle séquentielle.
+   *
+   *  Différentiel : avant chaque Pull on demande au serveur max(updated_at) par
+   *  mois (1 RPC, < 1s) et on skip les mois inchangés depuis le dernier
+   *  `stampMonthSync` local. Le mois courant n'est jamais skipped (paranoid,
+   *  autre device peut éditer un draft en cours). `opts.force` = bypass total
+   *  (déclenché par long-press du bouton Pull). */
+  async function handlePull(opts?: { force?: boolean }) {
     if (!navigator.onLine) {
       setSyncStatus('offline');
       setTimeout(() => setSyncStatus(''), 3000);
@@ -500,17 +536,53 @@ export function NavBar() {
         })();
         const plan = buildSyncPlan(months, mode, persoMonthsLs);
         const planningMonths = new Set([...plan.full, ...plan.planningOnly]);
-        const queue: Array<{ m: string; loadMode: 'full' | 'planning_only' }> = [
+        const fullQueue: Array<{ m: string; loadMode: 'full' | 'planning_only' }> = [
           ...plan.full.map(m => ({ m, loadMode: 'full' as const })),
           ...plan.planningOnly.map(m => ({ m, loadMode: 'planning_only' as const })),
         ];
+
+        // ── Diff : skip les mois inchangés côté serveur ───────────────────
+        // 1 RPC qui retourne max(updated_at) par mois sur (snapshot, signature,
+        // draft, item). Fallback en cas d'échec : pull complet (filteredQueue =
+        // fullQueue). Le mois courant est toujours conservé (paranoid).
+        const nowMonth = `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, '0')}`;
+        let filteredQueue = fullQueue;
+        let skipped = 0;
+        const skippedMonths: string[] = [];
+        if (!opts?.force && fullQueue.length > 0) {
+          const askMonths = Array.from(new Set(fullQueue.map(q => q.m)));
+          const [serverMod, clientStates] = await Promise.all([
+            withTimeout(
+              getMonthsLastModified(askMonths),
+              5000,
+              null as Record<string, number> | null,
+              { label: 'lastModified', onError: captureErr('lastModified') },
+            ),
+            loadMonthSyncStates(askMonths),
+          ]);
+          if (serverMod) {
+            filteredQueue = fullQueue.filter(q => {
+              if (q.m === nowMonth) return true;
+              const cs = clientStates.get(q.m);
+              const stamp = q.loadMode === 'full'
+                ? cs?.last_full_pulled_at
+                : cs?.last_planning_only_pulled_at;
+              if (stamp === undefined) return true; // jamais pull → on pull
+              const serverMs = serverMod[q.m] ?? 0;
+              if (stamp >= serverMs) { skipped++; skippedMonths.push(q.m); return false; }
+              return true;
+            });
+          }
+        }
+        const queue = filteredQueue;
 
         // Concurrence bornée : 12 mois en parallèle saturent le mobile et
         // déclenchent des timeouts silencieux → mois jamais hydratés.
         let completed = 0;
         let failed = 0;
-        const cachedMonths: string[] = [];
-        setDlProgress(queue.length > 0 ? `0/${queue.length}` : '');
+        const cachedMonths: string[] = [...skippedMonths]; // skipped = déjà cachés
+        const skipSuffix = skipped > 0 ? ` (+${skipped} skip)` : '';
+        setDlProgress(queue.length > 0 ? `0/${queue.length}${skipSuffix}` : (skipped > 0 ? `${skipped} skip` : ''));
 
         const tasks = queue.map(({ m, loadMode }) => async () => {
           try {
@@ -538,9 +610,11 @@ export function NavBar() {
               return;
             }
             // Mois légitimement vide (aucune rotation cataloguée + drafts vides) :
-            // ce n'est PAS un échec, mais on ne le marque pas non plus cached.
+            // ce n'est PAS un échec. On stamp quand même pour permettre le skip
+            // au prochain Pull différentiel.
             if (rots.length === 0 && scs.length === 0) {
               cachedMonths.push(m);
+              await stampMonthSync(m, loadMode);
               return;
             }
             const writeOk = await withTimeout(
@@ -550,11 +624,13 @@ export function NavBar() {
               false,
               { label: `write:${m}`, onError: captureErr(`write:${m}`) },
             );
-            if (writeOk) cachedMonths.push(m);
-            else failed++;
+            if (writeOk) {
+              cachedMonths.push(m);
+              await stampMonthSync(m, loadMode);
+            } else failed++;
           } finally {
             completed++;
-            setDlProgress(`${completed}/${queue.length}`);
+            setDlProgress(`${completed}/${queue.length}${skipSuffix}`);
           }
         });
         await runPool(tasks, 4);
@@ -807,9 +883,15 @@ export function NavBar() {
           )}
 
           {/* PULL — télécharge depuis Supabase + pré-cache pages. Toujours visible.
-              Icône : flèches circulaires (refresh universel). */}
+              Icône : flèches circulaires (refresh universel).
+              Tap : Pull différentiel (skip mois inchangés serveur).
+              Long-press 800 ms : force le Pull complet (bypass du diff). */}
           <button
-            onClick={handlePull}
+            onClick={onPullClick}
+            onPointerDown={onPullPointerDown}
+            onPointerUp={onPullPointerUp}
+            onPointerLeave={onPullPointerUp}
+            onPointerCancel={onPullPointerUp}
             disabled={syncing}
             title={
               syncStatus === 'offline' ? 'Pas de réseau'
@@ -818,7 +900,7 @@ export function NavBar() {
               : syncStatus === 'err'   ? (lastSyncErrors.length > 0
                   ? `Erreur sync — ${lastSyncErrors.length} échec(s) :\n${lastSyncErrors.slice(0, 5).map(e => `• ${e.kind} ${e.label} — ${e.msg}`).join('\n')}${lastSyncErrors.length > 5 ? `\n+${lastSyncErrors.length - 5} autres` : ''}`
                   : 'Erreur de synchronisation')
-              : 'Actualiser depuis le cloud'
+              : 'Actualiser depuis le cloud (appui long = forcer le Pull complet)'
             }
             className={`relative px-2 h-8 flex items-center gap-1 text-sm font-medium disabled:opacity-50 rounded hover:bg-zinc-800 transition-colors ${syncStatus === 'pull' ? 'text-blue-400' : syncColor || 'text-zinc-300'}`}
           >

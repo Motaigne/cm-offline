@@ -208,6 +208,7 @@ export type Database = {
           escale_debut: string | null;
           escale_fin: string | null;
           created_at: string;
+          updated_at: string;
         };
         Insert: Partial<Database['public']['Tables']['pairing_signature']['Row']> & {
           snapshot_id: string;
