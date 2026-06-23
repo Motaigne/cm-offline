@@ -303,11 +303,6 @@ export function A81Client({
 
       {err && <p className="text-xs text-red-500">{err}</p>}
 
-      {data.rows.some(r => r.is_fictive) && (
-        <div className="px-3 py-2 rounded-lg bg-violet-100 dark:bg-violet-900/40 border border-violet-200 dark:border-violet-800 text-xs text-violet-800 dark:text-violet-200">
-          <span className="font-semibold uppercase tracking-wide">Projection</span> — certaines lignes (fond violet) sont basées sur des plannings fictifs des mois non encore déployés. Montants à titre indicatif uniquement.
-        </div>
-      )}
 
       {/* Légende — pastille à côté de "Esc. début" indique la source */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 rounded-lg bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800 text-[11px] text-zinc-600 dark:text-zinc-300">

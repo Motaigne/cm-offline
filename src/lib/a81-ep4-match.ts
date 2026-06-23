@@ -95,31 +95,36 @@ function stampRows(ep4: Ep4PdfData): StampedRow[] {
   if (rows.length === 0) return [];
   const out: StampedRow[] = [];
 
-  // Offset initial : si la 1ère row a un jour élevé (≥ 25), c'est qu'on commence
-  // par un spillover du mois précédent (rotation partie fin M-1, arrivée en M).
-  // Sans cette correction, day=31 du PDF janvier serait calculé comme 31 jan.
-  let monthOffset = rows[0].reelDep!.day >= 25 ? -1 : 0;
-  let lastReferenceDay = -1;
+  // Inférence du `monthOffset` par row : on suit la chronologie. On part de
+  // l'arrivée précédente (`prevArrOffset`) comme ancrage du dep courant.
+  //
+  // Offset initial : si la 1ère row a `day >= 25`, on commence par un
+  // spillover du mois précédent → -1. Sans ça, day=31 du PDF janvier serait
+  // calculé comme 31 janvier (faux).
+  //
+  // Transitions :
+  //  - dep courant < prevArr précédent (saut négatif >15j) → +1 mois
+  //  - arr < dep (vol nuit qui passe minuit) → +1 mois sur l'arr seulement
+  let prevArrOffset = rows[0].reelDep!.day >= 25 ? -1 : 0;
+  let prevArrDay = -1;
 
   for (const r of rows) {
     const depDay = r.reelDep!.day;
-    // Saut négatif majeur sur le depDay : on a basculé au mois suivant.
-    if (lastReferenceDay >= 0 && depDay < lastReferenceDay - DAY_JUMP_THRESHOLD) {
-      monthOffset++;
+    let depOffset = prevArrOffset;
+    if (prevArrDay >= 0 && depDay < prevArrDay - DAY_JUMP_THRESHOLD) {
+      depOffset++;
     }
-    const depMs = horaireToMs(monthIso, monthOffset, r.reelDep!);
+    const depMs = horaireToMs(monthIso, depOffset, r.reelDep!);
 
-    // Pour l'arrivée d'un même vol, possible saut de jour intra-vol (vol nuit
-    // qui passe minuit). Si arrDay < depDay - threshold, on est passé au
-    // lendemain (= peut-être au mois suivant si depDay = 31).
     const arrDay = r.reelArr!.day;
-    let arrOffset = monthOffset;
-    if (arrDay < depDay - DAY_JUMP_THRESHOLD) arrOffset = monthOffset + 1;
+    let arrOffset = depOffset;
+    if (arrDay < depDay - DAY_JUMP_THRESHOLD) arrOffset = depOffset + 1;
     const arrMs = horaireToMs(monthIso, arrOffset, r.reelArr!);
 
     if (arrMs <= depMs) continue;
     out.push({ row: r, depMs, arrMs });
-    lastReferenceDay = arrDay;
+    prevArrDay = arrDay;
+    prevArrOffset = arrOffset;
   }
 
   return out;
