@@ -417,9 +417,25 @@ export async function computeA81ForYearLocal(
   }
 
   // 8. Tri + dédup + expansion split + plafond running
+  // Dédup en 2 passes :
+  //   - par `instance_id` (cas calendrier : item dupliqué dans plusieurs drafts)
+  //   - par `(escale_debut, debut_sejour_at à la minute)` (cas EP4 : la même
+  //     rotation peut apparaître dans 2 PDFs adjacents — kind='normal' dans le
+  //     PDF du mois de départ ET kind='spillover_*' dans le PDF du mois suivant.
+  //     Le 1er rencontré gagne ; comme on parcourt les EP4 dans l'ordre Map
+  //     (= ordre d'insertion = ordre de monthIso), le PDF le plus ancien gagne
+  //     en cas de collision.)
   const seen = new Set<string>();
+  const seenKey = new Set<string>();
   rows.sort((a, b) => a.debut_sejour_at.localeCompare(b.debut_sejour_at));
-  const unique = rows.filter(r => { if (seen.has(r.instance_id)) return false; seen.add(r.instance_id); return true; });
+  const unique = rows.filter(r => {
+    if (seen.has(r.instance_id)) return false;
+    seen.add(r.instance_id);
+    const key = `${r.escale_debut}|${r.debut_sejour_at.slice(0, 16)}`;
+    if (seenKey.has(key)) return false;
+    seenKey.add(key);
+    return true;
+  });
 
   // Expansion rotations à cheval (cf. server actions/a81.ts pour la règle).
   const expanded: A81Row[] = [];

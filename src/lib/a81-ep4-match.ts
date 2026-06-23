@@ -45,8 +45,12 @@ function horaireToMs(monthIso: string, monthOffset: number, h: HoraireJJHHMM): n
 }
 
 function usableRows(ep4: Ep4PdfData): Ep4HoraireRow[] {
+  // On inclut TOUS les kinds (normal + spillover_info + spillover_prorata).
+  // Les rows italique servent à reconstituer les rotations à cheval rattachées
+  // à un autre mois — sans elles, NBJ 31 déc-4 jan n'apparaît jamais si l'user
+  // n'a que le PDF janvier. La dédup côté caller gère le cas où on a aussi le
+  // PDF de l'autre mois (= la même rotation en kind='normal').
   return ep4.horaire.rows.filter(r =>
-    r.kind === 'normal' &&
     !!r.escDep && !!r.escArr &&
     !!r.reelDep && !!r.reelArr,
   );
@@ -78,10 +82,14 @@ function stampRows(ep4: Ep4PdfData): StampedRow[] {
   if (!ep4.meta.monthIso) return [];
   const monthIso = ep4.meta.monthIso;
   const rows = usableRows(ep4);
+  if (rows.length === 0) return [];
   const out: StampedRow[] = [];
 
-  let monthOffset = 0;
-  let lastReferenceDay = -1; // dernier reelArr.day vu (= ancrage chrono)
+  // Offset initial : si la 1ère row a un jour élevé (≥ 25), c'est qu'on commence
+  // par un spillover du mois précédent (rotation partie fin M-1, arrivée en M).
+  // Sans cette correction, day=31 du PDF janvier serait calculé comme 31 jan.
+  let monthOffset = rows[0].reelDep!.day >= 25 ? -1 : 0;
+  let lastReferenceDay = -1;
 
   for (const r of rows) {
     const depDay = r.reelDep!.day;
@@ -92,8 +100,8 @@ function stampRows(ep4: Ep4PdfData): StampedRow[] {
     const depMs = horaireToMs(monthIso, monthOffset, r.reelDep!);
 
     // Pour l'arrivée d'un même vol, possible saut de jour intra-vol (vol nuit
-    // qui passe minuit). Si arrDay < depDay - threshold dans la même row, on
-    // est passé au lendemain (= peut-être au mois suivant si depDay = 31).
+    // qui passe minuit). Si arrDay < depDay - threshold, on est passé au
+    // lendemain (= peut-être au mois suivant si depDay = 31).
     const arrDay = r.reelArr!.day;
     let arrOffset = monthOffset;
     if (arrDay < depDay - DAY_JUMP_THRESHOLD) arrOffset = monthOffset + 1;
@@ -128,6 +136,31 @@ export function extractRotationsFromEp4(ep4: Ep4PdfData): Ep4Rotation[] {
   let bucket: StampedRow[] = [];
   let state: 'idle' | 'in_rotation' = 'idle';
 
+  function emitBucket() {
+    if (bucket.length === 0) return;
+    const debutRow = bucket[0];
+    const finRow   = bucket[bucket.length - 1];
+    const escales: string[] = [];
+    for (const b of bucket) {
+      const e = b.row.escArr!;
+      if (e !== base && escales[escales.length - 1] !== e) escales.push(e);
+    }
+    // Si la rotation ne se ferme pas par un retour-base (= bucket émis avant
+    // la fin), escale_fin = escDep du dernier row utile (= dernière escale
+    // hors-base avant que la trace ne s'arrête).
+    const lastEscDep: string = finRow.row.escDep === base
+      ? (finRow.row.escDep ?? '')
+      : (escales[escales.length - 1] ?? finRow.row.escDep ?? '');
+    out.push({
+      debut_rotation:  new Date(debutRow.depMs).toISOString().slice(0, 10),
+      debut_sejour_at: new Date(debutRow.arrMs + DEBUT_OFFSET_MS).toISOString(),
+      fin_sejour_at:   new Date(finRow.depMs   + FIN_OFFSET_MS).toISOString(),
+      escale_debut:    debutRow.row.escArr!,
+      escale_fin:      lastEscDep,
+      rotation_code:   escales.join(' '),
+    });
+  }
+
   for (const s of stamped) {
     if (state === 'idle') {
       if (s.row.escDep === base) {
@@ -137,27 +170,17 @@ export function extractRotationsFromEp4(ep4: Ep4PdfData): Ep4Rotation[] {
     } else {
       bucket.push(s);
       if (s.row.escArr === base) {
-        const debutRow = bucket[0];
-        const finRow   = bucket[bucket.length - 1];
-        // Rotation code = liste ordonnée des escales visitées (escArr de
-        // chaque row), hors retours à la base. Dédup successifs identiques.
-        const escales: string[] = [];
-        for (const b of bucket) {
-          const e = b.row.escArr!;
-          if (e !== base && escales[escales.length - 1] !== e) escales.push(e);
-        }
-        out.push({
-          debut_rotation:  new Date(debutRow.depMs).toISOString().slice(0, 10),
-          debut_sejour_at: new Date(debutRow.arrMs + DEBUT_OFFSET_MS).toISOString(),
-          fin_sejour_at:   new Date(finRow.depMs   + FIN_OFFSET_MS).toISOString(),
-          escale_debut:    debutRow.row.escArr!,
-          escale_fin:      finRow.row.escDep!,
-          rotation_code:   escales.join(' '),
-        });
+        emitBucket();
         state = 'idle';
         bucket = [];
       }
     }
+  }
+  // Émission d'une rotation incomplète restée en buffer (= ne se ferme pas
+  // dans ce PDF, ex rotation à cheval HKG fév-mars dont le retour CDG est
+  // dans le PDF mars non importé).
+  if (state === 'in_rotation' && bucket.length > 0) {
+    emitBucket();
   }
 
   return out;
