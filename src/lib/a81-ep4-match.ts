@@ -45,16 +45,23 @@ function horaireToMs(monthIso: string, monthOffset: number, h: HoraireJJHHMM): n
 }
 
 function usableRows(ep4: Ep4PdfData): Ep4HoraireRow[] {
-  // On inclut TOUS les kinds (normal + spillover_info + spillover_prorata).
-  // Les rows italique servent à reconstituer les rotations à cheval rattachées
-  // à un autre mois — sans elles, NBJ 31 déc-4 jan n'apparaît jamais si l'user
-  // n'a que le PDF janvier.
+  // On inclut kind='normal' + kind='spillover_info'. Les spillover_info portent
+  // l'info totale d'une rotation à cheval rattachée à un autre mois — sans
+  // elles, NBJ 31 déc-4 jan ou HKG fév-mars ne seraient pas reconstituables
+  // depuis un seul PDF.
   //
-  // On ignore les rows escDep === escArr (= avion parti puis revenu au parking,
-  // ex CDG→CDG). Elles polluent le bucket dans extractRotationsFromEp4 (escDep
-  // = base lui ouvrirait une rotation fantôme).
+  // Exclusions :
+  //  - escDep === escArr (avion parti puis revenu au parking, ex CDG→CDG) :
+  //    ouvrirait une rotation fantôme (escDep=base).
+  //  - escDep === 'XXX' ou escArr === 'XXX' : rows kind='spillover_prorata',
+  //    lignes synthétiques du PDF AF qui matérialisent une coupure mois/mois.
+  //    Si on les laisse passer, leur escDep=CDG (= base) ouvre une fausse
+  //    rotation au milieu de la vraie, et debut_sejour_at finit sur le XXX
+  //    synthétique à 24:00 au lieu du vrai block-on.
   return ep4.horaire.rows.filter(r =>
-    !!r.escDep && !!r.escArr && r.escDep !== r.escArr &&
+    !!r.escDep && !!r.escArr &&
+    r.escDep !== r.escArr &&
+    r.escDep !== 'XXX' && r.escArr !== 'XXX' &&
     !!r.reelDep && !!r.reelArr,
   );
 }
