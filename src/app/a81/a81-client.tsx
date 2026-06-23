@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState, useTransition, useEffect } from 'react';
+import { useState, useTransition, useEffect, Fragment } from 'react';
 import type { A81YearData, A81Row } from '@/app/actions/a81';
 import { loadAllA81Overrides } from '@/app/actions/a81';
 import { computeA81ForYearLocal } from '@/lib/a81-local';
@@ -309,19 +309,19 @@ export function A81Client({
         </div>
       )}
 
-      {/* Légende — code couleur des lignes */}
+      {/* Légende — pastille à côté de "Esc. début" indique la source */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 rounded-lg bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800 text-[11px] text-zinc-600 dark:text-zinc-300">
         <span className="font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Légende</span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block w-3 h-3 rounded-sm bg-emerald-100 dark:bg-emerald-900/40 border border-emerald-300 dark:border-emerald-700" />
-          source EP4 (block-off/block-on réels)
+          <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+          source EP4 (block réels)
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block w-3 h-3 rounded-sm bg-amber-100 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700" />
+          <span className="inline-block w-2 h-2 rounded-full bg-amber-500" />
           source calendrier (estimation)
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block w-3 h-3 rounded-sm bg-violet-100 dark:bg-violet-900/40 border border-violet-300 dark:border-violet-700" />
+          <span className="inline-block w-2 h-2 rounded-full bg-violet-500" />
           mois projeté
         </span>
         <span className="inline-flex items-center gap-1.5">
@@ -363,24 +363,42 @@ export function A81Client({
                   </td>
                 </tr>
               )}
-              {data.rows.map(r => {
-                const monthIdx = Number(r.debut_rotation.slice(5, 7)) - 1;
-                const anyOverride = r.debut_sejour_overridden || r.fin_sejour_overridden;
-                const isM0 = r.split_part === 'm0';
-                const isM1 = r.split_part === 'm1';
-                // Code couleur — priorité : EP4 (vert) > fictif (violet) >
-                // calendrier (jaune). L'EP4 prend le pas sur le violet car
-                // les valeurs réelles du PDF sont fiables même pour un mois
-                // précédemment fictif (l'user a remplacé la projection par
-                // l'EP4 réel après-coup).
-                const rowBg = r.source === 'ep4'
-                  ? 'bg-emerald-50 dark:bg-emerald-950/30'
-                  : r.is_fictive
-                    ? 'bg-violet-50 dark:bg-violet-950/30'
-                    : 'bg-amber-50/60 dark:bg-amber-950/15';
-                const tpsNearBoundary = !isM0 && isNearSejourBoundary(r.temps_sej_h);
-                return (
-                  <tr key={`${r.instance_id}${r.split_part ?? ''}`} className={rowBg}>
+              {(() => {
+                // Pré-calcul des "nouveau mois" pour éviter d'écrire dans une
+                // variable mutable pendant le map (interdit par le compileur React).
+                const monthIdxOf = (r: A81Row) => Number(r.debut_rotation.slice(5, 7)) - 1;
+                const newMonthFlags: boolean[] = data.rows.map(
+                  (r, i) => i === 0 || monthIdxOf(data.rows[i - 1]) !== monthIdxOf(r),
+                );
+                return data.rows.map((r, idx) => {
+                  const monthIdx = monthIdxOf(r);
+                  const isNewMonth = newMonthFlags[idx];
+                  const isFirstRow = idx === 0;
+                  const anyOverride = r.debut_sejour_overridden || r.fin_sejour_overridden;
+                  const isM0 = r.split_part === 'm0';
+                  const isM1 = r.split_part === 'm1';
+                  // Alternance par mois (pair/impair) pour visibilité — la
+                  // source (EP4/calendrier/fictif) est désormais signalée par
+                  // une pastille à côté de l'escale début, pas par le fond.
+                  const rowBg = monthIdx % 2 ? 'bg-zinc-200/70 dark:bg-zinc-800/60' : '';
+                  // Pastille source : vert=EP4 > violet=fictif > jaune=calendrier.
+                  const pastilleCls = r.source === 'ep4'
+                    ? 'bg-emerald-500'
+                    : r.is_fictive
+                      ? 'bg-violet-500'
+                      : 'bg-amber-500';
+                  const pastilleTitle = r.source === 'ep4'
+                    ? 'Source EP4 (block-off/block-on réels)'
+                    : r.is_fictive
+                      ? 'Mois projeté (planning fictif)'
+                      : 'Source calendrier (estimation raw_detail)';
+                  const tpsNearBoundary = !isM0 && isNearSejourBoundary(r.temps_sej_h);
+                  return (
+                <Fragment key={`${r.instance_id}${r.split_part ?? ''}`}>
+                  {isNewMonth && !isFirstRow && (
+                    <tr aria-hidden><td colSpan={12} className="h-2 bg-zinc-100 dark:bg-zinc-900/60 border-y border-zinc-200 dark:border-zinc-800" /></tr>
+                  )}
+                  <tr className={rowBg}>
                     <td className="px-2 py-1.5 whitespace-nowrap text-zinc-700 dark:text-zinc-200 italic">
                       {fmtDate(r.debut_rotation)}
                       <div className="text-[9px] text-zinc-400 leading-none">{MONTHS_FR_SHORT[monthIdx]}</div>
@@ -400,7 +418,12 @@ export function A81Client({
                         />
                       )}
                     </td>
-                    <td className="px-2 py-1.5 text-center font-mono font-semibold text-zinc-700 dark:text-zinc-200 italic">{r.escale_debut}</td>
+                    <td className="px-2 py-1.5 text-center font-mono font-semibold text-zinc-700 dark:text-zinc-200 italic">
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className={`inline-block w-2 h-2 rounded-full ${pastilleCls}`} title={pastilleTitle} aria-label={pastilleTitle} />
+                        {r.escale_debut}
+                      </span>
+                    </td>
                     <td className="px-2 py-1.5 whitespace-nowrap">
                       {isM0 ? (
                         <span
@@ -445,8 +468,10 @@ export function A81Client({
                       )}
                     </td>
                   </tr>
+                </Fragment>
                 );
-              })}
+                });
+              })()}
             </tbody>
             {data.rows.length > 0 && (
               <tfoot className="bg-zinc-100 dark:bg-zinc-800/80 border-t-2 border-zinc-300 dark:border-zinc-700 font-semibold">

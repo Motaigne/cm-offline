@@ -285,12 +285,29 @@ function SpilloverLegend() {
 function fmt(n: number | null): string { return n == null ? '—' : String(n); }
 function rawH(h: { raw: string } | null): string { return h?.raw ?? '—'; }
 
+/** Détecte la base AF du pilote = escale la plus fréquente dans les escDep
+ *  et escArr du mois. Sert à insérer un séparateur visuel entre rotations
+ *  (= chaque retour à la base ouvre une nouvelle rotation). */
+function detectBase(rows: Ep4PdfData['horaire']['rows']): string | null {
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    if (r.escDep) counts.set(r.escDep, (counts.get(r.escDep) ?? 0) + 1);
+    if (r.escArr) counts.set(r.escArr, (counts.get(r.escArr) ?? 0) + 1);
+  }
+  let best: { code: string; n: number } | null = null;
+  for (const [code, n] of counts) {
+    if (!best || n > best.n) best = { code, n };
+  }
+  return best?.code ?? null;
+}
+
 function HorairePanel({
   rows, highlightedKeys,
 }: {
   rows: Ep4PdfData['horaire']['rows'];
   highlightedKeys?: Set<string>;
 }) {
+  const base = detectBase(rows);
   return (
     <section className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4">
       <h3 className="text-sm font-semibold mb-3">Feuille Horaire — {rows.length} lignes</h3>
@@ -324,12 +341,19 @@ function HorairePanel({
             </tr>
           </thead>
           <tbody>
-            {rows.map(r => {
+            {rows.map((r, idx) => {
               const day = r.reelDep?.day ?? r.progDep?.day ?? null;
               const k = diffKey(r.numLigne, day);
               const isDiff = r.kind === 'normal' && (highlightedKeys?.has(k) ?? false);
+              // Séparateur entre rotations : une nouvelle rotation commence
+              // quand on décolle de la base. La 1ère row ne reçoit jamais le
+              // séparateur.
+              const isNewRotation = idx > 0
+                && r.kind === 'normal'
+                && base != null
+                && r.escDep === base;
               return (
-              <tr key={r.index} className={`${kindRowClass(r.kind)} ${isDiff ? DIFF_ROW_CLASS : ''}`}>
+              <tr key={r.index} className={`${kindRowClass(r.kind)} ${isDiff ? DIFF_ROW_CLASS : ''} ${isNewRotation ? 'border-t-2 border-zinc-300 dark:border-zinc-600' : ''}`}>
                 <td className="px-1 py-0.5">{r.index}</td>
                 <td className="px-1 py-0.5">{String(parseInt(r.numLigne ?? '0', 10) || 0).padStart(3, '0')}</td>
                 <td className="px-1 py-0.5">{r.escDep}</td>

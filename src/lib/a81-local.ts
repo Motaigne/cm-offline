@@ -18,7 +18,7 @@ import {
   loadAnnexeRowsLocal,
   loadA81YearDataLocal,
 } from '@/lib/local-db';
-import { findEp4SejourMatch } from '@/lib/a81-ep4-match';
+import { extractRotationsFromEp4 } from '@/lib/a81-ep4-match';
 import type { Ep4PdfData } from '@/lib/ep4-pdf-parse';
 import {
   computeTSej24,
@@ -264,10 +264,68 @@ export async function computeA81ForYearLocal(
     return r;
   }
 
-  // 7. Construit les rows
+  // 6b. Lookup zone par escale_debut depuis les sigs cachées en Dexie. Sert
+  //     aux rotations issues d'un EP4 (PDF ne contient pas la zone). Si une
+  //     escale n'a pas de zone connue dans le cache → null (montant = 0).
+  const zoneByEscale = new Map<string, string>();
+  for (const sig of allRotations) {
+    const esc = sig.escale_debut ?? sig.first_layover ?? '';
+    if (esc && sig.zone && !zoneByEscale.has(esc)) zoneByEscale.set(esc, sig.zone);
+  }
+
+  // 7. Construit les rows. 2 sources possibles selon le mois :
+  //   - EP4 importé pour M → rotations extraites du PDF (= source de vérité,
+  //     on ignore les items calendrier de M).
+  //   - Sinon                → items calendrier comme avant.
   const rows: A81Row[] = [];
   const deletedRows: A81DeletedRow[] = [];
+
+  // ─── Branche EP4 ──────────────────────────────────────────────────────────
+  for (const [month, ep4] of ep4ByMonth) {
+    const rotations = extractRotationsFromEp4(ep4);
+    for (let i = 0; i < rotations.length; i++) {
+      const rot = rotations[i];
+      const debutMs = new Date(rot.debut_sejour_at).getTime();
+      const finMs   = new Date(rot.fin_sejour_at).getTime();
+      if (finMs <= debutMs) continue;
+      const tempsSejH = (finMs - debutMs) / 3600000;
+      const tSej24    = computeTSej24(tempsSejH);
+      const zone      = zoneByEscale.get(rot.escale_debut) ?? null;
+      const taux      = lookupTauxSej(article81Data, zone, tempsSejH);
+      const monthOfDepart = new Date(debutMs).toISOString().slice(0, 7);
+      const vjResult = computeValeurJourForMonth(monthOfDepart);
+      // ID stable : préfixe + mois + index dans le PDF. Permet aux overrides
+      // futurs (si on en ajoute) de cibler une rotation EP4 spécifique.
+      const instId = `ep4-${month}-${i}`;
+      rows.push({
+        instance_id: instId,
+        debut_rotation: rot.debut_rotation,
+        debut_sejour_at: rot.debut_sejour_at,
+        debut_sejour_at_origin: rot.debut_sejour_at,
+        escale_debut: rot.escale_debut,
+        fin_sejour_at: rot.fin_sejour_at,
+        fin_sejour_at_origin: rot.fin_sejour_at,
+        escale_fin: rot.escale_fin,
+        temps_sej_h: tempsSejH,
+        nb_jours: tSej24,
+        plafond: false,
+        zone,
+        taux,
+        valeur_jour: vjResult.value,
+        valeur_jour_breakdown: vjResult.breakdown,
+        montant: 0,
+        debut_sejour_overridden: false,
+        fin_sejour_overridden: false,
+        is_fictive: false,
+        source: 'ep4',
+      });
+    }
+  }
+
+  // ─── Branche calendrier (uniquement mois SANS EP4 importé) ────────────────
   for (const it of items) {
+    const itemMonth = it.start_date.slice(0, 7);
+    if (ep4ByMonth.has(itemMonth)) continue; // EP4 fait foi pour ce mois
     const instId = it.pairing_instance_id as string;
     const ov = ovByInstId.get(instId);
     const sig = sigByInstId.get(instId);
@@ -278,8 +336,8 @@ export async function computeA81ForYearLocal(
     // faux pour toutes les autres). Fallback signature.* pour cache obsolète
     // (avant ce fix, instance.debut_sejour_at n'existait pas).
     const instance = sig.instances.find(i => i.id === instId);
-    let debutOrigin = instance?.debut_sejour_at ?? sig.debut_sejour_at;
-    let finOrigin   = instance?.fin_sejour_at   ?? sig.fin_sejour_at;
+    const debutOrigin = instance?.debut_sejour_at ?? sig.debut_sejour_at;
+    const finOrigin   = instance?.fin_sejour_at   ?? sig.fin_sejour_at;
     if (!debutOrigin || !finOrigin) continue;
 
     const escaleDebut = sig.escale_debut ?? sig.first_layover ?? '';
@@ -289,26 +347,6 @@ export async function computeA81ForYearLocal(
 
     if (ov?.deleted) {
       deletedRows.push({ instance_id: instId, debut_rotation: debutRotation, escale_debut: escaleDebut, escale_fin: escaleFin });
-      continue;
-    }
-
-    // Source EP4 si dispo : on REMPLACE debutOrigin/finOrigin par les valeurs
-    // recomposées depuis les block-off/block-on réels du PDF. Les overrides
-    // user (`ov.*_sejour_at`) s'appliquent toujours par-dessus.
-    //
-    // Règle stricte : si un EP4 est importé pour le mois de la rotation (=
-    // mois du debutRotation), l'EP4 fait FOI. Les rotations du calendrier qui
-    // ne matchent aucune row de l'EP4 sont considérées comme des fantômes du
-    // planning AF (vol annulé, échangé, etc.) et écartées du tableau A81.
-    let source: 'ep4' | 'calendrier' = 'calendrier';
-    const ep4Match = findEp4SejourMatch(escaleDebut, escaleFin, debutOrigin, finOrigin, ep4ByMonth);
-    if (ep4Match) {
-      debutOrigin = ep4Match.debut_sejour_at;
-      finOrigin   = ep4Match.fin_sejour_at;
-      source = 'ep4';
-    } else if (ep4ByMonth.has(debutRotation.slice(0, 7))) {
-      // EP4 dispo pour le mois mais aucun match → drop (rotation absente du
-      // décompte AF réel).
       continue;
     }
 
@@ -341,7 +379,7 @@ export async function computeA81ForYearLocal(
       debut_sejour_overridden: !!ov?.debut_sejour_at,
       fin_sejour_overridden:   !!ov?.fin_sejour_at,
       is_fictive: sig.is_fictive === true,
-      source,
+      source: 'calendrier',
     });
   }
 
