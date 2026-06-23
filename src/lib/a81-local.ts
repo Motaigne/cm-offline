@@ -18,6 +18,8 @@ import {
   loadAnnexeRowsLocal,
   loadA81YearDataLocal,
 } from '@/lib/local-db';
+import { findEp4SejourMatch } from '@/lib/a81-ep4-match';
+import type { Ep4PdfData } from '@/lib/ep4-pdf-parse';
 import {
   computeTSej24,
   lookupTauxSej,
@@ -175,6 +177,18 @@ export async function computeA81ForYearLocal(
   // 5. Overrides indexés
   const ovByInstId = new Map(overrides.map(o => [o.pairing_instance_id, o]));
 
+  // 5b. EP4 imports de l'année : si présent pour un mois donné, on s'en sert
+  //     comme source de vérité (block-off/block-on REELS) à la place du
+  //     raw_detail. Cf src/lib/a81-ep4-match.ts. On charge tous les mois en
+  //     une fois pour ne pas multiplier les reads Dexie.
+  const ep4ByMonth = new Map<string, Ep4PdfData>();
+  {
+    const all = await db.ep4_imports
+      .where('monthIso').startsWith(String(year))
+      .toArray();
+    for (const e of all) ep4ByMonth.set(e.monthIso, e.data);
+  }
+
   // 6. Helper valeur_jour par mois (cache local). Retourne aussi le breakdown
   //    des composantes pour affichage formule détaillée dans le footer fiscal.
   type ValeurJourResult = {
@@ -264,8 +278,8 @@ export async function computeA81ForYearLocal(
     // faux pour toutes les autres). Fallback signature.* pour cache obsolète
     // (avant ce fix, instance.debut_sejour_at n'existait pas).
     const instance = sig.instances.find(i => i.id === instId);
-    const debutOrigin = instance?.debut_sejour_at ?? sig.debut_sejour_at;
-    const finOrigin   = instance?.fin_sejour_at   ?? sig.fin_sejour_at;
+    let debutOrigin = instance?.debut_sejour_at ?? sig.debut_sejour_at;
+    let finOrigin   = instance?.fin_sejour_at   ?? sig.fin_sejour_at;
     if (!debutOrigin || !finOrigin) continue;
 
     const escaleDebut = sig.escale_debut ?? sig.first_layover ?? '';
@@ -276,6 +290,17 @@ export async function computeA81ForYearLocal(
     if (ov?.deleted) {
       deletedRows.push({ instance_id: instId, debut_rotation: debutRotation, escale_debut: escaleDebut, escale_fin: escaleFin });
       continue;
+    }
+
+    // Source EP4 si dispo : on REMPLACE debutOrigin/finOrigin par les valeurs
+    // recomposées depuis les block-off/block-on réels du PDF. Les overrides
+    // user (`ov.*_sejour_at`) s'appliquent toujours par-dessus.
+    let source: 'ep4' | 'calendrier' = 'calendrier';
+    const ep4Match = findEp4SejourMatch(escaleDebut, escaleFin, debutOrigin, finOrigin, ep4ByMonth);
+    if (ep4Match) {
+      debutOrigin = ep4Match.debut_sejour_at;
+      finOrigin   = ep4Match.fin_sejour_at;
+      source = 'ep4';
     }
 
     const debutMs = (ov?.debut_sejour_at ? new Date(ov.debut_sejour_at).getTime() : new Date(debutOrigin).getTime());
@@ -307,6 +332,7 @@ export async function computeA81ForYearLocal(
       debut_sejour_overridden: !!ov?.debut_sejour_at,
       fin_sejour_overridden:   !!ov?.fin_sejour_at,
       is_fictive: sig.is_fictive === true,
+      source,
     });
   }
 

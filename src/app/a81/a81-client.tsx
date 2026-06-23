@@ -59,6 +59,17 @@ function fmtTaux(t: number | null): string {
   return `${Math.round(t * 100)} %`;
 }
 
+/** Vrai si `h` (temps de séjour en heures) est à ±15 min d'un palier 12 h à
+ *  partir de 24 h (24, 36, 48, 60, 72…). Sert au soulignement de la cellule
+ *  TPS SEJOUR pour repérer les rotations « limites » côté `nb_jours` (tSej24
+ *  arrondi au 0.5 supérieur — un déplacement de quelques minutes peut faire
+ *  basculer dans le palier suivant). */
+function isNearSejourBoundary(h: number): boolean {
+  if (h < 23.75) return false;
+  const nearest = Math.round((h - 24) / 12) * 12 + 24;
+  return nearest >= 24 && Math.abs(h - nearest) <= 0.25;
+}
+
 /** Cellule datetime éditable avec affichage italique=origine / gras=modifié + petit-italique-origine dessous. */
 function EditableDateTimeCell({
   iso, originIso, overridden, onSave,
@@ -298,6 +309,32 @@ export function A81Client({
         </div>
       )}
 
+      {/* Légende — code couleur des lignes */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 rounded-lg bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800 text-[11px] text-zinc-600 dark:text-zinc-300">
+        <span className="font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Légende</span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block w-3 h-3 rounded-sm bg-emerald-100 dark:bg-emerald-900/40 border border-emerald-300 dark:border-emerald-700" />
+          source EP4 (block-off/block-on réels)
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block w-3 h-3 rounded-sm bg-amber-100 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700" />
+          source calendrier (estimation)
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block w-3 h-3 rounded-sm bg-violet-100 dark:bg-violet-900/40 border border-violet-300 dark:border-violet-700" />
+          mois projeté
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="italic text-zinc-500">italique</span> = valeur d&apos;origine
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="font-bold not-italic text-zinc-700 dark:text-zinc-200">gras</span> = modifié manuellement
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="underline decoration-current">tps</span> à ±15 min d&apos;un palier 12 h (24/36/48/60/72…)
+        </span>
+      </div>
+
       {/* Tableau */}
       <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
         <div className="overflow-x-auto">
@@ -331,12 +368,17 @@ export function A81Client({
                 const anyOverride = r.debut_sejour_overridden || r.fin_sejour_overridden;
                 const isM0 = r.split_part === 'm0';
                 const isM1 = r.split_part === 'm1';
-                // Alternance par MOIS (et non par ligne) : tous les rows d'un
-                // même mois ont le même fond, le mois suivant bascule. Aide à
-                // visualiser les blocs mensuels d'un coup d'œil.
-                const rowBg = r.is_fictive
-                  ? 'bg-violet-50 dark:bg-violet-950/30'
-                  : (monthIdx % 2 ? 'bg-zinc-200/70 dark:bg-zinc-800/60' : '');
+                // Code couleur — priorité : EP4 (vert) > fictif (violet) >
+                // calendrier (jaune). L'EP4 prend le pas sur le violet car
+                // les valeurs réelles du PDF sont fiables même pour un mois
+                // précédemment fictif (l'user a remplacé la projection par
+                // l'EP4 réel après-coup).
+                const rowBg = r.source === 'ep4'
+                  ? 'bg-emerald-50 dark:bg-emerald-950/30'
+                  : r.is_fictive
+                    ? 'bg-violet-50 dark:bg-violet-950/30'
+                    : 'bg-amber-50/60 dark:bg-amber-950/15';
+                const tpsNearBoundary = !isM0 && isNearSejourBoundary(r.temps_sej_h);
                 return (
                   <tr key={`${r.instance_id}${r.split_part ?? ''}`} className={rowBg}>
                     <td className="px-2 py-1.5 whitespace-nowrap text-zinc-700 dark:text-zinc-200 italic">
@@ -375,7 +417,8 @@ export function A81Client({
                       )}
                     </td>
                     <td className="px-2 py-1.5 text-center font-mono font-semibold text-zinc-700 dark:text-zinc-200 italic">{r.escale_fin}</td>
-                    <td className={`px-2 py-1.5 text-right font-mono ${isM0 ? 'italic text-zinc-400' : anyOverride ? 'font-bold not-italic text-zinc-800 dark:text-zinc-100' : 'italic text-zinc-700 dark:text-zinc-200'}`}>
+                    <td className={`px-2 py-1.5 text-right font-mono ${isM0 ? 'italic text-zinc-400' : anyOverride ? 'font-bold not-italic text-zinc-800 dark:text-zinc-100' : 'italic text-zinc-700 dark:text-zinc-200'} ${tpsNearBoundary ? 'underline decoration-current underline-offset-2' : ''}`}
+                        title={tpsNearBoundary ? 'À ±15 min d’un palier 12 h — un léger décalage peut faire basculer le nombre de jours' : undefined}>
                       {isM0 ? 'sur M+1' : r.temps_sej_h.toFixed(2)}
                     </td>
                     <td className={`px-2 py-1.5 text-right font-mono ${r.plafond ? 'text-amber-600 dark:text-amber-400 font-semibold' : anyOverride ? 'font-bold not-italic text-zinc-800 dark:text-zinc-100' : 'italic text-zinc-700 dark:text-zinc-200'}`}>

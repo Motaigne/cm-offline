@@ -61,6 +61,14 @@ export interface A81Row {
   split_part?: 'm0' | 'm1';
   /** True si la rotation est sur un snapshot fictif (projection admin). */
   is_fictive?: boolean;
+  /** Source des valeurs `*_at_origin` :
+   *   - 'ep4'        : block-off/block-on issus d'un PDF EP4 importé pour le mois
+   *                    (rendu vert clair) — source de vérité conservatrice.
+   *   - 'calendrier' : raw_detail de la signature (rendu jaune clair) — estimation
+   *                    basée sur le planning AF.
+   *  Non rempli côté serveur (server action ne tient pas compte de l'EP4) ;
+   *  populé par le compute local quand un EP4 du mois est en Dexie. */
+  source?: 'ep4' | 'calendrier';
 }
 
 /** Ligne supprimée par l'utilisateur — métadata pour la section restauration. */
