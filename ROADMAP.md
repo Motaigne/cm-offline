@@ -36,11 +36,7 @@ Toute nouvelle proposition doit cocher les 4 cases avant d'être codée.
 
 ## 🟠 Offline-first
 
-- [ ] **Pull différentiel par mois (skip si serveur inchangé)**. Mesure user 2026-06-19 : sync seul (1/12 → 12/12) = **30 s** ; jusqu'à la coche verte = 37 s. Soit ~2.5 s/mois (vs ~625 ms/mois mesuré en 2026-06-04 sur 8 mois) — la régression vient probablement de la limite 6 connexions/origin × 24 requêtes (2/mois) qui crée 4 rounds de file d'attente. Idée : comparer `last_pulled_at[month]` (Dexie) vs `max(updated_at)` serveur, skip les mois inchangés. Long-press 800 ms sur Pull = force full sync.
-  - Plan minimal : (1) `getRotationsForMonth` / `getScenariosWithItems` retournent `lastModifiedAt` ; (2) nouvelle table Dexie `month_sync_state` ; (3) endpoint léger `getMonthsModifiedSince(months[], sinceTimestamps[])` qui filtre côté serveur ; (4) long-press = bypass.
-  - Tradeoff : timestamp serveur bogué → skip silencieux. Force = filet.
-  - Gain estimé : 8/12 mois inchangés (cas typique mois passés stabilisés) → 30 s → ~10 s.
-  - Effort : 1-2 h sans triggers SQL.
+- [x] **Pull différentiel par mois (skip si serveur inchangé)** — commit `ea33d48` (2026-06-23). Mig 0041 (`pairing_signature.updated_at` + trigger + backfill), action `getMonthsLastModified` (fenêtre {M-1, M} × 4 sources), table Dexie `month_sync_state` v11, `handlePull({force})`, long-press 800 ms = bypass. À valider sur iPad — 1er Pull = full, 2e = ~5s, après édit draft = +1 mois.
 - [ ] **2 POST NavBar offline non-gated** : `getCurrentUserIsAdmin` + probable `pendingOpsCount`. Cosmétique mais à boucler.
 - [ ] **Audit `cache*` wipe-sur-timeout** sur les tables non encore traitées par `fdd1491` (profileVersions/AnnexeRows/A81Overrides/A81YearData OK ; lister les restantes).
 - [ ] **Juillet absent du sync lite** — non reproductible facilement. À creuser quand revu.
