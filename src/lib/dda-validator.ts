@@ -194,6 +194,14 @@ export type Violation = {
   rule_label: string;
   /** Vrai si DDA_VOL → CONGES avec gap_no_rpc ∈ {0,1} : option de report RPC. */
   can_accept_rpc_report?: boolean;
+  /** Cas particulier : la règle violée est `CONGES → C` (vue par AF) mais en
+   *  réalité physiologique, l'item A en amont (VOL_P ou DDA_VOL) a un RPC qui
+   *  s'est reporté à la fin des CONGES — donc A→C est licite. AF flagge à tort,
+   *  on signale ça à l'user via un rendu différent (vert au lieu de rouge). */
+  af_only?: boolean;
+  /** Description de la règle réelle qui s'applique (A→C avec RPC reporté).
+   *  Utilisé pour le tooltip popover quand `af_only=true`. */
+  real_rule_label?: string;
 };
 
 // ─── Core validator ──────────────────────────────────────────────────────────
@@ -296,6 +304,48 @@ export function validateScenario(
         }
       }
 
+      // Cas "af_only" : AF flagge CONGES → C, mais en réalité l'item A en amont
+      // (VOL_P ou DDA_VOL) avait un RPC qui s'est reporté à la fin des CONGES,
+      // rendant A→C licite. Symbologie verte au lieu de rouge.
+      let afOnly = false;
+      let realRuleLabel: string | undefined;
+      if (
+        catA === 'CONGES' &&
+        (catB === 'VOL_P' || catB === 'DDA_VOL') &&
+        i > 0
+      ) {
+        const prev = sorted[i - 1];
+        const catPrev = categoryOf(prev);
+        if (catPrev === 'VOL_P' || catPrev === 'DDA_VOL') {
+          const realRule = findRule(rules, catPrev, catB);
+          if (realRule) {
+            const rpcDaysPrev = rpcDaysOf(prev);
+            if (rpcDaysPrev > 0) {
+              // Chevauchement RPC initial × période CONGES, en jours pleins.
+              const rpcStart = dateToOrdinal(prev.end_date) + 1;
+              const rpcEnd   = dateToOrdinal(prev.end_date) + rpcDaysPrev;
+              const bStart   = dateToOrdinal(a.start_date);
+              const bEnd     = dateToOrdinal(a.end_date);
+              const overlap  = Math.max(0,
+                Math.min(rpcEnd, bEnd) - Math.max(rpcStart, bStart) + 1);
+              if (overlap > 0) {
+                // RPC reporté finit `overlap` jours après la fin des CONGES.
+                const effectiveRpcEnd = bEnd + overlap;
+                const cStart = dateToOrdinal(b.start_date);
+                const realGap = cStart - effectiveRpcEnd - 1;
+                const realBucket: GapBucket = realRule.rpc_dependent
+                  ? realRule.rpc[String(Math.max(1, Math.min(3, rpcDaysPrev))) as '1' | '2' | '3']
+                  : { ok: realRule.ok, forbidden: realRule.forbidden, min_ok_above: realRule.min_ok_above };
+                if (evaluateBucket(realBucket, realGap) === 'OK') {
+                  afOnly = true;
+                  realRuleLabel = `${catPrev} → ${catB} : gap ${realGap}j (RPC reporté après ${catA})`;
+                }
+              }
+            }
+          }
+        }
+      }
+
       violations.push({
         scenario_id: scenarioId,
         scenario_name: scenarioName,
@@ -309,6 +359,8 @@ export function validateScenario(
         b_start_date: b.start_date,
         rule_label: ruleLabel(rule, gap, rpcDays),
         can_accept_rpc_report: canAcceptRpcReport,
+        af_only: afOnly,
+        real_rule_label: realRuleLabel,
       });
     }
   }

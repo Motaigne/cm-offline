@@ -1294,7 +1294,7 @@ export function GanttView({
   };
   const [detailPanel, setDetailPanel] = useState<DetailPanel | null>(null);
 
-  // Popover violation DDA (déclenché au clic sur un bandeau rouge).
+  // Popover violation DDA (déclenché au clic sur un bandeau rouge ou vert).
   const [violationPopover, setViolationPopover] = useState<{
     key: string;
     rule: string;
@@ -1304,6 +1304,10 @@ export function GanttView({
     rpc?: number;
     canReport: boolean;
     itemAId: string;
+    /** Vrai si AF flagge mais c'est licite via RPC reporté à travers CONGES.
+     *  Le popover affiche en plus la `realRule` qui explique pourquoi c'est OK. */
+    afOnly: boolean;
+    realRule?: string;
     left: number;  // viewport coords (centre horizontal du bandeau)
     top:  number;  // viewport coords (juste sous le bandeau)
   } | null>(null);
@@ -2274,15 +2278,24 @@ export function GanttView({
                       );
                     })}
 
-                    {/* Overlay violations DDA — bandeau fin rouge transparent
-                        positionné juste sous la ligne RPC (visuellement entre
-                        la base du Gantt et le RPC). Cliquable → ouvre un
-                        popover avec la règle + l'action "Reporter RPC" si
-                        applicable. */}
+                    {/* Overlay violations DDA — bandeau fin transparent positionné
+                        juste sous la ligne RPC. ROUGE pour les violations
+                        réelles, VERT pour les cas "af_only" (AF flagge à tort,
+                        en vrai c'est licite via RPC reporté à travers CONGES).
+                        Cliquable → popover avec la règle + l'action "Reporter
+                        RPC" si applicable. */}
                     {(violationsByScenario.get(scenario.id) ?? []).map(v => {
                       const clip = clipViolationGap(v.pivot_date, v.b_start_date, year, mo);
                       if (!clip) return null;
                       const isOpen = violationPopover?.key === `${v.item_a_id}-${v.item_b_id}`;
+                      const afOnly = v.af_only === true;
+                      const colorCls = afOnly
+                        ? (isOpen
+                            ? 'bg-emerald-500/60 dark:bg-emerald-500/70 border-x border-emerald-700'
+                            : 'bg-emerald-500/35 dark:bg-emerald-500/45 border-x border-emerald-500/70 hover:bg-emerald-500/55')
+                        : (isOpen
+                            ? 'bg-red-500/60 dark:bg-red-500/70 border-x border-red-700'
+                            : 'bg-red-500/35 dark:bg-red-500/45 border-x border-red-500/70 hover:bg-red-500/55');
                       return (
                         <button
                           key={`viol-${v.item_a_id}-${v.item_b_id}`}
@@ -2297,17 +2310,16 @@ export function GanttView({
                               gap: v.gap_days, rpc: v.rpc_days,
                               canReport: v.can_accept_rpc_report ?? false,
                               itemAId: v.item_a_id,
+                              afOnly,
+                              realRule: v.real_rule_label,
                               left: rect.left + rect.width / 2,
                               top:  rect.bottom + 6,
                             });
                           }}
-                          title="Cliquer pour voir la règle violée"
-                          className={[
-                            'absolute z-[11] rounded-sm transition-colors cursor-pointer',
-                            isOpen
-                              ? 'bg-red-500/60 dark:bg-red-500/70 border-x border-red-700'
-                              : 'bg-red-500/35 dark:bg-red-500/45 border-x border-red-500/70 hover:bg-red-500/55',
-                          ].join(' ')}
+                          title={afOnly
+                            ? 'AF flagge mais licite (RPC reporté) — cliquer pour le détail'
+                            : 'Cliquer pour voir la règle violée'}
+                          className={['absolute z-[11] rounded-sm transition-colors cursor-pointer', colorCls].join(' ')}
                           style={{
                             left:   `${clip.left}%`,
                             width:  `${clip.width}%`,
@@ -3176,15 +3188,27 @@ export function GanttView({
             <div className="fixed inset-0 z-[45]" onClick={() => setViolationPopover(null)} />
             <div
               role="dialog"
-              className="fixed z-[50] bg-white dark:bg-zinc-900 border border-red-300 dark:border-red-800/60 rounded-xl shadow-2xl p-3 space-y-2"
+              className={`fixed z-[50] bg-white dark:bg-zinc-900 border rounded-xl shadow-2xl p-3 space-y-2 ${
+                violationPopover.afOnly
+                  ? 'border-emerald-300 dark:border-emerald-800/60'
+                  : 'border-red-300 dark:border-red-800/60'
+              }`}
               style={{ left, top: violationPopover.top, width: W }}
               onClick={e => e.stopPropagation()}
             >
               <div className="flex items-start gap-2">
-                <span className="text-red-500 dark:text-red-400 text-base leading-none flex-shrink-0">⚑</span>
+                <span className={`text-base leading-none flex-shrink-0 ${
+                  violationPopover.afOnly
+                    ? 'text-emerald-500 dark:text-emerald-400'
+                    : 'text-red-500 dark:text-red-400'
+                }`}>⚑</span>
                 <div className="flex-1 min-w-0">
-                  <div className="text-[10px] font-bold text-red-600 dark:text-red-400 uppercase tracking-wide">
-                    Violation DDA
+                  <div className={`text-[10px] font-bold uppercase tracking-wide ${
+                    violationPopover.afOnly
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : 'text-red-600 dark:text-red-400'
+                  }`}>
+                    {violationPopover.afOnly ? 'Faux positif AF' : 'Violation DDA'}
                   </div>
                   <div className="text-xs font-semibold text-zinc-800 dark:text-zinc-100 mt-0.5">
                     {CAT_SHORT[violationPopover.catA]} → {CAT_SHORT[violationPopover.catB]}
@@ -3200,13 +3224,30 @@ export function GanttView({
               </div>
               <div className="flex items-center gap-2 pt-1">
                 <span className="text-[10px] text-zinc-500 dark:text-zinc-400">Gap mesuré</span>
-                <span className="px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-950/50 text-red-600 dark:text-red-400 font-mono font-semibold text-xs">
+                <span className={`px-1.5 py-0.5 rounded font-mono font-semibold text-xs ${
+                  violationPopover.afOnly
+                    ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300'
+                    : 'bg-red-100 dark:bg-red-950/50 text-red-600 dark:text-red-400'
+                }`}>
                   {violationPopover.gap}j
                 </span>
               </div>
-              <p className="text-[11px] text-zinc-600 dark:text-zinc-300 leading-snug">
-                {violationPopover.rule}
-              </p>
+              {violationPopover.afOnly ? (
+                <>
+                  <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase pt-1">AF voit</div>
+                  <p className="text-[11px] text-zinc-600 dark:text-zinc-300 leading-snug">
+                    {violationPopover.rule}
+                  </p>
+                  <div className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase pt-1">Réalité</div>
+                  <p className="text-[11px] text-zinc-700 dark:text-zinc-200 leading-snug">
+                    {violationPopover.realRule}
+                  </p>
+                </>
+              ) : (
+                <p className="text-[11px] text-zinc-600 dark:text-zinc-300 leading-snug">
+                  {violationPopover.rule}
+                </p>
+              )}
               {violationPopover.canReport && (
                 <button
                   onClick={() => {
