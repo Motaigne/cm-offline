@@ -3234,12 +3234,12 @@ export function GanttView({
               </div>
               {violationPopover.afOnly ? (
                 <>
-                  <div className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase pt-1">AF voit</div>
-                  <p className="text-[11px] text-zinc-600 dark:text-zinc-300 leading-snug">
+                  <div className="text-[10px] font-semibold text-red-600 dark:text-red-400 uppercase pt-1">AF voit</div>
+                  <p className="text-[11px] text-red-700 dark:text-red-300 leading-snug">
                     {violationPopover.rule}
                   </p>
                   <div className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase pt-1">Réalité</div>
-                  <p className="text-[11px] text-zinc-700 dark:text-zinc-200 leading-snug">
+                  <p className="text-[11px] text-emerald-700 dark:text-emerald-300 leading-snug">
                     {violationPopover.realRule}
                   </p>
                 </>
