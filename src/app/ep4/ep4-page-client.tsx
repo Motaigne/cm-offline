@@ -107,15 +107,23 @@ export function Ep4PageClient({ month: initialMonth }: { month: string }) {
   }, []);
 
   const handleDeleteMonth = useCallback(async (monthIso: string) => {
+    if (!confirm(`Supprimer l'EP4 importé pour ${monthIso} ?\n\nLe PDF stocké en local sera effacé. Tu peux le ré-importer ensuite si besoin.`)) return;
     await deleteEp4Import(monthIso);
     const list = await listEp4Imports();
     setImports(list);
-    if (selectedImportMonth === monthIso) {
-      const next = list[0]?.monthIso ?? null;
-      setSelectedImportMonth(next);
-      setCurrentImport(next ? await loadEp4Import(next) : null);
-    }
-  }, [selectedImportMonth]);
+    // Si le mois supprimé est celui actuellement affiché OU si le selected
+    // courant n'est plus dans la liste, on bascule sur le 1er dispo (ou null).
+    setSelectedImportMonth(prev => {
+      if (prev === monthIso || !list.some(l => l.monthIso === prev)) {
+        return list[0]?.monthIso ?? null;
+      }
+      return prev;
+    });
+    // setCurrentImport sera invalidé par l'useEffect [selectedImportMonth] ;
+    // mais on force aussi à null ici au cas où le mois supprimé restait
+    // affiché à cause d'un closure stale.
+    setCurrentImport(prev => (prev?.monthIso === monthIso ? null : prev));
+  }, []);
 
   const cancelRef = useRef<(() => void) | null>(null);
 
