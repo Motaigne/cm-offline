@@ -37,7 +37,7 @@ Toute nouvelle proposition doit cocher les 4 cases avant d'être codée.
 ## 🟠 Offline-first
 
 - [x] **Pull différentiel par mois (skip si serveur inchangé)** — commit `ea33d48` (2026-06-23). Mig 0041 (`pairing_signature.updated_at` + trigger + backfill), action `getMonthsLastModified` (fenêtre {M-1, M} × 4 sources), table Dexie `month_sync_state` v11, `handlePull({force})`, long-press 800 ms = bypass. À valider sur iPad — 1er Pull = full, 2e = ~5s, après édit draft = +1 mois.
-- [ ] **2 POST NavBar offline non-gated** : `getCurrentUserIsAdmin` + probable `pendingOpsCount`. Cosmétique mais à boucler.
+- [x] **POSTs offline non-gated** (2026-06-23). Audit : nav.tsx déjà 100% gaté depuis `a96acbb`. Le vrai non-gated était dans `useAuthGuard` → background `getUser()` polluait la console DevTools. Fix : early return `if (!navigator.onLine) return` au début de l'IIFE background. `pendingOpsCount` confirmé 100% local Dexie, pas un POST.
 - [ ] **Audit `cache*` wipe-sur-timeout** sur les tables non encore traitées par `fdd1491` (profileVersions/AnnexeRows/A81Overrides/A81YearData OK ; lister les restantes).
 - [ ] **Juillet absent du sync lite** — non reproductible facilement. À creuser quand revu.
 - [ ] **Test wifi captif AF iPad réel** — le test ultime, jamais validé en conditions vol. Validé en simulation SIM travail uniquement.

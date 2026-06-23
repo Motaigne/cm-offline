@@ -99,6 +99,11 @@ export function useAuthGuard(): AuthState {
       // Si online + 401 confirme → log + redirect login.
       // Si offline / captif / erreur reseau : trust la session locale.
       void (async () => {
+        // Gate offline : sans ça, `getUser()` lance un POST qui hang puis
+        // échoue silencieusement, polluant DevTools console et le diagnostic
+        // offline (4g captif AF). La session locale est déjà rendue OK
+        // au-dessus — pas besoin de revalider tant qu'on n'a pas de réseau.
+        if (typeof navigator !== 'undefined' && !navigator.onLine) return;
         const ac = new AbortController();
         const timer = setTimeout(() => ac.abort(), GETUSER_TIMEOUT_MS);
         try {
