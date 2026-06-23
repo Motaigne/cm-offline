@@ -497,6 +497,66 @@ function ActivitePanel({
         </table>
       </div>
 
+      {(totaux.vol || totaux.sol) && (
+        <div>
+          <h4 className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">
+            Récap Vol / Sol / Total
+          </h4>
+          <div className="overflow-x-auto">
+            <table className="text-[11px] font-mono [&_th]:px-2 [&_td]:px-2">
+              <thead className="text-zinc-400 uppercase tracking-wide text-[9px]">
+                <tr>
+                  <th className="text-left py-1"></th>
+                  <th className="text-right py-1">H2/HC</th>
+                  <th className="text-right py-1">H2(r)/HC(r)</th>
+                  <th className="text-right py-1">Mt HC(r)</th>
+                  <th className="text-right py-1">Majo Nuit</th>
+                  <th className="text-right py-1">Mt Nuit</th>
+                  <th className="text-right py-1">Majo 10%</th>
+                  <th className="text-right py-1">Prime CDB</th>
+                </tr>
+              </thead>
+              <tbody>
+                {totaux.vol && (
+                  <tr>
+                    <td className="text-left py-0.5 text-zinc-500">Vol</td>
+                    <td className="py-0.5 text-right">{fmt(totaux.vol.h2hc)}</td>
+                    <td className="py-0.5 text-right">{fmt(totaux.vol.h2hcR)}</td>
+                    <td className="py-0.5 text-right">{fmt(totaux.vol.montantHcR)}</td>
+                    <td className="py-0.5 text-right">{fmt(totaux.vol.majoNuit)}</td>
+                    <td className="py-0.5 text-right">{fmt(totaux.vol.montantNuit)}</td>
+                    <td className="py-0.5 text-right">{fmt(totaux.vol.majo10)}</td>
+                    <td className="py-0.5 text-right">{fmt(totaux.vol.primeCdb)}</td>
+                  </tr>
+                )}
+                {totaux.sol && (
+                  <tr>
+                    <td className="text-left py-0.5 text-zinc-500">Sol</td>
+                    <td className="py-0.5 text-right">{fmt(totaux.sol.h2hc)}</td>
+                    <td className="py-0.5 text-right">{fmt(totaux.sol.h2hcR)}</td>
+                    <td className="py-0.5 text-right">{fmt(totaux.sol.montantHcR)}</td>
+                    <td className="py-0.5 text-right">{fmt(totaux.sol.majoNuit)}</td>
+                    <td className="py-0.5 text-right">{fmt(totaux.sol.montantNuit)}</td>
+                    <td className="py-0.5 text-right">{fmt(totaux.sol.majo10)}</td>
+                    <td className="py-0.5 text-right">{fmt(totaux.sol.primeCdb)}</td>
+                  </tr>
+                )}
+                <tr className="font-bold border-t border-zinc-300 dark:border-zinc-700">
+                  <td className="text-left py-0.5">Total</td>
+                  <td className="py-0.5 text-right">{fmt(totaux.h2hc)}</td>
+                  <td className="py-0.5 text-right">{fmt(totaux.h2hcR)}</td>
+                  <td className="py-0.5 text-right">{fmt(totaux.montantHcR)}</td>
+                  <td className="py-0.5 text-right">{fmt(totaux.majoNuit)}</td>
+                  <td className="py-0.5 text-right">{fmt(totaux.montantNuit)}</td>
+                  <td className="py-0.5 text-right">{fmt(totaux.majo10)}</td>
+                  <td className="py-0.5 text-right">{fmt(totaux.primeCdb)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       <div>
         <h4 className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">
           Récap HS / PVEI / KSP

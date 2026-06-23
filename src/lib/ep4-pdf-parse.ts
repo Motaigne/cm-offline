@@ -127,6 +127,12 @@ export interface Ep4ActiviteTotaux {
   montantNuit: number | null;
   majo10:      number | null;
   primeCdb:    number | null;
+  /** Breakdown Vol / Sol affiché en bas-droite du PDF Décompte. Reflète le
+   *  tableau "Vol/Sol/Total" du PDF AF, qui ventile les totaux entre activités
+   *  de vol (rotations) et activités sol (formations, instruction…). `null`
+   *  si le mois n'a pas d'activité sol (= tableau pas rendu côté AF). */
+  vol?: Omit<Ep4ActiviteTotaux, 'vol' | 'sol'> | null;
+  sol?: Omit<Ep4ActiviteTotaux, 'vol' | 'sol'> | null;
 }
 
 /** Bloc "1er mai/Noël" + KSP + PVEI + HS, en bas de la page 2. */
@@ -495,7 +501,7 @@ function parseHoraireTable(page: PdfPage, regularFont: string, warnings: string[
     // sol. Fallback : si numLigne vide, on accepte si on a au moins une
     // horaire valide (= vraie data, pas un header résiduel).
     const cells = assignToColumns(rowItems, COLS_HORAIRE);
-    const hasIdent = /^[A-Z0-9]{2,5}$/.test(cells.numLigne);
+    const hasIdent = /^[A-Za-z0-9]{2,5}$/.test(cells.numLigne);
     const hasEscDep = cells.escDep.length === 3;
     const hasHoraire = parseHoraire(cells.reelDep) != null
                     || parseHoraire(cells.reelArr) != null
@@ -592,7 +598,7 @@ function parseActiviteTable(
     // accepte aussi date présente sans identifiant si une horaire est lisible
     // (vols annulés sans num qui gardent date + horaires).
     const hasDate  = /^\d{1,2}\/\d{1,2}\/\d{1,2}$/.test(cells.date);
-    const hasIdent = /^[A-Z0-9]{2,5}$/.test(cells.numVol);
+    const hasIdent = /^[A-Za-z0-9]{2,5}$/.test(cells.numVol);
     const looksLikeRow = hasDate && (hasIdent || cells.depart.length === 3);
     if (!looksLikeRow) continue;
 
@@ -639,21 +645,19 @@ function parseActiviteTable(
   const summary = parseActiviteSummary(page, warnings);
   // Si la ligne Total n'a pas été captée dans la zone data (car en-dessous du
   // bloc "1er mai/Noël"), on tente une seconde passe sur la zone bas.
+  const yRecapMin = ends.length > 0 ? Math.min(...ends.map(e => e.y)) : page.height;
   if (totaux.h2hc === null) {
-    const totalRow = findTotalRowBelow(page, ends.length > 0 ? Math.min(...ends.map(e => e.y)) : page.height);
-    if (totalRow) {
-      const cells = assignToColumns(totalRow, COLS_ACTIVITE_TOTAL);
-      totaux = {
-        h2hc:        parseNum(cells.h2hc),
-        h2hcR:       parseNum(cells.h2hcR),
-        montantHcR:  parseNum(cells.montantHcR),
-        majoNuit:    parseNum(cells.majoNuit),
-        montantNuit: parseNum(cells.montantNuit),
-        majo10:      parseNum(cells.majo10),
-        primeCdb:    parseNum(cells.primeCdb),
-      };
-    }
+    const totalRow = findTotalRowBelow(page, yRecapMin);
+    if (totalRow) totaux = { ...totaux, ...parseRecapBucket(totalRow) };
   }
+  // Mini-tableau Vol/Sol/Total en bas-droite : ventile les totaux entre
+  // activités de vol et sol. Le label "Vol" / "Sol" est à x≈427, hors des
+  // COLS_ACTIVITE classiques → parsing dédié. Absent dans les mois sans
+  // activité sol (AF ne rend pas la ligne).
+  const volRow = findRecapRow(page, yRecapMin, 'Vol');
+  const solRow = findRecapRow(page, yRecapMin, 'Sol');
+  if (volRow) totaux.vol = parseRecapBucket(volRow);
+  if (solRow) totaux.sol = parseRecapBucket(solRow);
 
   if (rows.length === 0) warnings.push('Page 2 (Activité) : aucune ligne data détectée');
   return { rows, totaux, summary };
@@ -664,6 +668,31 @@ function findTotalRowBelow(page: PdfPage, yMin: number): PdfItem[] | null {
   if (candidates.length === 0) return null;
   const y = candidates[0].y;
   return page.items.filter(it => Math.abs(it.y - y) < 1.5).sort((a, b) => a.x - b.x);
+}
+
+/** Cherche une row dont une cellule contient exactement `label` au-dessus de
+ *  yMin. Sert au mini-tableau Vol/Sol/Total en bas-droite de la page Décompte
+ *  (le label est à x=420-440, hors COLS_ACTIVITE classiques). */
+function findRecapRow(page: PdfPage, yMin: number, label: 'Vol' | 'Sol'): PdfItem[] | null {
+  const candidates = page.items.filter(it =>
+    it.y > yMin && it.x > 415 && it.x < 450 && it.str.trim() === label,
+  );
+  if (candidates.length === 0) return null;
+  const y = candidates[0].y;
+  return page.items.filter(it => Math.abs(it.y - y) < 1.5).sort((a, b) => a.x - b.x);
+}
+
+function parseRecapBucket(rowItems: PdfItem[]): Omit<Ep4ActiviteTotaux, 'vol' | 'sol'> {
+  const cells = assignToColumns(rowItems, COLS_ACTIVITE_TOTAL);
+  return {
+    h2hc:        parseNum(cells.h2hc),
+    h2hcR:       parseNum(cells.h2hcR),
+    montantHcR:  parseNum(cells.montantHcR),
+    majoNuit:    parseNum(cells.majoNuit),
+    montantNuit: parseNum(cells.montantNuit),
+    majo10:      parseNum(cells.majo10),
+    primeCdb:    parseNum(cells.primeCdb),
+  };
 }
 
 // Colonnes spécifiques à la row "Total" du bas de page 2. Cette row n'a que
@@ -764,7 +793,7 @@ function parseFraisTable(
     // Vraie ligne data : Esc. dep IATA + identifiant alphanumérique (numéro
     // de vol ou code activité sol). Fallback : si numLigne vide, on accepte
     // si une horaire valide est présente.
-    const hasIdent = /^[A-Z0-9]{2,5}$/.test(cells.numLigne);
+    const hasIdent = /^[A-Za-z0-9]{2,5}$/.test(cells.numLigne);
     const hasEscDep = cells.escDep.length === 3;
     const hasHoraire = parseHoraire(cells.horaireDep) != null
                     || parseHoraire(cells.horaireArr) != null;
