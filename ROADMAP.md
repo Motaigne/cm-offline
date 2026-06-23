@@ -36,8 +36,8 @@ Toute nouvelle proposition doit cocher les 4 cases avant d'être codée.
 
 ## 🟠 Offline-first
 
-- [x] **Pull différentiel par mois (skip si serveur inchangé)** — commit `ea33d48` (2026-06-23). Mig 0041 (`pairing_signature.updated_at` + trigger + backfill), action `getMonthsLastModified` (fenêtre {M-1, M} × 4 sources), table Dexie `month_sync_state` v11, `handlePull({force})`, long-press 800 ms = bypass. À valider sur iPad — 1er Pull = full, 2e = ~5s, après édit draft = +1 mois.
-- [x] **POSTs offline non-gated** (2026-06-23). Audit : nav.tsx déjà 100% gaté depuis `a96acbb`. Le vrai non-gated était dans `useAuthGuard` → background `getUser()` polluait la console DevTools. Fix : early return `if (!navigator.onLine) return` au début de l'IIFE background. `pendingOpsCount` confirmé 100% local Dexie, pas un POST.
+- [x] **Pull différentiel par mois (skip si serveur inchangé)** — `ea33d48` (2026-06-23). Validé "tout semble fonctionner".
+- [x] **POSTs offline non-gated** — `1f0ab49` (2026-06-23). `useAuthGuard` background `getUser()` gaté.
 - [ ] **Audit `cache*` wipe-sur-timeout** sur les tables non encore traitées par `fdd1491` (profileVersions/AnnexeRows/A81Overrides/A81YearData OK ; lister les restantes).
 - [ ] **Juillet absent du sync lite** — non reproductible facilement. À creuser quand revu.
 - [ ] **Test wifi captif AF iPad réel** — le test ultime, jamais validé en conditions vol. Validé en simulation SIM travail uniquement.
@@ -45,12 +45,20 @@ Toute nouvelle proposition doit cocher les 4 cases avant d'être codée.
 
 ## 🟠 EP4
 
+- [x] **Flag vert DDA "faux positif AF"** — `57718ad`/`31e4407` (2026-06-23). Validé.
+- [x] **A81 source EP4 si importé** — multiples commits (2026-06-23, voir `project_session_20260623_ep4_a81.md`). Validé.
+- [x] **Parser PDF rows manquantes** (activités sol type SST, vols annulés CDG→CDG, "002T"/"380V") — `19b54c7`+`ecb1a8d`.
+- [x] **Tableau Vol/Sol/Total bas-droite Décompte** — `ecb1a8d`.
+- [x] **Bouton "Supprimer ce mois" EP4** — `fbe109e`.
+- [x] **Bug RU RLS** (`new row violates row-level security`) — `19b54c7` : fallback `addPlanningItem` (draft mort + FK morte) + `scenario_name` au payload.
 - [ ] **Bug rescue serveur** : sig courante censée arriver via `d3b29a7` n'est pas en Dexie chez le user. Sync timeout ? mode planning_only ? SW stale ? Possiblement ajouter un log côté serveur visible client (header de réponse).
 - [ ] **Cleanup Dexie orphelin** : une sig stale cachée sous `target_month=juillet` survit aux sync juin → multi-candidates dans `instCandidates`. Cleanup transversal à étudier (mais risqué).
 - [ ] **Solution durable au skip `stale-instance`** : faire `buildEp4Rotation` shifter les legs par `(override.beginBlockMs - rawFirstLegMs)`. Garantit cohérence même si Dexie a `raw_detail` d'une autre occurrence. Risque : impacts cross-cas (HCV_mois_M, etc.) — test approfondi requis.
 - [ ] **Sigs sans `raw_detail` côté serveur** (ex 4ON BZV) — re-scrape ciblé requis.
 - [ ] **EP4 table complet offline** : seule la ligne Rotation s'affiche en EP4 sur SIM car `raw_detail` pas caché en Dexie (volontaire — ~50-200 kB/sig × 30-50 sigs/mois × N mois = plusieurs MB). Faisable mais non-trivial.
 - [ ] **Refondre `Ep4FraisDeplacementConsolidee` / `HoraireConsolidee` / `DecompteConsolidee`** au format PDF panel (cohérence visuelle avec les tableaux refondus).
+- [ ] **UI annexe : éditer `rotation_zones`** (mig 0042) — 67 rotations seedées depuis le CSV ; pour les ajouts ultérieurs, l'user édite via SQL Studio en attendant.
+- [ ] **SAB="TP" par leg dans calculs MEP** : info présente côté PDF (`r.sab`) et calendrier (`leg.dead_head`), affichée mais pas encore utilisée dans les calculs côté Gantt/EP4.
 
 ## 🟡 Petits chantiers
 
