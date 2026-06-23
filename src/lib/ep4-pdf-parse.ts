@@ -488,11 +488,20 @@ function parseHoraireTable(page: PdfPage, regularFont: string, warnings: string[
   const out: Ep4HoraireRow[] = [];
   let idx = 0;
   for (const rowItems of rowsRaw) {
-    // Filtre : une vraie ligne data doit avoir au moins un numéro de ligne
-    // (4 chiffres, ex "0972") ET un Esc. dep. Sinon on skip (en-tête résiduel,
-    // pied de page).
+    // Filtre : une vraie ligne data doit avoir un Esc. dep IATA (3 chars) ET
+    // un identifiant (numéro de vol OU code activité sol comme "SST", "SOL",
+    // "MED"). On accepte les codes alphanumériques 2-5 chars pour ne pas
+    // skipper les vols annulés (CDG→CDG avec code lettré) ou les activités
+    // sol. Fallback : si numLigne vide, on accepte si on a au moins une
+    // horaire valide (= vraie data, pas un header résiduel).
     const cells = assignToColumns(rowItems, COLS_HORAIRE);
-    const looksLikeRow = /^\d{3,4}$/.test(cells.numLigne) && cells.escDep.length === 3;
+    const hasIdent = /^[A-Z0-9]{2,5}$/.test(cells.numLigne);
+    const hasEscDep = cells.escDep.length === 3;
+    const hasHoraire = parseHoraire(cells.reelDep) != null
+                    || parseHoraire(cells.reelArr) != null
+                    || parseHoraire(cells.progDep) != null
+                    || parseHoraire(cells.progArr) != null;
+    const looksLikeRow = hasEscDep && (hasIdent || hasHoraire);
     if (!looksLikeRow) continue;
 
     const italic = isRowItalic(rowItems, regularFont);
@@ -578,8 +587,13 @@ function parseActiviteTable(
       continue;
     }
 
-    // Une vraie ligne data a une Date (DD/MM/YY) OU un numéro de vol.
-    const looksLikeRow = /^\d{1,2}\/\d{1,2}\/\d{1,2}$/.test(cells.date) && /^\d{3,4}$/.test(cells.numVol);
+    // Vraie ligne data : Date (DD/MM/YY) + identifiant alphanumérique (numéro
+    // de vol ou code activité sol type "SST", "SOL", "MED", "ANN"...). On
+    // accepte aussi date présente sans identifiant si une horaire est lisible
+    // (vols annulés sans num qui gardent date + horaires).
+    const hasDate  = /^\d{1,2}\/\d{1,2}\/\d{1,2}$/.test(cells.date);
+    const hasIdent = /^[A-Z0-9]{2,5}$/.test(cells.numVol);
+    const looksLikeRow = hasDate && (hasIdent || cells.depart.length === 3);
     if (!looksLikeRow) continue;
 
     const italic = isRowItalic(rowItems, regularFont);
@@ -747,8 +761,14 @@ function parseFraisTable(
       };
       continue;
     }
-    // Vraie ligne data : numLigne en chiffres + escDep IATA
-    const looksLikeRow = /^\d{2,4}$/.test(cells.numLigne) && cells.escDep.length === 3;
+    // Vraie ligne data : Esc. dep IATA + identifiant alphanumérique (numéro
+    // de vol ou code activité sol). Fallback : si numLigne vide, on accepte
+    // si une horaire valide est présente.
+    const hasIdent = /^[A-Z0-9]{2,5}$/.test(cells.numLigne);
+    const hasEscDep = cells.escDep.length === 3;
+    const hasHoraire = parseHoraire(cells.horaireDep) != null
+                    || parseHoraire(cells.horaireArr) != null;
+    const looksLikeRow = hasEscDep && (hasIdent || hasHoraire);
     if (!looksLikeRow) continue;
 
     const italic = isRowItalic(rowItems, regularFont);

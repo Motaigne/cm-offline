@@ -43,6 +43,10 @@ type AddPayload = {
   bid_category: BidCategory | null;
   pairing_instance_id?: string | null;
   meta: Json | null;
+  /** Nom du scénario (A/B/C) du draft local — sert au fallback serveur si le
+   *  draft_id est inaccessible (consolidation drafts, suppression). Optionnel
+   *  pour backwards-compat avec les ops déjà en queue avant ce changement. */
+  scenario_name?: 'A' | 'B' | 'C';
 };
 type DeletePayload    = { id: string };
 type UpdatePayload    = { id: string; start_date: string; end_date: string };
@@ -79,6 +83,15 @@ export const PENDING_CHANGED_EVENT = PENDING_EVENT;
 // ─── Enqueue helpers (écriture locale + mise en queue) ───────────────────────
 
 export async function enqueueAdd(item: CalendarItem, draftId: string): Promise<void> {
+  // Lookup du scenario_name (A/B/C) depuis Dexie pour pouvoir fallback côté
+  // serveur si le draft_id est inaccessible (RLS denial — draft consolidé/
+  // supprimé). Sans ce hint, l'op resterait bloquée en queue (cf RU
+  // 2026-06-23 avec badge ambre permanent).
+  const draftRow = await db.drafts.get(draftId);
+  const scenarioName: 'A' | 'B' | 'C' | undefined =
+    draftRow?.name === 'A' || draftRow?.name === 'B' || draftRow?.name === 'C'
+      ? draftRow.name
+      : undefined;
   const payload: AddPayload = {
     id:                  item.id,
     draft_id:            draftId,
@@ -88,6 +101,7 @@ export async function enqueueAdd(item: CalendarItem, draftId: string): Promise<v
     bid_category:        item.bid_category,
     pairing_instance_id: item.pairing_instance_id ?? null,
     meta:                item.meta as Json | null,
+    scenario_name:       scenarioName,
   };
   await db.transaction('rw', db.items, db.sync_queue, async () => {
     await db.items.put({ ...item, draft_id: draftId });

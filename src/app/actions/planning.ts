@@ -82,21 +82,73 @@ export async function addPlanningItem(data: {
   bid_category?: BidCategory | null;
   pairing_instance_id?: string | null;
   meta?: import('@/types/supabase').Json | null;
+  /** Optionnel — fallback : si l'insert échoue par RLS (draft_id mort), on
+   *  utilise ce nom de scénario pour retrouver/créer le draft canonique. */
+  scenario_name?: ScenarioName;
 }) {
   const supabase = await createClient();
-  const { error } = await supabase.from('planning_item').insert(data);
-  if (error) {
-    // 23505 = duplicate PK. L'UUID est généré côté client → une collision
-    // signifie que l'op a déjà été appliquée (crash après INSERT serveur mais
-    // avant suppression de l'op dans la sync_queue Dexie). On traite comme un
-    // succès pour vider la queue et stopper le retry infini.
-    if (error.code === '23505') {
+  // On retire scenario_name du payload INSERT : c'est un champ logique pour le
+  // fallback côté serveur, pas une colonne SQL de planning_item.
+  const { scenario_name, ...insertData } = data;
+  const { error } = await supabase.from('planning_item').insert(insertData);
+  if (!error) {
+    revalidatePath('/');
+    return;
+  }
+
+  // 23505 = duplicate PK. L'UUID est généré côté client → une collision
+  // signifie que l'op a déjà été appliquée (crash après INSERT serveur mais
+  // avant suppression de l'op dans la sync_queue Dexie). On traite comme un
+  // succès pour vider la queue et stopper le retry infini.
+  if (error.code === '23505') {
+    revalidatePath('/');
+    return;
+  }
+
+  // 23503 = foreign key violation. Cas typique : pairing_instance disparue
+  // côté serveur (re-scrape AF qui a fait sortir cette occurrence). L'item
+  // local garde son FK. On retente sans la référence pour ne pas bloquer la
+  // queue ; le calendrier affichera l'item mais sans lien vers le scrape.
+  if (error.code === '23503' && error.message.includes('pairing_instance_id')) {
+    const { error: e2 } = await supabase
+      .from('planning_item')
+      .insert({ ...insertData, pairing_instance_id: null });
+    if (!e2 || e2.code === '23505') {
       revalidatePath('/');
       return;
     }
-    return { error: error.message };
+    return { error: `${error.message} (retry sans pairing_instance_id : ${e2.message})` };
   }
-  revalidatePath('/');
+
+  // RLS denial sur draft_id : le draft local n'existe plus ou n'appartient
+  // plus à l'user (consolidation drafts par mig 0037, suppression manuelle,
+  // legacy). Fallback : on retrouve/crée le draft canonique pour le mois
+  // (= mois de start_date) et le scénario fourni — défaut 'A'.
+  if (error.message.includes('row-level security') || error.code === '42501') {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { error: error.message };
+    const targetMonth = data.start_date.slice(0, 7);
+    const name: ScenarioName = scenario_name ?? 'A';
+    try {
+      const newDraftId = await getOrCreateDraft(user.id, targetMonth, name);
+      if (newDraftId === data.draft_id) {
+        // draft_id était déjà canonique mais inaccessible : on ne peut rien faire de plus.
+        return { error: error.message };
+      }
+      const { error: e3 } = await supabase
+        .from('planning_item')
+        .insert({ ...insertData, draft_id: newDraftId });
+      if (!e3 || e3.code === '23505') {
+        revalidatePath('/');
+        return;
+      }
+      return { error: `${error.message} (retry sur draft canonique ${newDraftId} : ${e3.message})` };
+    } catch (e) {
+      return { error: `${error.message} (fallback draft failed: ${String((e as Error)?.message ?? e)})` };
+    }
+  }
+
+  return { error: error.message };
 }
 
 export async function deletePlanningItem(itemId: string) {
