@@ -11,7 +11,7 @@ const NON_ADMIN_CAP = 50;
 type Phase =
   | { name: 'idle' }
   | { name: 'analyzing' }
-  | { name: 'ready'; total_instances: number; unique_sigs: number; in_db: number; missing: number; missing_instances: number }
+  | { name: 'ready'; total_instances: number; unique_sigs: number; in_db: number; missing: number; missing_instances: number; fictive: { sigs: number; user_items: number } | null }
   | { name: 'scraping'; current: number; total: number; rotation: string }
   | { name: 'done'; snapshot_id: string; signatures: number; instances: number }
   | { name: 'stopped'; current: number; total: number }
@@ -81,6 +81,7 @@ export function ScrapeDialog({
         in_db:             data.in_db,
         missing:           data.missing,
         missing_instances: data.missing_instances ?? 0,
+        fictive:           data.fictive ?? null,
       });
     } catch (err) {
       setPhase({ name: 'error', message: String(err) });
@@ -265,6 +266,18 @@ export function ScrapeDialog({
           {phase.name === 'analyzing' && (
             <div className="flex items-center gap-2 text-sm text-zinc-500">
               <span className="animate-spin">⏳</span> Analyse en cours…
+            </div>
+          )}
+
+          {phase.name === 'ready' && phase.fictive && (
+            <div className="rounded-xl border border-amber-400 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-3 text-xs text-amber-800 dark:text-amber-200 space-y-1">
+              <p className="font-medium">⚠ Snapshot fictif sur ce mois</p>
+              <p>
+                <strong>{phase.fictive.sigs}</strong> rotation{phase.fictive.sigs > 1 ? 's' : ''} de projection ser{phase.fictive.sigs > 1 ? 'ont' : 'a'} supprimée{phase.fictive.sigs > 1 ? 's' : ''} avant le scrape (cleanup automatique).
+                {phase.fictive.user_items > 0 && (
+                  <> <strong>{phase.fictive.user_items}</strong> de tes vols pointent dessus → effacés de ton planning (à ré-ajouter depuis le catalogue après scrape + Pull).</>
+                )}
+              </p>
             </div>
           )}
 

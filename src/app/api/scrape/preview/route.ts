@@ -72,11 +72,15 @@ export async function POST(req: Request) {
   const uniqueSigs     = sigMap.size;
   const totalInstances = monthPairings.length;
 
-  // Snapshot du mois (le plus récent, peu importe le statut).
+  // Snapshot RÉEL du mois (le plus récent). Le fictif est ignoré ici car
+  // `/api/scrape` le nuke en début de run via `cleanup_fictive_snapshots_for_month`
+  // — le compter dans `in_db` ferait apparaître "déjà en DB" des sigs qui vont
+  // être effacées dans la foulée (preview faussement rassurant).
   const { data: snap } = await supabase
     .from('scrape_snapshot')
     .select('id')
     .eq('target_month', `${month}-01`)
+    .eq('is_fictive', false)
     .order('started_at', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -152,11 +156,61 @@ export async function POST(req: Request) {
 
   const missing = Math.max(0, uniqueSigs - inDb);
 
+  // Détecte un snapshot fictif sur le mois — sera nuké par
+  // `cleanup_fictive_snapshots_for_month` au début du scrape. On expose
+  // les compteurs pour afficher un bandeau d'avertissement dans la modale.
+  // `user_items` = planning_item de l'utilisateur courant qui pointent
+  // sur les instances fictives (RLS planning_item = self-only, donc le
+  // count est naturellement scopé). Les vols d'autres users seront aussi
+  // effacés mais on ne les compte pas ici.
+  let fictive: { sigs: number; user_items: number } | null = null;
+  const { data: ficSnap } = await supabase
+    .from('scrape_snapshot')
+    .select('id, unique_signatures')
+    .eq('target_month', `${month}-01`)
+    .eq('is_fictive', true)
+    .order('started_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (ficSnap) {
+    const ficSigs = await fetchAllPaginated<{ id: string }>((from, to) =>
+      supabase
+        .from('pairing_signature')
+        .select('id')
+        .eq('snapshot_id', ficSnap.id)
+        .range(from, to),
+    );
+    const ficSigIds = ficSigs.map(s => s.id);
+    let userItems = 0;
+    if (ficSigIds.length > 0) {
+      const ficInsts = await fetchAllPaginated<{ id: string }>((from, to) =>
+        supabase
+          .from('pairing_instance')
+          .select('id')
+          .in('signature_id', ficSigIds)
+          .range(from, to),
+      );
+      const ficInstIds = ficInsts.map(i => i.id);
+      if (ficInstIds.length > 0) {
+        const { count } = await supabase
+          .from('planning_item')
+          .select('id', { count: 'exact', head: true })
+          .in('pairing_instance_id', ficInstIds);
+        userItems = count ?? 0;
+      }
+    }
+    fictive = {
+      sigs:       ficSnap.unique_signatures ?? ficSigIds.length,
+      user_items: userItems,
+    };
+  }
+
   return Response.json({
     total_instances:   totalInstances,
     unique_sigs:       uniqueSigs,
     in_db:             inDb,
     missing,
     missing_instances: missingInstances,
+    fictive,
   });
 }
