@@ -26,6 +26,7 @@ Toute nouvelle proposition doit cocher les 4 cases avant d'être codée.
 
 ## 🟠 Gantt & UX
 
+- [ ] **Investiguer "5 dates en trop" panneau Rotations Calendrier** — après scrape sept 2026-06-24 : DB = 320 sigs/1065 dates ✓, mais panneau affiche 130 rot/1070 dates (5 dates en trop). Origine probable : rescue d'orphelins `getRotationsForMonth` lignes 193-237 ajoute sigs de M-1 (août) référencées par planning_items spillover. À confirmer en regardant la console (`[getRotationsForMonth] N sig(s) orpheline(s) au snapshot rescued`).
 - [ ] **Pager mois swipe horizontal façon iOS** (revert `6b2d9c7`). Specs détaillées dans `memory/project_session_20260618_ep4_stale.md` :
   - Pré-charge 4 mois adjacents (M → M+3)
   - Translate continu au doigt + snap final
@@ -57,7 +58,7 @@ Toute nouvelle proposition doit cocher les 4 cases avant d'être codée.
 - [ ] **Sigs sans `raw_detail` côté serveur** (ex 4ON BZV) — re-scrape ciblé requis.
 - [ ] **EP4 table complet offline** : seule la ligne Rotation s'affiche en EP4 sur SIM car `raw_detail` pas caché en Dexie (volontaire — ~50-200 kB/sig × 30-50 sigs/mois × N mois = plusieurs MB). Faisable mais non-trivial.
 - [ ] **Refondre `Ep4FraisDeplacementConsolidee` / `HoraireConsolidee` / `DecompteConsolidee`** au format PDF panel (cohérence visuelle avec les tableaux refondus).
-- [ ] **UI annexe : éditer `rotation_zones`** (mig 0042) — 67 rotations seedées depuis le CSV ; pour les ajouts ultérieurs, l'user édite via SQL Studio en attendant.
+- [x] **UI annexe : éditer `rotation_zones`** — `76395db` (2026-06-24). `RotationZonesCard` avec tableau ROT/Zone (pastilles couleur réutilisant `ZONE_COLORS` du A81), recherche, dropdown zone coloré pour ajout/édition, suppression confirmée.
 - [ ] **SAB="TP" par leg dans calculs MEP** : info présente côté PDF (`r.sab`) et calendrier (`leg.dead_head`), affichée mais pas encore utilisée dans les calculs côté Gantt/EP4.
 
 ## 🟡 Petits chantiers
