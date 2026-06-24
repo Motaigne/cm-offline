@@ -464,11 +464,72 @@ export async function cacheRotations(sigs: RotationSignature[], month: string): 
   });
 }
 
+/** Map rot→zone depuis l'annexe `rotation_zones` (mig 0042). Source de vérité
+ *  user-éditable côté /annexe. Utilisée pour overrider `sig.zone` au read-time
+ *  (sinon, le user devrait re-scraper le mois pour propager une zone ajoutée).
+ *  La version la plus récente (max valid_from) est prise.
+ *
+ *  Clé = format `layovers` normalisé (ex "BZV PNR", "LAX PPT LAX"), identique
+ *  à la colonne ROT du CSV source et au format produit par `getZone()` côté
+ *  scraper. */
+export async function loadRotationZonesMapLocal(): Promise<Map<string, string>> {
+  const rows = await db.annexe_rows.toArray();
+  let best: { valid_from: string; data: unknown } | null = null;
+  for (const r of rows) {
+    if (r.slug !== 'rotation_zones') continue;
+    if (!best || r.valid_from > best.valid_from) {
+      best = { valid_from: r.valid_from, data: r.data };
+    }
+  }
+  const map = new Map<string, string>();
+  if (best?.data && typeof best.data === 'object' && 'rotations' in best.data) {
+    const arr = (best.data as { rotations: unknown }).rotations;
+    if (Array.isArray(arr)) {
+      for (const e of arr) {
+        if (e && typeof e === 'object' && 'rot' in e && 'zone' in e) {
+          const rec = e as { rot: unknown; zone: unknown };
+          if (typeof rec.rot === 'string' && typeof rec.zone === 'string') {
+            map.set(rec.rot, rec.zone);
+          }
+        }
+      }
+    }
+  }
+  return map;
+}
+
+/** Override de `sig.zone` via la table annexe `rotation_zones`. Stratégie :
+ *  1. Strip le préfixe "{N}ON " du `rotation_code` → forme layovers seule
+ *     ("4ON BZV PNR" → "BZV PNR") puis lookup exact.
+ *  2. Fallback `first_layover` seul ("BZV").
+ *  3. Sinon, on garde `sig.zone` (calculée au scrape par getZone hardcoded).
+ *  L'annexe a priorité car elle est user-éditable sans re-scrape. */
+function resolveSigZone(
+  sig: { rotation_code: string; first_layover: string | null; zone: string | null },
+  rzMap: Map<string, string>,
+): string | null {
+  if (rzMap.size === 0) return sig.zone;
+  const layoversKey = sig.rotation_code.replace(/^\d+ON\s+/, '');
+  const exact = rzMap.get(layoversKey);
+  if (exact) return exact;
+  if (sig.first_layover) {
+    const fallback = rzMap.get(sig.first_layover);
+    if (fallback) return fallback;
+  }
+  return sig.zone;
+}
+
 export async function loadRotationsFromDB(month: string): Promise<RotationSignature[]> {
-  const stored = await db.rotations.where('target_month').equals(month).toArray();
   // raw_detail n'est plus inclus ici (split en table séparée). Si un consumer
   // en a besoin (EP4 detail), il doit appeler loadRawDetailLocal(sigId).
-  return stored.map(({ target_month: _t, ...sig }) => sig as RotationSignature);
+  const [stored, rzMap] = await Promise.all([
+    db.rotations.where('target_month').equals(month).toArray(),
+    loadRotationZonesMapLocal(),
+  ]);
+  return stored.map(({ target_month: _t, ...sig }) => {
+    const s = sig as RotationSignature;
+    return { ...s, zone: resolveSigZone(s, rzMap) };
+  });
 }
 
 /** Récupère raw_detail pour un sig depuis la table séparée. Null si absent. */
