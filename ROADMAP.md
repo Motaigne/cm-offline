@@ -59,7 +59,9 @@ Toute nouvelle proposition doit cocher les 4 cases avant d'être codée.
 - [ ] **EP4 table complet offline** : seule la ligne Rotation s'affiche en EP4 sur SIM car `raw_detail` pas caché en Dexie (volontaire — ~50-200 kB/sig × 30-50 sigs/mois × N mois = plusieurs MB). Faisable mais non-trivial.
 - [ ] **Refondre `Ep4FraisDeplacementConsolidee` / `HoraireConsolidee` / `DecompteConsolidee`** au format PDF panel (cohérence visuelle avec les tableaux refondus).
 - [x] **UI annexe : éditer `rotation_zones`** — `76395db` (2026-06-24). `RotationZonesCard` avec tableau ROT/Zone (pastilles couleur réutilisant `ZONE_COLORS` du A81), recherche, dropdown zone coloré pour ajout/édition, suppression confirmée.
+- [x] **Override sig.zone via rotation_zones annexe (sans re-scrape)** — `882d2c5` (2026-06-24). `loadRotationsFromDB` charge aussi `rotation_zones` et override `sig.zone` au read-time (strip `{N}ON ` du `rotation_code` → exact, fallback `first_layover`, sinon scrape). Propage à Catalogue/Calendrier/Comparatif/Gantt/Search. Server actions (export legacy, csv-import, /api/scrape) restent sur la table hardcoded `zone-lookup.ts` — à unifier si besoin futur.
 - [ ] **SAB="TP" par leg dans calculs MEP** : info présente côté PDF (`r.sab`) et calendrier (`leg.dead_head`), affichée mais pas encore utilisée dans les calculs côté Gantt/EP4.
+- [ ] **Unifier les 2 sources rot→zone** : `src/lib/scraper/zone-lookup.ts` (TS hardcoded, utilisée au scrape + server actions) vs `annexe.rotation_zones` (DB user-éditable, utilisée par a81-local + override loadRotationsFromDB). Le client est OK depuis `882d2c5`, mais le scrape continue de figer `sig.zone` depuis le hardcoded. Idéal : faire que `getZone()` charge depuis la table annexe au démarrage du scrape. Risque : annexe pas toujours à jour côté serveur au moment du scrape.
 
 ## 🟡 Petits chantiers
 
