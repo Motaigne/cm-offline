@@ -488,6 +488,189 @@ function Article81Card({ table, canEdit }: { table: AnnexeRow; canEdit: boolean 
   );
 }
 
+// ── Zones par rotation (rotation_zones) ───────────────────────────────────────
+type RotationZoneRow = { rot: string; zone: string };
+type RotationZonesData = { version?: string; rotations: RotationZoneRow[] };
+
+function RotationZonesCard({
+  table, canEdit, availableZones,
+}: {
+  table: AnnexeRow;
+  canEdit: boolean;
+  availableZones: string[];
+}) {
+  const router = useRouter();
+  const [, start] = useTransition();
+  const [busy, setBusy] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [newRot, setNewRot] = useState('');
+  const [newZone, setNewZone] = useState(availableZones[0] ?? 'AFR');
+  const [err, setErr] = useState('');
+  const [filter, setFilter] = useState('');
+
+  const data = (table.data as RotationZonesData) ?? { rotations: [] };
+  const rows = Array.isArray(data.rotations) ? data.rotations : [];
+  const sorted = [...rows].sort((a, b) => a.rot.localeCompare(b.rot));
+  const filtered = filter
+    ? sorted.filter(r => r.rot.toLowerCase().includes(filter.toLowerCase()) || r.zone.toLowerCase().includes(filter.toLowerCase()))
+    : sorted;
+
+  async function persist(next: RotationZoneRow[]): Promise<boolean> {
+    setBusy(true);
+    const payload: RotationZonesData = {
+      version: new Date().toISOString().slice(0, 10),
+      rotations: next,
+    };
+    const res = await saveAnnexeTable(table.slug, payload as unknown as Json, table.valid_from);
+    setBusy(false);
+    if (res.error) { setErr(res.error); return false; }
+    return true;
+  }
+
+  function addRow() {
+    const rot = newRot.trim().toUpperCase().replace(/\s+/g, ' ');
+    if (!rot) { setErr('Code rotation requis'); return; }
+    if (rows.some(r => r.rot === rot)) { setErr(`"${rot}" existe déjà`); return; }
+    setErr('');
+    start(async () => {
+      const ok = await persist([...rows, { rot, zone: newZone }]);
+      if (ok) { setNewRot(''); setAdding(false); router.refresh(); }
+    });
+  }
+
+  function removeRow(rot: string) {
+    if (!confirm(`Supprimer "${rot}" ?`)) return;
+    start(async () => {
+      const ok = await persist(rows.filter(r => r.rot !== rot));
+      if (ok) router.refresh();
+    });
+  }
+
+  function updateZone(rot: string, zone: string) {
+    start(async () => {
+      const ok = await persist(rows.map(r => r.rot === rot ? { ...r, zone } : r));
+      if (ok) router.refresh();
+    });
+  }
+
+  return (
+    <Card
+      title={`Zones par rotation (${rows.length})`}
+      table={table}
+      canEdit={canEdit}
+      extraHeader={
+        <input
+          type="search"
+          placeholder="Filtrer…"
+          value={filter}
+          onChange={e => setFilter(e.target.value)}
+          className="w-28 rounded border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-2 py-0.5 text-[10px]"
+        />
+      }
+    >
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs border-collapse">
+          <thead>
+            <tr className="bg-zinc-50 dark:bg-zinc-800/60">
+              <th className="px-3 py-1.5 text-left text-[10px] font-medium text-zinc-400 uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">ROT</th>
+              <th className="px-3 py-1.5 text-left text-[10px] font-medium text-zinc-400 uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700">Zone</th>
+              {canEdit && <th className="w-8 border-b border-zinc-200 dark:border-zinc-700"></th>}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+            {filtered.map(({ rot, zone }, i) => {
+              const c = (ZONE_COLORS[zone] ?? ZONE_COLORS.EUR).th;
+              return (
+                <tr key={rot} className={i % 2 ? 'bg-zinc-50/40 dark:bg-zinc-800/20' : ''}>
+                  <td className="px-3 py-1 font-mono text-zinc-700 dark:text-zinc-200 whitespace-nowrap">{rot}</td>
+                  <td className="px-3 py-1">
+                    {canEdit ? (
+                      <select
+                        value={zone}
+                        onChange={e => updateZone(rot, e.target.value)}
+                        disabled={busy}
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold border-0 outline-none cursor-pointer appearance-none ${c}`}
+                      >
+                        {availableZones.map(z => <option key={z} value={z} className="bg-white text-zinc-900">{z}</option>)}
+                      </select>
+                    ) : (
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${c}`}>{zone}</span>
+                    )}
+                  </td>
+                  {canEdit && (
+                    <td className="px-1 text-center">
+                      <button
+                        onClick={() => removeRow(rot)}
+                        disabled={busy}
+                        className="text-zinc-300 hover:text-red-500 text-base leading-none w-6 h-6"
+                        title="Supprimer"
+                      >×</button>
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+            {filtered.length === 0 && (
+              <tr>
+                <td colSpan={canEdit ? 3 : 2} className="px-3 py-4 text-center text-[10px] text-zinc-400 italic">
+                  {filter ? 'Aucun résultat' : 'Aucune rotation'}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {canEdit && (
+        <div className="px-3 py-2 border-t border-zinc-100 dark:border-zinc-800 flex flex-wrap items-center gap-2">
+          {!adding ? (
+            <button
+              onClick={() => { setAdding(true); setErr(''); }}
+              className="text-[10px] px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200"
+            >
+              + Ajouter
+            </button>
+          ) : (
+            <>
+              <input
+                type="text"
+                value={newRot}
+                onChange={e => setNewRot(e.target.value.toUpperCase())}
+                placeholder="Ex: BZV PNR"
+                autoFocus
+                className="font-mono text-xs px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 w-40 uppercase"
+              />
+              <select
+                value={newZone}
+                onChange={e => setNewZone(e.target.value)}
+                className={`px-2 py-1 rounded text-xs font-bold border-0 outline-none cursor-pointer appearance-none ${(ZONE_COLORS[newZone] ?? ZONE_COLORS.EUR).th}`}
+              >
+                {availableZones.map(z => <option key={z} value={z} className="bg-white text-zinc-900">{z}</option>)}
+              </select>
+              <button
+                onClick={addRow}
+                disabled={busy || !newRot.trim()}
+                className="px-3 py-1 rounded bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 text-[10px] font-semibold disabled:opacity-40"
+              >
+                {busy ? '…' : 'Ajouter'}
+              </button>
+              <button
+                onClick={() => { setAdding(false); setErr(''); setNewRot(''); }}
+                className="px-3 py-1 rounded border border-zinc-200 dark:border-zinc-700 text-[10px] text-zinc-500 hover:text-zinc-700"
+              >
+                Annuler
+              </button>
+              {err && <span className="text-[10px] text-red-500 ml-1">{err}</span>}
+            </>
+          )}
+          {data.version && (
+            <span className="ml-auto text-[10px] text-zinc-400">v{data.version}</span>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // ── Définitions ───────────────────────────────────────────────────────────────
 type DefinitionRow = { terme: string; definition: string; formule: string; is_header?: boolean };
 
@@ -846,7 +1029,7 @@ function DdaRulesCard({ table, canEdit }: { table: AnnexeRow; canEdit: boolean }
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────────
-const KNOWN = ['cat_anciennete', 'coef_classe', 'taux_avion', 'prime_incitation', 'prime_incitation_330', 'traitement_base', 'prorata', 'prime_instruction', 'article_81', 'definitions', 'ir_mf_rates', 'dda_rules', 'vol_p_rules'];
+const KNOWN = ['cat_anciennete', 'coef_classe', 'taux_avion', 'prime_incitation', 'prime_incitation_330', 'traitement_base', 'prorata', 'prime_instruction', 'article_81', 'definitions', 'ir_mf_rates', 'dda_rules', 'vol_p_rules', 'rotation_zones'];
 
 const VERSIONED_SLUGS = new Set(['taux_avion', 'prime_incitation', 'traitement_base', 'prime_instruction']);
 
@@ -878,6 +1061,13 @@ export function AnnexeClient({ rows, canEdit }: { rows: AnnexeRow[]; canEdit: bo
   const volPRules   = latest('vol_p_rules');
   const definitions = latest('definitions');
   const irMfLatest  = latest('ir_mf_rates');
+  const rotZones    = latest('rotation_zones');
+
+  // Zones dispo pour le dropdown : on les prend du tableau Article 81 (source
+  // canonique des libellés/codes zones), en retirant FRA (base, jamais une
+  // destination de rotation).
+  const a81Zones = (a81?.data as Article81Data | null)?.zones ?? [];
+  const rotZonesAvailable = a81Zones.filter(z => z !== 'FRA');
 
   return (
     <div className="max-w-5xl mx-auto p-4 space-y-4">
@@ -922,6 +1112,9 @@ export function AnnexeClient({ rows, canEdit }: { rows: AnnexeRow[]; canEdit: bo
 
       {/* 6. Article 81 */}
       {a81 && <Article81Card table={a81} canEdit={canEdit} />}
+
+      {/* 6b. Zones par rotation (mapping ROT → zone A81) */}
+      {rotZones && <RotationZonesCard table={rotZones} canEdit={canEdit} availableZones={rotZonesAvailable} />}
 
       {/* 7. IR / MF — toujours visible (même si la ligne DB manque) */}
       <IrMfRatesCard
