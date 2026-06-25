@@ -158,6 +158,9 @@
 | `jiRestants` | Jours JI (journées intra) restants | table `prorata` slug | `lookupJI(joursProrata, prorataThresholds)` |
 | `yMax` | Limite max de jours ON affichable | — | `dim − jiRestants − joursProrata` |
 | `dim` | Nombre de jours dans le mois | — | `daysInMonth(year, mo)` |
+| `ddaReposMax` | Durée max d'un bloc DDA repos | table `prorata` slug (`duree_min_opt6`) | `lookupDureeMax(joursProrata, prorataThresholds)` |
+
+> **DDA repos — max auto-calculé** : à l'ouverture de *Jour > DDA repos*, le sélecteur se pré-positionne sur `ddaReposMax` (borne haute dure ; on peut réduire, jamais dépasser). `JP = joursProrata = tafDays + congeDays` → ligne du tableau prorata → `duree_min_opt6` (= max) + `ji_restants` (= JI mensuel restant affiché). `max=0` (JP > 27) ⇒ sélecteur désactivé (quota saturé). Un seul bloc DDA repos par mois : reposer en écrase un existant (avertissement + remplacement). Calcul 100 % local (fallback `PRORATA_FALLBACK` si l'annexe n'est pas encore hydratée).
 
 ---
 

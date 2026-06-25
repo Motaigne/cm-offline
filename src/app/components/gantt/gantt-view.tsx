@@ -184,6 +184,39 @@ function lookupJI(n: number, thresholds: ProrataThreshold[]): number {
   return 0;
 }
 
+/** DDA repos max (= duree_min_opt6) pour un nb de jours de prorata donné.
+ *  Même résolution de plage que lookupJI. */
+function lookupDureeMax(n: number, thresholds: ProrataThreshold[]): number {
+  for (const t of thresholds) {
+    if (t.range.startsWith('>')) {
+      if (n > parseInt(t.range.slice(1))) return t.duree_min_opt6;
+    } else {
+      const [lo, hi] = t.range.split('-').map(Number);
+      if (n >= lo && n <= hi) return t.duree_min_opt6;
+    }
+  }
+  return 0;
+}
+
+// Fallback local des seuils prorata (= valeurs annexe slug='prorata'). Garantit
+// un calcul DDA repos 100 % offline même si l'annexe n'est pas encore hydratée
+// dans IndexedDB (1er boot hors-ligne). Seuls ji_restants / duree_min_opt6 sont
+// consommés par le calcul du max ; duree_min n'y intervient pas.
+const PRORATA_FALLBACK: ProrataThreshold[] = [
+  { range: '0-2',   ji_restants: 11, duree_min: 0, duree_min_opt6: 6 },
+  { range: '3-4',   ji_restants: 10, duree_min: 0, duree_min_opt6: 6 },
+  { range: '5-7',   ji_restants: 9,  duree_min: 0, duree_min_opt6: 6 },
+  { range: '8-9',   ji_restants: 8,  duree_min: 0, duree_min_opt6: 5 },
+  { range: '10-12', ji_restants: 7,  duree_min: 0, duree_min_opt6: 5 },
+  { range: '13-14', ji_restants: 6,  duree_min: 0, duree_min_opt6: 4 },
+  { range: '15-17', ji_restants: 5,  duree_min: 0, duree_min_opt6: 4 },
+  { range: '18-19', ji_restants: 4,  duree_min: 0, duree_min_opt6: 3 },
+  { range: '20-22', ji_restants: 3,  duree_min: 0, duree_min_opt6: 2 },
+  { range: '23-24', ji_restants: 2,  duree_min: 0, duree_min_opt6: 2 },
+  { range: '25-27', ji_restants: 1,  duree_min: 0, duree_min_opt6: 1 },
+  { range: '>27',   ji_restants: 0,  duree_min: 0, duree_min_opt6: 0 },
+];
+
 // ─── prorata mois (rotations à cheval) ───────────────────────────────────────
 
 // Activités qui comptent pour l'Indemnité Transport (IT) :
@@ -1622,12 +1655,42 @@ export function GanttView({
 
   // ── sheet helpers ───────────────────────────────────────────────────────────
 
+  // Seuils prorata : annexe hydratée si dispo, sinon fallback local embarqué
+  // (offline 1er boot). Source unique pour le calcul du DDA repos max.
+  const ddaThresholds = prorataThresholds.length > 0 ? prorataThresholds : PRORATA_FALLBACK;
+
+  /** DDA repos : JP = TAF + congés du scénario → max (duree_min_opt6) + JI
+   *  restants, et bloc DDA repos déjà posé ce mois (un seul autorisé). 100 %
+   *  local — recalculé à chaque appel donc se met à jour si TAF/congés changent
+   *  dans la session. */
+  function computeDdaRepos(scenarioId: string) {
+    const scenario = localScenarios.find(s => s.id === scenarioId);
+    if (!scenario) return null;
+    let congeDays = 0;
+    for (const it of scenario.items) {
+      if (it.kind !== 'conge') continue;
+      const clip = clipItem(it, year, mo);
+      if (clip) congeDays += clip.end - clip.start + 1;
+    }
+    const tafDays = tafOk ? tafDur : 0;
+    const jp = congeDays + tafDays;
+    const max = lookupDureeMax(jp, ddaThresholds);
+    const jiRestants = lookupJI(jp, ddaThresholds);
+    // Bloc DDA repos (kind 'off') déjà présent ce mois, hors spillover M-1.
+    const existing = scenario.items.find(
+      it => it.kind === 'off' && !it._isSpillover && clipItem(it, year, mo) != null,
+    ) ?? null;
+    return { congeDays, tafDays, jp, max, jiRestants, existing };
+  }
+
   function openAdd(scenarioId: string, scenarioName: ScenarioName, date: string) {
     setOverlapErr(false);
     setAddKind('off');
-    // '1' par défaut car le kind initial 'off' (DDA REPOS) utilise désormais
-    // le sélecteur Nb. de jours — sans valeur, le submit serait disabled.
-    setNbJours('1');
+    // DDA REPOS (kind 'off') se pré-positionne sur le max auto-calculé (borne
+    // haute dure). Si max=0 (prorata saturé), '1' par défaut mais sélecteur +
+    // submit désactivés en aval.
+    const calc = computeDdaRepos(scenarioId);
+    setNbJours(calc && calc.max > 0 ? String(calc.max) : '1');
     setAddEnd(date);
     setSheetCategoryMode(false);
     setSheet({ mode: 'add', scenarioId, scenarioName, date });
@@ -1660,7 +1723,13 @@ export function GanttView({
       const end = addDays(sheet.date, tafDur - 1);
       setAddEnd(end);
       setNbJours(String(tafDur));
-    } else if (k === 'conge' || k === 'conge_ss' || k === 'off') {
+    } else if (k === 'off') {
+      // DDA REPOS : se repré-positionne sur le max auto-calculé.
+      const calc = computeDdaRepos(sheet.scenarioId);
+      const days = calc && calc.max > 0 ? calc.max : 1;
+      setNbJours(String(days));
+      setAddEnd(addDays(sheet.date, days - 1));
+    } else if (k === 'conge' || k === 'conge_ss') {
       const days = nbJours ? parseInt(nbJours) : 1;
       setAddEnd(addDays(sheet.date, days - 1));
     } else {
@@ -1678,6 +1747,12 @@ export function GanttView({
   // computed end date for display
   const computedEnd = addKind === 'taf' ? addDays(sheet?.date ?? today, tafDur - 1)
                     : addEnd;
+
+  // DDA repos (kind 'off') : calcul max + JI restants + bloc existant, recalculé
+  // à chaque render (donc à jour si TAF/congés changent dans la session).
+  const ddaCalc = sheet && sheet.mode === 'add' && addKind === 'off'
+    ? computeDdaRepos(sheet.scenarioId)
+    : null;
 
   // ── add / edit submit ───────────────────────────────────────────────────────
 
@@ -1733,6 +1808,15 @@ export function GanttView({
       const id = crypto.randomUUID();
       const newItem: CalendarItem = { id, kind: addKind, start_date: start, end_date: end, bid_category: null, meta: null };
       const scenarioId = sheet.scenarioId;
+      // Un seul bloc DDA repos par mois : si un bloc 'off' existe déjà ce mois,
+      // l'utilisateur a confirmé via le bouton « Remplacer le DDA repos » →
+      // on supprime l'ancien avant de créer le nouveau (max recalculé).
+      if (addKind === 'off' && ddaCalc?.existing) {
+        const oldId = ddaCalc.existing.id;
+        applyDelete(oldId);
+        setPendingCount(c => c + 1);
+        void enqueueDelete(oldId);
+      }
       applyAdd(newItem, scenarioId);
       setSheet(null);
       setPendingCount(c => c + 1);
@@ -2724,22 +2808,56 @@ export function GanttView({
                 {/* Congés / CSS / DDA REPOS : nb de jours via <select> natif —
                     sur iPad PWA standalone, ouvre le wheel picker iOS au lieu
                     du keyboard numérique (cf. demande UX 2026-06-17 PM). */}
-                {(addKind === 'conge' || addKind === 'conge_ss' || addKind === 'off') && (
+                {(addKind === 'conge' || addKind === 'conge_ss' || addKind === 'off') && (() => {
+                  // DDA repos : borne haute dure = max auto-calculé. Sélecteur
+                  // limité 1..max et désactivé si prorata saturé (max=0).
+                  const isOff   = addKind === 'off';
+                  const offMax  = ddaCalc?.max ?? 0;
+                  const optCount = isOff ? offMax : 31;
+                  const selDisabled = isOff && offMax === 0;
+                  return (
                   <div className="flex items-center gap-3">
                     <label className="text-sm text-zinc-600 dark:text-zinc-300 font-medium">Nb. de jours</label>
                     <select
                       value={nbJours || '1'}
                       onChange={e => handleNbJoursChange(e.target.value)}
-                      className="w-20 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-center font-semibold"
+                      disabled={selDisabled}
+                      className="w-20 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-center font-semibold disabled:opacity-40"
                     >
-                      {Array.from({ length: 31 }, (_, i) => i + 1).map(n => (
+                      {Array.from({ length: optCount }, (_, i) => i + 1).map(n => (
                         <option key={n} value={n}>{n}</option>
                       ))}
                     </select>
-                    {nbJours && parseInt(nbJours) >= 1 && (
+                    {!selDisabled && nbJours && parseInt(nbJours) >= 1 && (
                       <span className="text-sm text-zinc-500">
                         → {new Date(computedEnd + 'T00:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}
                       </span>
+                    )}
+                  </div>
+                  );
+                })()}
+
+                {/* DDA repos : mention informative (gris) + cas saturé +
+                    avertissement bloc existant (un seul DDA repos par mois). */}
+                {addKind === 'off' && ddaCalc && (
+                  <div className="space-y-2">
+                    {ddaCalc.max > 0 ? (
+                      <p className="text-xs leading-relaxed text-zinc-400 dark:text-zinc-500 whitespace-pre-line">
+                        {`Max : ${ddaCalc.max} jours\n`}
+                        {`Jours de prorata = ${ddaCalc.tafDays} + ${ddaCalc.congeDays} = ${ddaCalc.jp}\n`}
+                        {`JI mensuel restant = ${ddaCalc.jiRestants}`}
+                      </p>
+                    ) : (
+                      <p className="text-xs leading-relaxed text-amber-600 dark:text-amber-400">
+                        Aucun DDA repos possible : le quota mensuel est saturé
+                        (jours de prorata = {ddaCalc.tafDays} + {ddaCalc.congeDays} = {ddaCalc.jp} &gt; 27,
+                        JI mensuel restant = {ddaCalc.jiRestants}).
+                      </p>
+                    )}
+                    {ddaCalc.max > 0 && ddaCalc.existing && (
+                      <p className="text-xs font-medium text-amber-600 dark:text-amber-400">
+                        ⚠ Le nouveau DDA repos supprimera le DDA repos existant.
+                      </p>
                     )}
                   </div>
                 )}
@@ -2929,9 +3047,12 @@ export function GanttView({
                     </button>
                   </div>
                 ) : (
-                  <button onClick={handleSubmit} disabled={isPending || ((addKind === 'conge' || addKind === 'conge_ss' || addKind === 'off') && !nbJours)}
+                  <button onClick={handleSubmit}
+                    disabled={isPending
+                      || ((addKind === 'conge' || addKind === 'conge_ss' || addKind === 'off') && !nbJours)
+                      || (addKind === 'off' && (ddaCalc?.max ?? 0) === 0)}
                     className="w-full rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-zinc-700 disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900">
-                    Placer
+                    {addKind === 'off' && ddaCalc?.existing ? 'Remplacer le DDA repos' : 'Placer'}
                   </button>
                 )}
                 </>}
