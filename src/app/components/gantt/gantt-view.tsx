@@ -37,6 +37,7 @@ import { computeA81CumulBeforeLocal } from '@/lib/a81-local';
 import { computeFullProfile, getAnnexeDataFromRows, type AnnexeData, type AnnexeRow } from '@/lib/annexe';
 import type { ProfileVersion } from '@/app/actions/profile-version';
 import { computeMonthlyIrMfFromLocalCache } from '@/lib/ir-mf-local';
+import { computeMonthProrationLocal, type MonthProration } from '@/lib/ep4-local';
 import { computeEffectiveRpc, hardBlockerWindow } from '@/lib/rpc';
 import { enqueueAddNote, enqueueUpdateNote, enqueueDeleteNote } from '@/lib/sync-service';
 import { listNotesForMonth, type UserNote } from '@/app/actions/notes';
@@ -251,6 +252,8 @@ function computeItEur(
   return 0;
 }
 
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
 function prorateForMonth(val: number, departAt: string, arriveeAt: string, year: number, mo: number): number {
   const monthStart = Date.UTC(year, mo - 1, 1);
   const monthEnd   = Date.UTC(year, mo,     1);
@@ -282,6 +285,10 @@ function computeStats(
   ksp = KSP,
   fixeRegime = FIXE_MENSUEL,   // fixe proratisé selon nb30e du régime
   fixeTPArg: number | null = null,    // fixe TP (nb30e=30) ; si null → calculé via FIXE_MENSUEL * 30 / nb30eRegime
+  // Proration EP4 par vol (clé = item.id). Si une entrée existe → on prorate
+  // HCr/HC via rtHDV et la nuit via nuitRatio (méthode EP4, heures de vol des
+  // tronçons). Sinon → fallback temps-écoulé `prorateForMonth`.
+  ep4Proration: MonthProration | null = null,
 ) {
   let onDays = 0, congeDays = 0, cssDays = 0;
   const flights = items.filter(i => i.kind === 'flight').length;
@@ -317,7 +324,15 @@ function computeStats(
     let hcr     = typeof m.hcr_crew === 'number' ? m.hcr_crew  as number : 0;
     let hc      = typeof m.hc       === 'number' ? m.hc        as number : 0;
     let tsvNuit = typeof m.tsv_nuit === 'number' ? m.tsv_nuit  as number : 0;
-    if (departAt && arriveeAt) {
+    const prorat = ep4Proration?.get(item.id);
+    if (prorat) {
+      // Méthode EP4 : HCr/HC × rtHDV (heures de vol des tronçons), nuit × nuitRatio.
+      // Pour un vol non à cheval, rtHDV = nuitRatio = 1 → valeurs inchangées.
+      hcr     = round2(hcr     * prorat.rtHDV);
+      hc      = round2(hc      * prorat.rtHDV);
+      tsvNuit = round2(tsvNuit * prorat.nuitRatio);
+    } else if (departAt && arriveeAt) {
+      // Fallback (raw_detail non caché) : proration temps-écoulé.
       hcr     = prorateForMonth(hcr,     departAt, arriveeAt, year, mo);
       hc      = prorateForMonth(hc,      departAt, arriveeAt, year, mo);
       tsvNuit = prorateForMonth(tsvNuit, departAt, arriveeAt, year, mo);
@@ -520,7 +535,7 @@ const REST_H = 6;
 function DraggableBar({
   item, clip, dim, year, mo, onEdit, isDragSource,
   scenarioItems, rpcChevauchement, isFictive = false,
-  pvei = PVEI, ksp = KSP, hasMep = false,
+  pvei = PVEI, ksp = KSP, hasMep = false, prorationRatio = null,
 }: {
   item: CalendarItem;
   clip: { start: number; end: number };
@@ -545,6 +560,9 @@ function DraggableBar({
   /** True si la rotation comporte au moins une MEP (sig.dead_head). Rend un
    *  bandeau magenta translucide en haut du bloc, par-dessus tout. */
   hasMep?: boolean;
+  /** Ratios de proration mensuelle EP4 (rtHDV pour HCr, nuitRatio pour la nuit)
+   *  pour ce vol. null → fallback proration temps-écoulé. */
+  prorationRatio?: { rtHDV: number; nuitRatio: number } | null;
 }) {
   const readOnly = !!item._isSpillover;
   // RPC-only spillover : vol dont le corps est en M-1 et dont la queue RPC
@@ -572,12 +590,16 @@ function DraggableBar({
   const beginActAt   = typeof metaObj?.scheduled_begin_activity_at === 'string' ? metaObj.scheduled_begin_activity_at as string : null;
   const tsvNuit      = typeof metaObj?.tsv_nuit === 'number' ? metaObj.tsv_nuit as number : 0;
 
-  const hcrDisplay = hcrCrew !== null && departAt && arriveeAt
-    ? prorateForMonth(hcrCrew, departAt, arriveeAt, year, mo)
-    : hcrCrew;
-  const tsvDisplay = departAt && arriveeAt
-    ? prorateForMonth(tsvNuit, departAt, arriveeAt, year, mo)
-    : tsvNuit;
+  // Proration : méthode EP4 (rtHDV/nuitRatio) si dispo, sinon temps-écoulé.
+  // rtHDV = 1 pour un vol non à cheval → valeur affichée inchangée.
+  const hcrDisplay = hcrCrew === null
+    ? null
+    : prorationRatio
+      ? round2(hcrCrew * prorationRatio.rtHDV)
+      : (departAt && arriveeAt ? prorateForMonth(hcrCrew, departAt, arriveeAt, year, mo) : hcrCrew);
+  const tsvDisplay = prorationRatio
+    ? round2(tsvNuit * prorationRatio.nuitRatio)
+    : (departAt && arriveeAt ? prorateForMonth(tsvNuit, departAt, arriveeAt, year, mo) : tsvNuit);
   const isProrated = hcrDisplay !== null && hcrCrew !== null && hcrDisplay < hcrCrew - 0.01;
   const euroVal    = item.kind === 'flight' && hcrDisplay !== null
     ? rotationValue(hcrDisplay, prime, tsvDisplay, pvei, ksp) : null;
@@ -1032,6 +1054,13 @@ export function GanttView({
   }));
   const [a81CumulBeforeState, setA81CumulBeforeState] = useState(a81CumulBefore);
 
+  // Proration mensuelle EP4 par vol (clé = item.id) : rtHDV (HCr/HC) + nuitRatio
+  // (majo nuit). Aligne la proration des vols à cheval du Calendrier sur la
+  // méthode EP4 (par heures de vol des tronçons, escale exclue) au lieu de la
+  // proration temps-écoulé de `prorateForMonth`. Vide par défaut → fallback
+  // temps-écoulé tant que le cache rotations (raw_detail) n'est pas chargé.
+  const [ep4Proration, setEp4Proration] = useState<MonthProration>(() => new Map());
+
   // Resync depuis les props quand le serveur renvoie de nouvelles valeurs
   // (router.refresh après Sync / mount initial sur un autre mois via URL).
   useEffect(() => {
@@ -1188,6 +1217,25 @@ export function GanttView({
     void refreshIrMf(localScenarios, currentMonth, () => cancelled);
     return () => { cancelled = true; };
   }, [localScenarios, currentMonth, refreshIrMf]);
+
+  // Proration EP4 (rtHDV + nuitRatio) recalculée depuis le cache rotations à
+  // chaque changement de mois ou d'items. Offline. Si le cache raw_detail est
+  // vide (vol jamais synchronisé) → map sans l'entrée → fallback temps-écoulé.
+  const refreshEp4Proration = useCallback(
+    async (m: string, isStale: () => boolean) => {
+      try {
+        const map = await computeMonthProrationLocal(m);
+        if (isStale()) return;
+        setEp4Proration(map);
+      } catch { /* erreur Dexie : on garde la map courante */ }
+    },
+    [],
+  );
+  useEffect(() => {
+    let cancelled = false;
+    void refreshEp4Proration(currentMonth, () => cancelled);
+    return () => { cancelled = true; };
+  }, [localScenarios, currentMonth, refreshEp4Proration]);
 
   // Cumul A81 (Jan→M-1) recalculé client-side depuis Dexie. Sans cet effet,
   // l'offline (et la navigation client-side) garde a81CumulBeforeState à 0,
@@ -1609,9 +1657,11 @@ export function GanttView({
     if (myToken !== navTokenRef.current) return;
     if (cached) {
       setLocalScenarios(cached);
-      // IR/MF recalculé depuis le cache rotations (offline) dès le 1er render du
-      // nouveau mois → le BRUT inclut IR/MF immédiatement, pas de flash.
+      // IR/MF + proration EP4 recalculés depuis le cache rotations (offline) dès
+      // le 1er render du nouveau mois → BRUT et PV des vols à cheval corrects
+      // immédiatement, pas de flash.
       void refreshIrMf(cached, newMonth, () => myToken !== navTokenRef.current);
+      void refreshEp4Proration(newMonth, () => myToken !== navTokenRef.current);
       setMonthLoading(false);
     } else {
       // Pas de cache : là on remet IR/MF à blanc (pas de valeurs à montrer, et
@@ -2183,6 +2233,7 @@ export function GanttView({
                 finBaseState?.ksp  ?? KSP,
                 finBaseState?.fixe ?? FIXE_MENSUEL,
                 finBaseState?.fixeTP ?? null,
+                ep4Proration,
               );
               const isLast = idx === localScenarios.length - 1;
               const tafDays      = tafOk ? tafDur : 0;
@@ -2376,6 +2427,7 @@ export function GanttView({
                           pvei={finBaseState?.pvei ?? PVEI}
                           ksp={finBaseState?.ksp ?? KSP}
                           hasMep={hasMep}
+                          prorationRatio={ep4Proration.get(item.id) ?? null}
                         />
                       );
                     })}

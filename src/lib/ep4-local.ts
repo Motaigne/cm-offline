@@ -283,6 +283,38 @@ export async function loadEp4ForMonthLocal(month: string): Promise<Ep4LocalResul
   return { data: result, skipped };
 }
 
+/** Ratios de proration mensuelle EP4 par vol (clé = flight_item_id) :
+ *   - `rtHDV`     : Σ(HCV tronçon × ms_du_tronçon_dans_M / ms_du_tronçon) / Σ(HCV)
+ *                   → proration des HCr/HC par heures de vol des tronçons (escale
+ *                   au sol EXCLUE). C'est la méthode EP4 officielle.
+ *   - `nuitRatio` : tsv_n_rot_m / Σ(tsv_nuit des services NON-MEP). Proration de
+ *                   la majo nuit selon le mois où chaque service tombe.
+ *  Pour un vol entièrement dans le mois, les deux ratios valent 1 (aucun
+ *  changement vs aujourd'hui). Ils ne diffèrent que pour les vols à cheval. */
+export type MonthProration = Map<string, { rtHDV: number; nuitRatio: number }>;
+
+/** Construit la map de proration mensuelle EP4 depuis le cache Dexie (offline).
+ *  Réutilise `loadEp4ForMonthLocal` (même filtrage scénarios + spillovers). Les
+ *  vols sans entrée (raw_detail non caché) ne sont pas dans la map → l'appelant
+ *  retombe sur la proration temps-écoulé. */
+export async function computeMonthProrationLocal(month: string): Promise<MonthProration> {
+  const map: MonthProration = new Map();
+  const res = await loadEp4ForMonthLocal(month);
+  if (!res) return map;
+  for (const s of res.data.scenarios) {
+    for (const f of s.flights) {
+      const ep4 = f.ep4;
+      // Nuit pleine = somme des services NON-MEP (computeTsvNSerM ignore les MEP),
+      // pour que nuitRatio vaille exactement 1 sur un vol non à cheval.
+      const fullNuit = ep4.services.reduce(
+        (acc, svc) => acc + (svc.has_dead_head ? 0 : svc.tsv_nuit), 0);
+      const nuitRatio = fullNuit > 0 ? ep4.tsv_n_rot_m / fullNuit : 1;
+      map.set(f.flight_item_id, { rtHDV: ep4.rtHDV, nuitRatio });
+    }
+  }
+  return map;
+}
+
 /** Charge raw_detail + taux_app + irRates pour une signature donnée depuis
  *  Dexie. Mirroir client de `getEp4Detail` (utilisé par le panneau détail du
  *  /comparatif). Retourne soit la data, soit un objet `{ reason }` taggué qui
