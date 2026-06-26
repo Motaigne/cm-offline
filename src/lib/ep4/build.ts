@@ -316,8 +316,19 @@ export function buildEp4Rotation(
     const HCVr           = r2((hv100r_normal + hv100r_mep / 2) * CMT);
     const H1r            = r2(Math.max(HCVr, HCT));
 
+    // HCVmoisM par tronçon : on répartit le HCV du SERVICE au prorata du temps
+    // de vol pondéré de chaque tronçon (½ si MEP), puis on prorate par le mois.
+    // Sans cette répartition, chaque tronçon recevait le HCV PLEIN du service →
+    // `sumHcvMoisM` comptait n_tronçons × HCV pour un service multi-tronçons,
+    // d'où rtHDV > 1 (ex. service bi-tronçon BZV-PNR-CDG : rtHDV ≈ 1,5 et la
+    // valeur de la rotation gonflée d'autant). La somme des parts vaut le HCV du
+    // service ; pour un service mono-tronçon, la part vaut 1 → comportement
+    // identique à avant.
+    const svcTdvWeighted = tdv_normal + tdv_mep / 2; // = HCV / CMT
     for (const leg of legs) {
-      leg.hcv_mois_m = prorateHcvMoisM(leg.begin_ms, leg.end_ms, HCV, monthStart, monthEnd);
+      const legWeight = leg.dead_head ? leg.tdv_troncon / 2 : leg.tdv_troncon;
+      const legHcv = svcTdvWeighted > 0 ? HCV * (legWeight / svcTdvWeighted) : 0;
+      leg.hcv_mois_m = prorateHcvMoisM(leg.begin_ms, leg.end_ms, legHcv, monthStart, monthEnd);
     }
 
     const block_block = svc.legs.length
