@@ -205,6 +205,31 @@ export function buildEp4Rotation(
   },
 ): Ep4Rotation {
   const rawServices = extractServices(detail);
+
+  // Recalage des dates de tronçon sur l'instance réelle. Une `pairing_signature`
+  // (clé = activity_number + nb_on_days) stocke UN seul `raw_detail`, partagé par
+  // toutes les occurrences de la rotation : ses dates de tronçon peuvent provenir
+  // d'une AUTRE date que celle réellement jouée (mêmes heures, mauvaises dates →
+  // feuille horaire ET découpe mensuelle HCVmoisM/rtHDV faussées, ex. un SCL du
+  // 31/07→01/08 affiché 10→11). Quand l'instance fournit son vrai block-off
+  // (`depart_at` via `beginBlockMs`), on décale TOUS les tronçons du même écart
+  // pour les remettre aux bonnes dates — structure, durées et heures préservées.
+  // Si raw_detail est déjà à la bonne date, l'écart est nul (no-op).
+  const rawFirstDep = rawServices[0]?.legs[0]?.dep_ms ?? null;
+  const legShiftMs = (instanceOverride?.beginBlockMs != null && rawFirstDep != null)
+    ? instanceOverride.beginBlockMs - rawFirstDep
+    : 0;
+  if (legShiftMs !== 0) {
+    for (const svc of rawServices) {
+      svc.begin_ms += legShiftMs;
+      svc.end_ms   += legShiftMs;
+      for (const leg of svc.legs) {
+        leg.dep_ms += legShiftMs;
+        leg.arr_ms += legShiftMs;
+      }
+    }
+  }
+
   const pv0 = detail.pairingValue?.[0];
 
   const HDV       = pv0?.flightTime ?? 0;
