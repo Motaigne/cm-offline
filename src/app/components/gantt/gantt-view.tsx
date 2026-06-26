@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useTransition, useRef, useMemo, useSyncExternalStore } from 'react';
+import { useState, useEffect, useCallback, useTransition, useRef, useMemo, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -1159,28 +1159,35 @@ export function GanttView({
     primeIncitationUnit, primeA330, primeInstruction,
   ]);
 
-  // Recalcul IR/MF local à chaque changement de mois ou d'items (add / delete /
-  // edit). Lecture depuis le cache rotations IndexedDB (mois M + M-1 spillovers),
-  // donc fonctionne offline. Le calcul par signature est pré-fait au scrape.
-  // Si le cache est vide pour ce mois (premier accès, jamais Sync) → on garde
-  // l'état précédent (prop initiale serveur ou valeur post-fetch).
-  useEffect(() => {
-    let cancelled = false;
-    void computeMonthlyIrMfFromLocalCache(localScenarios, currentMonth)
-      .then(res => {
-        if (cancelled) return;
+  // Recalcul IR/MF local depuis le cache rotations IndexedDB (mois M + M-1
+  // spillovers), offline. Le calcul par signature est pré-fait au scrape. Si le
+  // cache est vide pour ce mois (premier accès, jamais Sync) → on garde l'état
+  // précédent (prop initiale serveur ou valeur post-fetch). `isStale` permet
+  // d'annuler une résolution périmée (effet annulé ou changeMonth plus récent).
+  const refreshIrMf = useCallback(
+    async (scs: Scenario[], m: string, isStale: () => boolean) => {
+      try {
+        const res = await computeMonthlyIrMfFromLocalCache(scs, m);
+        if (isStale()) return;
         // Distingue "pas d'items" (résultat valide à 0) de "items mais cache
-        // rotations vide" (où on ne veut pas écraser la prop serveur).
-        const flightItems = localScenarios.flatMap(s =>
+        // rotations vide" (où on ne veut pas écraser la valeur courante).
+        const flightItems = scs.flatMap(s =>
           s.items.filter(i => i.kind === 'flight' && i.pairing_instance_id),
         ).length;
         const totalSkipped = res.byScenario.A.skipped + res.byScenario.B.skipped + res.byScenario.C.skipped;
         if (flightItems > 0 && totalSkipped === flightItems) return; // tout skipped → cache vide
         setIrMfState({ byScenario: res.byScenario, perFlightByScenario: res.perFlightByScenario });
-      })
-      .catch(() => { /* erreur Dexie : on garde l'état courant */ });
+      } catch { /* erreur Dexie : on garde l'état courant */ }
+    },
+    [],
+  );
+
+  // Recalcul à chaque changement de mois ou d'items (add / delete / edit).
+  useEffect(() => {
+    let cancelled = false;
+    void refreshIrMf(localScenarios, currentMonth, () => cancelled);
     return () => { cancelled = true; };
-  }, [localScenarios, currentMonth]);
+  }, [localScenarios, currentMonth, refreshIrMf]);
 
   // Cumul A81 (Jan→M-1) recalculé client-side depuis Dexie. Sans cet effet,
   // l'offline (et la navigation client-side) garde a81CumulBeforeState à 0,
@@ -1590,9 +1597,11 @@ export function GanttView({
     localStorage.setItem('cm-selected-month', newMonth);
     window.history.replaceState(null, '', `/?m=${newMonth}`);
 
-    // IR/MF + A81 cumul : reset à blanc pour ne pas afficher les valeurs du
-    // mois précédent en attendant le re-fetch (et restent à blanc si offline).
-    setIrMfState({ byScenario: undefined, perFlightByScenario: undefined });
+    // A81 cumul : reset (recalculé par l'effet dédié). IR/MF : on NE le remet
+    // PAS à blanc ici — sinon le BRUT « flashe » une valeur basse (sans IR/MF)
+    // le temps que l'effet le recalcule, d'où l'oscillation de la valeur totale
+    // observée au next/previous. On le recalcule directement depuis le cache
+    // rotations avec les scénarios cache-first ci-dessous → BRUT stable.
     setA81CumulBeforeState({ A: 0, B: 0, C: 0 });
 
     // 1. Cache-first : affichage immédiat depuis IndexedDB si dispo
@@ -1600,8 +1609,14 @@ export function GanttView({
     if (myToken !== navTokenRef.current) return;
     if (cached) {
       setLocalScenarios(cached);
+      // IR/MF recalculé depuis le cache rotations (offline) dès le 1er render du
+      // nouveau mois → le BRUT inclut IR/MF immédiatement, pas de flash.
+      void refreshIrMf(cached, newMonth, () => myToken !== navTokenRef.current);
       setMonthLoading(false);
     } else {
+      // Pas de cache : là on remet IR/MF à blanc (pas de valeurs à montrer, et
+      // on évite de garder celles du mois précédent jusqu'au re-fetch).
+      setIrMfState({ byScenario: undefined, perFlightByScenario: undefined });
       setMonthLoading(true);
     }
 
@@ -1730,8 +1745,11 @@ export function GanttView({
       setNbJours(String(days));
       setAddEnd(addDays(sheet.date, days - 1));
     } else if (k === 'conge' || k === 'conge_ss') {
-      const days = nbJours ? parseInt(nbJours) : 1;
-      setAddEnd(addDays(sheet.date, days - 1));
+      // Congés / CSS : valeur par défaut 1 jour. On ne reprend pas la valeur de
+      // l'état précédent (qui peut être le max DDA repos pré-positionné à
+      // l'ouverture), sinon Congés/CSS hériteraient à tort de ce max.
+      setNbJours('1');
+      setAddEnd(sheet.date);
     } else {
       setAddEnd(sheet.date);
     }
