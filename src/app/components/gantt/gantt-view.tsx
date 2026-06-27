@@ -1724,28 +1724,31 @@ export function GanttView({
   // (offline 1er boot). Source unique pour le calcul du DDA repos max.
   const ddaThresholds = prorataThresholds.length > 0 ? prorataThresholds : PRORATA_FALLBACK;
 
-  /** DDA repos : JP = TAF + congés du scénario → max (duree_min_opt6) + JI
+  /** DDA repos : JP = TAF + congés + CSS du scénario → max (duree_min_opt6) + JI
    *  restants, et bloc DDA repos déjà posé ce mois (un seul autorisé). 100 %
-   *  local — recalculé à chaque appel donc se met à jour si TAF/congés changent
-   *  dans la session. */
+   *  local — recalculé à chaque appel donc se met à jour si TAF/congés/CSS
+   *  changent dans la session. Le CSS (congé sans solde) est un jour non
+   *  travaillé → il réduit les jours dispo, au même titre que les congés. */
   function computeDdaRepos(scenarioId: string) {
     const scenario = localScenarios.find(s => s.id === scenarioId);
     if (!scenario) return null;
-    let congeDays = 0;
+    let congeDays = 0, cssDays = 0;
     for (const it of scenario.items) {
-      if (it.kind !== 'conge') continue;
-      const clip = clipItem(it, year, mo);
-      if (clip) congeDays += clip.end - clip.start + 1;
+      const clip = (it.kind === 'conge' || it.kind === 'conge_ss') ? clipItem(it, year, mo) : null;
+      if (!clip) continue;
+      const days = clip.end - clip.start + 1;
+      if (it.kind === 'conge')    congeDays += days;
+      else                        cssDays   += days;
     }
     const tafDays = tafOk ? tafDur : 0;
-    const jp = congeDays + tafDays;
+    const jp = congeDays + cssDays + tafDays;
     const max = lookupDureeMax(jp, ddaThresholds);
     const jiRestants = lookupJI(jp, ddaThresholds);
     // Bloc DDA repos (kind 'off') déjà présent ce mois, hors spillover M-1.
     const existing = scenario.items.find(
       it => it.kind === 'off' && !it._isSpillover && clipItem(it, year, mo) != null,
     ) ?? null;
-    return { congeDays, tafDays, jp, max, jiRestants, existing };
+    return { congeDays, cssDays, tafDays, jp, max, jiRestants, existing };
   }
 
   function openAdd(scenarioId: string, scenarioName: ScenarioName, date: string) {
@@ -2237,7 +2240,9 @@ export function GanttView({
               );
               const isLast = idx === localScenarios.length - 1;
               const tafDays      = tafOk ? tafDur : 0;
-              const joursProrata = stats.congeDays + tafDays;
+              // CSS (congé sans solde) = jour non travaillé → compte dans les
+              // jours de prorata au même titre que les congés et le TAF.
+              const joursProrata = stats.congeDays + stats.cssDays + tafDays;
               const jiRestants   = prorataThresholds.length > 0 ? lookupJI(joursProrata, prorataThresholds) : -1;
               const yMax         = jiRestants >= 0 ? dim - jiRestants - joursProrata : -1;
               const isDetailOpen = detailPanel?.name === scenario.name;
@@ -2914,13 +2919,13 @@ export function GanttView({
                     {ddaCalc.max > 0 ? (
                       <p className="text-xs leading-relaxed text-zinc-400 dark:text-zinc-500 whitespace-pre-line">
                         {`Max : ${ddaCalc.max} jours\n`}
-                        {`Jours de prorata = ${ddaCalc.tafDays} + ${ddaCalc.congeDays} = ${ddaCalc.jp}\n`}
+                        {`Jours de prorata = ${ddaCalc.tafDays} (TAF) + ${ddaCalc.congeDays} (congés) + ${ddaCalc.cssDays} (CSS) = ${ddaCalc.jp}\n`}
                         {`JI mensuel restant = ${ddaCalc.jiRestants}`}
                       </p>
                     ) : (
                       <p className="text-xs leading-relaxed text-amber-600 dark:text-amber-400">
                         Aucun DDA repos possible : le quota mensuel est saturé
-                        (jours de prorata = {ddaCalc.tafDays} + {ddaCalc.congeDays} = {ddaCalc.jp} &gt; 27,
+                        (jours de prorata = {ddaCalc.tafDays} (TAF) + {ddaCalc.congeDays} (congés) + {ddaCalc.cssDays} (CSS) = {ddaCalc.jp} &gt; 27,
                         JI mensuel restant = {ddaCalc.jiRestants}).
                       </p>
                     )}

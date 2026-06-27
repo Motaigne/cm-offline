@@ -152,7 +152,7 @@
 
 | Mon terme | Définition | Source | Formule |
 |-----------|------------|--------|---------|
-| `joursProrata` | Jours non travaillés à déduire | — | `congeDays + tafDays` |
+| `joursProrata` | Jours non travaillés à déduire | — | `congeDays + cssDays + tafDays` (CSS = congé sans solde, jour non travaillé) |
 | `tafDays` | Jours TAF du mois | selon `tafOk` | `tafOk ? getTafDuration(regime) : 0` |
 | `tafOk` | TAF disponible ce mois | régime + mois | `isTafAvailable(regime, currentMonth)` *(false en juillet/août pour TAF\*_10_12)* |
 | `jiRestants` | Jours JI (journées intra) restants | table `prorata` slug | `lookupJI(joursProrata, prorataThresholds)` |
@@ -160,7 +160,7 @@
 | `dim` | Nombre de jours dans le mois | — | `daysInMonth(year, mo)` |
 | `ddaReposMax` | Durée max d'un bloc DDA repos | table `prorata` slug (`duree_min_opt6`) | `lookupDureeMax(joursProrata, prorataThresholds)` |
 
-> **DDA repos — max auto-calculé** : à l'ouverture de *Jour > DDA repos*, le sélecteur se pré-positionne sur `ddaReposMax` (borne haute dure ; on peut réduire, jamais dépasser). `JP = joursProrata = tafDays + congeDays` → ligne du tableau prorata → `duree_min_opt6` (= max) + `ji_restants` (= JI mensuel restant affiché). `max=0` (JP > 27) ⇒ sélecteur désactivé (quota saturé). Un seul bloc DDA repos par mois : reposer en écrase un existant (avertissement + remplacement). Calcul 100 % local (fallback `PRORATA_FALLBACK` si l'annexe n'est pas encore hydratée).
+> **DDA repos — max auto-calculé** : à l'ouverture de *Jour > DDA repos*, le sélecteur se pré-positionne sur `ddaReposMax` (borne haute dure ; on peut réduire, jamais dépasser). `JP = joursProrata = tafDays + congeDays + cssDays` → ligne du tableau prorata → `duree_min_opt6` (= max) + `ji_restants` (= JI mensuel restant affiché). `max=0` (JP > 27) ⇒ sélecteur désactivé (quota saturé). Un seul bloc DDA repos par mois : reposer en écrase un existant (avertissement + remplacement). Calcul 100 % local (fallback `PRORATA_FALLBACK` si l'annexe n'est pas encore hydratée).
 
 ---
 
