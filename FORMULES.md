@@ -28,6 +28,7 @@
 | — | `fullPrime` | Mois "temps plein" (juillet/août, TAF*_10_12) | `true` si TAF7/10_10_12 et mois ∈ {7,8} |
 | — | `nb30eForFin` | 30e utilisés pour les calculs financiers | `fullPrime ? 30 : nb30eEff` |
 | — | `fixeForFin` | Fixe mensuel effectif | `fullPrime ? FIXE_MENSUEL × 30/nb30eRégime : FIXE_MENSUEL` |
+| — | `fixeCss` | Fixe abattu du CSS (jours sans solde) | `fixeForFin × (nb30eR − cssDays) / nb30eR` — **chaque jour de CSS retire un 30e du fixe** ; les congés (payés) n'abattent PAS le fixe |
 
 > **En juillet/août pour TAF\*_10_12** : le pilote est traité "temps plein" (pas de TAF) — FIXE et MGA basculent sur la base 30/30. La variable `tafOk` (dispo TAF) est `false` pour ces mois-là. ???Et si on utilise ma nouvelle défnition de Fixe???
 

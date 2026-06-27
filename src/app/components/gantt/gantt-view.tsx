@@ -400,9 +400,9 @@ function computeStats(
     totalA81 += montant;
   }
   const totalA81Net = totalA81 * 0.82;
-  // nb30eEff = nb30eR − CSS − congés classiques. Seul MGA (et hsSeuil, par
-  // construction dans monthlyFinancialsP) dépendent de nb30eEff. Le fixe et
-  // les primes (A330, Instruction) ne sont PAS abattus par CSS ni congés.
+  // nb30eEff = nb30eR − CSS − congés classiques. MGA + hsSeuil (via
+  // monthlyFinancialsP) en dépendent. Les primes (A330, Instruction) ne sont PAS
+  // abattues. Le FIXE, lui, est abattu UNIQUEMENT par le CSS (voir plus bas).
   const nb30eRegime = REGIME_NB30E[regime] ?? NB_30E;
   const fullPrime   = isFullPrimeMonth(regime, mo);
   const nb30eR      = fullPrime ? 30 : nb30eRegime;
@@ -412,10 +412,13 @@ function computeStats(
   // = FIXE_MENSUEL * 30 / nb30eRegime.
   const fixeTPVal   = fixeTPArg ?? (nb30eRegime > 0 ? FIXE_MENSUEL * 30 / nb30eRegime : FIXE_MENSUEL);
   const fixeForFin  = fullPrime ? fixeTPVal : fixeRegime;
+  // CSS (congé sans solde) = jour non payé → chaque jour retire un 30e du fixe.
+  // Les congés (payés) n'abattent PAS le fixe (réglés via congeEur séparément).
+  const fixeCss     = nb30eR > 0 ? fixeForFin * Math.max(0, nb30eR - cssDays) / nb30eR : 0;
   // Calcul mensuel complet : HS (fixe + vol), MGA, DIF, total — cf finance.ts.
   // total = fixe + pv + hs + dif (hors primes — primes mensuelles fixes ajoutées
   // dans le brut plus bas via primesTotal).
-  const finBase = monthlyFinancialsP(totalHcr, totalHc, totalPrime, totalTsvNuit, { pvei, ksp, fixe: fixeForFin, nb30e: nb30eEff });
+  const finBase = monthlyFinancialsP(totalHcr, totalHc, totalPrime, totalTsvNuit, { pvei, ksp, fixe: fixeCss, nb30e: nb30eEff });
   // PRIME = bi-tronçon (sommée par vol via finBase.primes) + primes mensuelles
   // fixes (incit + A330 + instruction + Mai + Noël). monthlyFixedPrimes est calculé
   // en amont avec proration régime + boost 100% en juillet/août pour TAF*_10_12.
@@ -2325,12 +2328,9 @@ export function GanttView({
                         const rect  = rowEl?.getBoundingClientRect() ?? e.currentTarget.getBoundingClientRect();
                         const pveiEff   = finBaseState?.pvei ?? PVEI;
                         const kspEff    = finBaseState?.ksp  ?? KSP;
-                        const fixeReg   = finBaseState?.fixe ?? FIXE_MENSUEL;
                         const pvHcrEur  = stats.totalHcr * pveiEff * kspEff;
                         const pvNuitEur = (stats.totalTsvNuit / 2) * pveiEff * kspEff;
                         const nb30eReg2 = REGIME_NB30E[effRegime] ?? NB_30E;
-                        const fixeTPEff = finBaseState?.fixeTP ?? (nb30eReg2 > 0 ? FIXE_MENSUEL * 30 / nb30eReg2 : FIXE_MENSUEL);
-                        const fixeFF    = isFullPrimeMonth(effRegime, mo) ? fixeTPEff : fixeReg;
                         const bitroncon = stats.totalPrime * 2.5 * pveiEff;
                         const boost     = isFullPrimeMonth(effRegime, mo) && nb30eReg2 > 0 ? 30 / nb30eReg2 : 1;
                         setDetailPanel({
@@ -2343,7 +2343,7 @@ export function GanttView({
                           totalHc: stats.totalHc, seuil75: stats.hsSeuil,
                           hsH: stats.hsH, hsEur: stats.fin.hs,
                           hsFixeRate: stats.hsFixeRate, hsVolRate: stats.hsVolRate,
-                          fixeForFin: fixeFF,
+                          fixeForFin: stats.fin.fixe, // déjà abattu du CSS (cf computeStats)
                           totalNew: stats.fin.total, mga: stats.fin.mga, diff: stats.fin.diff,
                           pveiEff, kspEff, nb30eEff: stats.nb30eEff,
                           totalPrime: stats.totalPrime, bitronconEur: bitroncon,
