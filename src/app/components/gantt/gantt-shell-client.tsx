@@ -12,7 +12,12 @@ import { GanttView } from '@/app/components/gantt/gantt-view';
 import { computeFullProfile, type AnnexeData } from '@/lib/annexe';
 import { REGIME_NB30E } from '@/lib/finance';
 import { getScenariosWithItems } from '@/app/actions/planning';
-import { hydrateDB } from '@/lib/local-db';
+import { hydrateDB, wipeAllLocalData } from '@/lib/local-db';
+
+// Clé localStorage : id du dernier utilisateur connecté sur cet appareil.
+// Sert à détecter un changement de compte → wipe du cache local (IndexedDB est
+// partagé par origine, pas par utilisateur).
+const LAST_USER_KEY = 'cm-last-user-id';
 
 /** Lit `?m=YYYY-MM` une seule fois au mount. NON réactif aux changements
  *  d'URL via `window.history.replaceState` (utilisé par changeMonth dans
@@ -81,6 +86,27 @@ export function GanttShellClient() {
     let cancelled = false;
     void (async () => {
       try {
+        // ── Changement de compte sur le même appareil ──────────────────────
+        // IndexedDB est partagé par origine : si on se connecte à un AUTRE
+        // utilisateur, son planning/rotations/profil resteraient mélangés avec
+        // ceux du précédent (planning fantôme + valeurs périmées, ex. un SCL à
+        // cheval calculé sur le mauvais raw_detail). Si l'id user a changé, on
+        // vide tout le cache puis on recharge sur une base saine (re-sync auto).
+        const userId = session?.user?.id ?? null;
+        if (userId) {
+          let lastUser: string | null = null;
+          try { lastUser = localStorage.getItem(LAST_USER_KEY); } catch { /* localStorage indispo */ }
+          if (lastUser && lastUser !== userId) {
+            console.warn('[shell] changement de compte → wipe cache local', { lastUser, userId });
+            await wipeAllLocalData();
+            try { localStorage.setItem(LAST_USER_KEY, userId); } catch { /* ignore */ }
+            if (cancelled) return;
+            window.location.reload();
+            return;
+          }
+          if (!lastUser) { try { localStorage.setItem(LAST_USER_KEY, userId); } catch { /* ignore */ } }
+        }
+
         console.warn('[shell] loadShellData start', month);
         let d = await loadShellData(month);
         console.warn('[shell] loadShellData done', month);
@@ -128,7 +154,7 @@ export function GanttShellClient() {
       }
     })();
     return () => { cancelled = true; };
-  }, [status, month, router]);
+  }, [status, month, router, session]);
 
   const reload = () => window.location.reload();
   if (status === 'loading' || status === 'redirecting') return <SkeletonShell stuck={stuck} onReload={reload} />;

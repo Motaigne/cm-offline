@@ -347,6 +347,16 @@ export async function hasPendingOps(): Promise<boolean> {
   return (await db.sync_queue.count()) > 0;
 }
 
+/** Vide TOUT le cache local (toutes les tables Dexie). Utilisé au changement
+ *  d'utilisateur connecté sur le même appareil : sans ça, le planning / les
+ *  rotations / le profil du compte précédent restent en cache et se mélangent
+ *  avec le nouveau compte (planning fantôme + valeurs périmées comme un SCL à
+ *  cheval calculé sur le mauvais `raw_detail`). IndexedDB est partagé par
+ *  origine, pas par utilisateur — d'où le wipe explicite. */
+export async function wipeAllLocalData(): Promise<void> {
+  await Promise.all(db.tables.map(t => t.clear()));
+}
+
 /** Purge les items d'un mois pour les scénarios donnés + les ops de queue
  *  qui les concernent. Appelé après un Reset pour éviter que `loadScenariosForMonth`
  *  ressorte les items zombies au prochain changement de mois. */
