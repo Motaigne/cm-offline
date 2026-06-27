@@ -12,6 +12,7 @@ import { getTauxApp } from '@/app/actions/ep4';
 import { cacheRotations, hydrateDB, cacheProfileVersions, cacheAnnexeRows, cacheA81Overrides, cacheA81YearData, cacheTauxApp, stampMonthSync, loadMonthSyncStates } from '@/lib/local-db';
 import { getMonthsLastModified } from '@/app/actions/sync-state';
 import { syncNow, pendingOpsCount, PENDING_CHANGED_EVENT } from '@/lib/sync-service';
+import { reconcilePlanning, type RepairSummary } from '@/lib/sync-repair';
 import {
   downloadPlanning, downloadDatabase,
   parseBackupFile, importPlanning, importDatabase, importLegacyBackup,
@@ -228,11 +229,12 @@ function withTimeout<T>(
  *  mois lance autant de requêtes en parallèle, sature la bande passante mobile
  *  et déclenche des timeouts silencieux (mois jamais hydratés → écran 📵 hors
  *  ligne). 4 simultanées = compromis débit / fiabilité. */
-async function runPool<T>(tasks: Array<() => Promise<T>>, limit: number): Promise<T[]> {
+async function runPool<T>(tasks: Array<() => Promise<T>>, limit: number, shouldStop?: () => boolean): Promise<T[]> {
   const out: T[] = new Array(tasks.length);
   let cursor = 0;
   async function worker(): Promise<void> {
     while (cursor < tasks.length) {
+      if (shouldStop?.()) return; // annulation coopérative (bouton Annuler du Sync)
       const i = cursor++;
       try { out[i] = await tasks[i](); }
       catch { /* erreurs gérées dans la task elle-même (failed++) */ }
@@ -249,6 +251,10 @@ export function NavBar() {
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'' | 'push' | 'pull' | 'ok' | 'err' | 'offline'>('');
   const [dlProgress, setDlProgress] = useState('');
+  // Annulation coopérative du Sync (bouton Annuler du modal bloquant).
+  const syncCancelRef = useRef(false);
+  // Récap de la passe de réconciliation (popup de fin de Sync). null = pas de popup.
+  const [repairSummary, setRepairSummary] = useState<RepairSummary | null>(null);
   const [_swReady, setSwReady] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
@@ -502,6 +508,7 @@ export function NavBar() {
       return;
     }
     setSyncing(true);
+    syncCancelRef.current = false;
     // Reset des erreurs capturées : on n'affiche que celles de la session en cours.
     const collectedErrors: Array<{ label: string; kind: 'timeout' | 'reject'; msg: string }> = [];
     const captureErr = (label: string) => (kind: 'timeout' | 'reject', err: unknown) => {
@@ -633,7 +640,31 @@ export function NavBar() {
             setDlProgress(`${completed}/${queue.length}${skipSuffix}`);
           }
         });
-        await runPool(tasks, 4);
+        await runPool(tasks, 4, () => syncCancelRef.current);
+
+        // Annulé pendant le pull : on s'arrête proprement (les mois déjà
+        // hydratés restent valides) sans réconcilier ni précacher.
+        if (syncCancelRef.current) {
+          setSyncStatus('');
+          setDlProgress('');
+          setSyncing(false);
+          return;
+        }
+
+        // ── Réconciliation planning ↔ cache rotations (100 % local) ─────────
+        // Rattache les vols legacy (lien manquant) + actualise la meta périmée,
+        // puis pousse les réparations au serveur. Récap pour le popup de fin.
+        setDlProgress('vérif.');
+        try {
+          const repair = await reconcilePlanning(Array.from(planningMonths));
+          if (repair.changes.length > 0) {
+            await syncNow().catch(() => { /* push best-effort ; retombera au prochain Sync */ });
+            setRepairSummary(repair);
+            void pendingOpsCount().then(setPendingCount);
+          }
+        } catch (e) {
+          captureErr('reconcile')('reject', e);
+        }
 
         setDlProgress(queue.length > 0 ? `pages` : '');
         // On ne précache l'URL ?m=YYYY-MM que pour les mois effectivement
@@ -650,7 +681,7 @@ export function NavBar() {
           precachePage(url), 10000, false,
           { label: `precache:${url}`, onError: captureErr(`precache:${url}`) },
         ));
-        await runPool(precacheTasks, 6);
+        await runPool(precacheTasks, 6, () => syncCancelRef.current);
         if (failed > 0) {
           // Affiche le nombre de mois en échec — sinon le user voit juste un
           // "!" fugace et croit que tout est OK alors qu'il y a des trous.
@@ -1139,6 +1170,64 @@ export function NavBar() {
               </div>
             </>
           )}
+
+          {/* Modal bloquant pendant le Sync — empêche les éditions concurrentes
+              (courses de données qui pouvaient perdre un ajout). Seul « Annuler »
+              interrompt le processus. */}
+          {syncing && (
+            <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4">
+              <div className="w-full max-w-xs bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl p-5 space-y-4 text-center">
+                <div className="flex items-center justify-center gap-2">
+                  <span className="inline-block w-4 h-4 border-2 border-zinc-300 border-t-zinc-700 dark:border-zinc-700 dark:border-t-zinc-200 rounded-full animate-spin" />
+                  <h2 className="font-semibold text-sm text-zinc-900 dark:text-zinc-100">
+                    {syncStatus === 'push' ? 'Envoi…' : 'Synchronisation…'}
+                  </h2>
+                </div>
+                {dlProgress && <p className="text-xs font-mono text-zinc-500">{dlProgress}</p>}
+                <p className="text-[11px] text-zinc-400">Ne quitte pas l&apos;app et n&apos;édite pas le planning pendant la synchro.</p>
+                <button
+                  onClick={() => { syncCancelRef.current = true; setDlProgress('annulation…'); }}
+                  className="w-full py-2 rounded-xl border border-zinc-300 dark:border-zinc-700 text-sm font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                >
+                  Annuler
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Popup de fin de Sync : récap de la réconciliation. Affiché seulement
+              s'il y a eu des changements (sinon rien). */}
+          {!syncing && repairSummary && repairSummary.changes.length > 0 && (() => {
+            const c = repairSummary.changes;
+            const groups: Array<{ label: string; cls: string; items: typeof c }> = [
+              { label: 'relié(s) au catalogue', cls: 'text-emerald-600 dark:text-emerald-400', items: c.filter(x => x.kind === 'relinked') },
+              { label: 'actualisé(s)',           cls: 'text-blue-600 dark:text-blue-400',       items: c.filter(x => x.kind === 'updated') },
+              { label: 'sans rotation en base',  cls: 'text-amber-600 dark:text-amber-400',     items: c.filter(x => x.kind === 'orphaned') },
+            ];
+            return (
+              <>
+                <div className="fixed inset-0 z-[60] bg-black/40" onClick={() => setRepairSummary(null)} />
+                <div className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-[61] max-w-sm mx-auto bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl p-5 space-y-3 max-h-[80vh] overflow-y-auto">
+                  <h2 className="font-semibold text-sm text-zinc-900 dark:text-zinc-100">Sync — rotations mises à jour</h2>
+                  {groups.filter(g => g.items.length > 0).map((g, gi) => (
+                    <div key={gi}>
+                      <p className={`text-xs font-semibold ${g.cls}`}>{g.items.length} vol{g.items.length > 1 ? 's' : ''} {g.label}</p>
+                      <ul className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5 space-y-0.5 font-mono">
+                        {g.items.slice(0, 10).map((x, i) => <li key={i}>{x.scenario} · {x.destination} · {x.date}</li>)}
+                        {g.items.length > 10 && <li>… +{g.items.length - 10}</li>}
+                      </ul>
+                    </div>
+                  ))}
+                  <button
+                    onClick={() => setRepairSummary(null)}
+                    className="w-full py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-700 dark:bg-zinc-100 dark:hover:bg-zinc-300 text-white dark:text-zinc-900 text-sm font-semibold"
+                  >
+                    OK
+                  </button>
+                </div>
+              </>
+            );
+          })()}
         </div>
       </nav>
     </div>
