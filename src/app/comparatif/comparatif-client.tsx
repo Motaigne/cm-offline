@@ -311,23 +311,37 @@ export function ComparatifClient({
   // (mig 0039) ; fallback Manex (1h45 / 30min) pour les instances sans
   // scheduled_*_duty_at. NB : `scheduled_*_activity_at` = bornes du repos
   // pré/post-courrier, PAS utilisable pour TA.
-  const ep4: Ep4Rotation | null = useMemo(() => {
-    if (!ep4Data || !selectedInst) return null;
+  // EP4 construit PAR INSTANCE (clé = inst.id) : chaque date a son propre rtHDV /
+  // H2HCr (mois) / tsv_n_rot_m (nuit mois). Permet à la liste « Dispos » d'afficher
+  // la vraie proration EP4 de chaque date — au lieu de réutiliser le H2HCr de
+  // l'instance sélectionnée puis de le re-proratiser en temps-écoulé (ancien
+  // comportement : double proration sur les vols à cheval).
+  const ep4ByInst = useMemo(() => {
+    const map = new Map<string, Ep4Rotation>();
+    if (!ep4Data || !sig) return map;
     const MANEX_BRIEF_MS = 1.75 * 3_600_000;
     const MANEX_CLOSE_MS = 0.5  * 3_600_000;
-    const depMs   = selectedInst.depart_at  ? new Date(selectedInst.depart_at).getTime()  : null;
-    const arrMs   = selectedInst.arrivee_at ? new Date(selectedInst.arrivee_at).getTime() : null;
-    const briefMs = selectedInst.scheduled_begin_duty_at ? new Date(selectedInst.scheduled_begin_duty_at).getTime()
-                   : depMs != null ? depMs - MANEX_BRIEF_MS : null;
-    const closeMs = selectedInst.scheduled_end_duty_at   ? new Date(selectedInst.scheduled_end_duty_at).getTime()
-                   : arrMs != null ? arrMs + MANEX_CLOSE_MS : null;
-    if (briefMs == null || closeMs == null) return null;
-    const override = {
-      beginActivityMs: briefMs, endActivityMs: closeMs,
-      beginBlockMs: depMs ?? undefined, endBlockMs: arrMs ?? undefined,
-    };
-    return buildEp4Rotation(ep4Data.raw_detail, sigRot, sigZone, year, mo, ep4Data.taux, ep4Data.irRates, override);
-  }, [ep4Data, selectedInst, sigRot, sigZone, year, mo]);
+    for (const inst of sig.instances) {
+      const depMs   = inst.depart_at  ? new Date(inst.depart_at).getTime()  : null;
+      const arrMs   = inst.arrivee_at ? new Date(inst.arrivee_at).getTime() : null;
+      const briefMs = inst.scheduled_begin_duty_at ? new Date(inst.scheduled_begin_duty_at).getTime()
+                     : depMs != null ? depMs - MANEX_BRIEF_MS : null;
+      const closeMs = inst.scheduled_end_duty_at   ? new Date(inst.scheduled_end_duty_at).getTime()
+                     : arrMs != null ? arrMs + MANEX_CLOSE_MS : null;
+      if (briefMs == null || closeMs == null) continue;
+      const override = {
+        beginActivityMs: briefMs, endActivityMs: closeMs,
+        beginBlockMs: depMs ?? undefined, endBlockMs: arrMs ?? undefined,
+      };
+      map.set(inst.id, buildEp4Rotation(ep4Data.raw_detail, sigRot, sigZone, year, mo, ep4Data.taux, ep4Data.irRates, override));
+    }
+    return map;
+  }, [ep4Data, sig, sigRot, sigZone, year, mo]);
+
+  const ep4: Ep4Rotation | null = useMemo(
+    () => (selectedInst ? ep4ByInst.get(selectedInst.id) ?? null : null),
+    [ep4ByInst, selectedInst],
+  );
 
   const ep4RawDetail: unknown = ep4Data?.raw_detail ?? null;
 
@@ -517,19 +531,20 @@ export function ComparatifClient({
                 </thead>
                 <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
                   {sig.instances.map((inst, idx) => {
-                    // HCr canonique = ep4.H2HCr (fallback sig.hcr_crew tant que EP4
-                    // pas chargé). Critique pour les sigs splittées dont sig.hcr_crew
-                    // est hérité du raw_detail original (durée différente).
-                    // NB : ep4.H2HCr est calculé pour l'instance sélectionnée — les
-                    // autres lignes utilisent cette même valeur proratisée à leurs
-                    // dates. Pour la "vraie" valeur d'une autre instance, cliquer
-                    // dessus (sélecteur).
-                    const hcrTotal = ep4?.H2HCr ?? sig.hcr_crew;
-                    const hcrMois  = prorateForMonth(hcrTotal, inst.depart_at, inst.arrivee_at, year, mo);
-                    const tsvMois  = prorateForMonth(sig.tsv_nuit ?? 0, inst.depart_at, inst.arrivee_at, year, mo);
+                    // Proration EP4 propre à CETTE instance : H2HCr (= rtHDV ×
+                    // valeur pleine) pour les HCr du mois, tsv_n_rot_m pour la
+                    // nuit du mois. Fallback temps-écoulé seulement tant que EP4
+                    // n'est pas chargé (cache rotations absent). hcrFull = valeur
+                    // pleine (H2HCr_initial) pour détecter le prorata (astérisque).
+                    const instEp4 = ep4ByInst.get(inst.id) ?? null;
+                    const hcrFull  = instEp4?.H2HCr_initial ?? sig.hcr_crew;
+                    const hcrMois  = instEp4 ? instEp4.H2HCr
+                                   : prorateForMonth(sig.hcr_crew, inst.depart_at, inst.arrivee_at, year, mo);
+                    const tsvMois  = instEp4 ? instEp4.tsv_n_rot_m
+                                   : prorateForMonth(sig.tsv_nuit ?? 0, inst.depart_at, inst.arrivee_at, year, mo);
                     const pvMois   = (hcrMois + tsvMois / 2) * pvei * ksp;
                     const eurMois  = Math.round(pvMois + (sig.prime ?? 0) * 2.5 * pvei);
-                    const isProrated = hcrMois < hcrTotal - 0.01;
+                    const isProrated = hcrMois < hcrFull - 0.01;
                     const isSelected = idx === selectedInstanceIdx && sig.instances.length > 1;
                     return (
                       <tr
@@ -562,7 +577,11 @@ export function ComparatifClient({
                   })}
                 </tbody>
               </table>
-              {sig.instances.some(inst => prorateForMonth(sig.hcr_crew, inst.depart_at, inst.arrivee_at, year, mo) < sig.hcr_crew - 0.01) && (
+              {sig.instances.some(inst => {
+                const e = ep4ByInst.get(inst.id);
+                return e ? e.H2HCr < e.H2HCr_initial - 0.01
+                         : prorateForMonth(sig.hcr_crew, inst.depart_at, inst.arrivee_at, year, mo) < sig.hcr_crew - 0.01;
+              }) && (
                 <p className="px-4 py-1.5 text-[10px] text-amber-500 border-t border-zinc-100 dark:border-zinc-800">
                   * Rotation à cheval sur 2 mois — valeur proratée au temps de vol réalisé sur {monthLabel(currentMonth)}
                 </p>
