@@ -202,20 +202,25 @@ async function verifyPrecache(urls: string[]): Promise<boolean> {
  *  un timeout court. Derrière captif → abort/reject → false. En vrai online →
  *  JSON du manifest → true. Sert à NE PAS lancer le priming/Sync derrière un
  *  captif (sinon fetch qui hang, pollution de cache, UX figée). */
-async function hasRealConnectivity(timeoutMs = 2500): Promise<boolean> {
+async function hasRealConnectivity(timeoutMs = 4000): Promise<boolean> {
   if (typeof navigator !== 'undefined' && !navigator.onLine) return false;
   try {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), timeoutMs);
     const res = await fetch(`/manifest.webmanifest?probe=${Date.now()}`, {
-      method: 'GET', cache: 'no-store', signal: ac.signal, credentials: 'omit',
+      method: 'GET', cache: 'no-store', signal: ac.signal,
     });
     clearTimeout(timer);
-    if (!res.ok) return false;
-    // Un portail captif qui renverrait 200 renverrait du HTML → on refuse.
-    const ct = res.headers.get('content-type') ?? '';
-    return ct.includes('json') || ct.includes('manifest');
-  } catch { return false; }
+    // HTTPS : un 200 signifie qu'on a joint NOTRE serveur (un portail captif ne
+    // peut pas usurper le TLS — il ferait échouer/hang le fetch, pas renvoyer un
+    // 200 de notre origine). On ne teste donc plus le content-type (source de
+    // faux négatifs si le SW/CDN sert le manifest avec un type inattendu).
+    if (!res.ok) console.warn('[connectivity] probe non-ok', res.status);
+    return res.ok;
+  } catch (e) {
+    console.warn('[connectivity] probe failed', e);
+    return false;
+  }
 }
 
 /** Wrap une promesse avec un timeout — résout à `fallback` si dépassé.
@@ -531,13 +536,11 @@ export function NavBar() {
       setTimeout(() => setSyncStatus(''), 3000);
       return;
     }
-    // Garde captif : navigator.onLine peut être true derrière le wifi 330 alors
-    // que le serveur est injoignable → on évite un Sync qui hang en timeouts.
-    if (!(await hasRealConnectivity())) {
-      setSyncStatus('offline');
-      setTimeout(() => setSyncStatus(''), 3000);
-      return;
-    }
+    // NB : on NE bloque PAS sur hasRealConnectivity ici. Une sonde qui échoue à
+    // tort (vrai WiFi mais /manifest.webmanifest lent/inattendu) mettait le
+    // cloud en rouge SANS aucun message (return avant syncNow) → diagnostic
+    // impossible. Fail-open : on tente la sync ; si c'est vraiment un captif,
+    // les ops erreront et seront visibles (console + panneau debug).
     setSyncing(true);
     // Collecte des erreurs par op pour affichage in-app (dropdown debug).
     const collectedErrors: Array<{ label: string; kind: 'timeout' | 'reject'; msg: string }> = [];
@@ -586,12 +589,9 @@ export function NavBar() {
       setTimeout(() => setSyncStatus(''), 3000);
       return;
     }
-    // Garde captif : cf. handlePush — pas de Pull derrière un portail captif.
-    if (!(await hasRealConnectivity())) {
-      setSyncStatus('offline');
-      setTimeout(() => setSyncStatus(''), 3000);
-      return;
-    }
+    // Fail-open comme handlePush : pas de blocage sur hasRealConnectivity (sonde
+    // faillible → Pull refusé en silence sur vrai WiFi). Pull a déjà des timeouts
+    // par mois (withTimeout 10s) + bouton Annuler, donc pas de hang infini captif.
     setSyncing(true);
     syncCancelRef.current = false;
     // Reset des erreurs capturées : on n'affiche que celles de la session en cours.
