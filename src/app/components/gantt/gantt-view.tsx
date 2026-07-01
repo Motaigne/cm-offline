@@ -543,6 +543,11 @@ const REST_COLOR = '#5EA0A8';
 const BID_SHORT: Partial<Record<BidCategory, string>> = {
   dda_vol: 'D', dda_off: 'D', vol_p: 'P', elabo_suivi: 'E',
 };
+
+/** Couleur du bandeau supérieur de la barre vol (bleu ciel, cf. Crew Mobile /
+ *  swatch "Bandeau supérieur du Ghant"). Le corps de la barre utilise la couleur
+ *  vol de ACTIVITY_META (bleu acier plus foncé). */
+const FLIGHT_HEADER_COLOR = '#4691D3';
 /** Hauteur des flags cliquables (RPC/hard/vol) sous la barre. ~x1.2 de la
  *  bande de violation DDA (15px) pour une cible tactile plus confortable. */
 const FLAG_H = 18;
@@ -944,28 +949,32 @@ function DraggableBar({
           {hasMep && (
             <div
               className="absolute top-0 left-0 right-0 pointer-events-none rounded-t-md"
-              style={{ height: BAR_H / 8, backgroundColor: '#EC4899' }}
+              style={{ height: BAR_H / 8, backgroundColor: '#EC4899', zIndex: 3 }}
               aria-hidden
             />
           )}
           {item.kind === 'flight' ? (
-            // Layout 3 lignes (style Crew Mobile) :
-            //  1 (petit)  : D/P/E à gauche · «x ON» à droite
-            //  2 (grand)  : code vol centré (MEX / LAX-PPT-LAX)
-            //  3 (petit)  : PV€ / HCr h centrés
-            <div className="flex flex-col min-w-0 flex-1 w-full leading-none">
-              <div className="flex items-center justify-between text-[7px] font-semibold opacity-80">
-                <span>{bidShort}</span>
-                <span>{onDays} ON</span>
+            // Style Crew Mobile :
+            //  - Bandeau supérieur (sky blue) : D/P/E à gauche · «x ON» à droite
+            //  - Corps (bleu acier) : code vol centré (grand) + PV€ / HCr h
+            <>
+              <div
+                className="absolute top-0 left-0 right-0 flex items-center justify-between px-1.5 pointer-events-none z-[1] text-white"
+                style={{ height: 15, backgroundColor: FLIGHT_HEADER_COLOR, fontSize: 8, lineHeight: 1 }}
+              >
+                <span className="font-bold">{bidShort}</span>
+                <span className="font-semibold">{onDays} ON</span>
               </div>
-              <div className="text-[16px] font-bold text-center truncate leading-tight">{label}</div>
-              <div className="text-[7px] font-mono text-center opacity-90 truncate">
-                {euroVal !== null ? `${Math.round(euroVal)}€${isProrated ? '*' : ''}` : ''}
-                {euroVal !== null && hcrDisplay !== null ? ' / ' : ''}
-                {hcrDisplay !== null ? `${hcrDisplay.toFixed(1)}h` : ''}
-                {prime > 0 ? ` +${prime}P` : ''}
+              <div className="absolute inset-0 flex flex-col items-center justify-center leading-none px-1" style={{ paddingTop: 15 }}>
+                <div className="text-[16px] font-bold text-center truncate leading-tight w-full">{label}</div>
+                <div className="text-[7px] font-mono text-center opacity-90 truncate w-full">
+                  {euroVal !== null ? `${Math.round(euroVal)}€${isProrated ? '*' : ''}` : ''}
+                  {euroVal !== null && hcrDisplay !== null ? ' / ' : ''}
+                  {hcrDisplay !== null ? `${hcrDisplay.toFixed(1)}h` : ''}
+                  {prime > 0 ? ` +${prime}P` : ''}
+                </div>
               </div>
-            </div>
+            </>
           ) : (
             <div className="flex flex-col min-w-0 flex-1 gap-px">
               <span className="text-[11px] font-semibold truncate leading-none">{label}</span>

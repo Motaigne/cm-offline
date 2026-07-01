@@ -12,7 +12,7 @@
 |-----------|-----------|------------|--------|
 | PVEI | `PVEI` | Taux avion x (Bonus ATPL + Coef. CLasse) x Catégorie d'ancienneté | **112,70 €/h** (ce n'est pas une constante) | 
 | KSP | `KSP` | Coefficient valorisation avion LC | **1,07** |
-| Traitement fixe | `FIXE_MENSUEL` | Traitement mensuel fixe x CoefficientFonction x Echelon x nb30e / 30 | **1 826,66 €** (ce n'est pas une constante) |
+| Traitement fixe | `FIXE_MENSUEL` | Traitement mensuel fixe x CoefficientFonction x Echelon x nb30eR / 30 | **1 826,66 €** (ce n'est pas une constante) |
 | Prime bi tronçon | `2.5 × PVEI` | 2,5 × PVEI | **281,75 €** (ce n'est pas une constante)|
 
 
@@ -24,13 +24,20 @@
 
 | — | Mon terme | Définition | Formule implémentée |
 |---|-----------|------------|---------------------|
-| — | `nb30eEff` | 30e effectifs après congés | `nb30eRégime − congeDays` (min 0) |
+| — | `nb30eEff` | 30e effectifs après congés **ET CSS** | `max(0, nb30eRégime − congeDays − cssDays)` *(cf `gantt-view.tsx`)* |
 | — | `fullPrime` | Mois "temps plein" (juillet/août, TAF*_10_12) | `true` si TAF7/10_10_12 et mois ∈ {7,8} |
 | — | `nb30eForFin` | 30e utilisés pour les calculs financiers | `fullPrime ? 30 : nb30eEff` |
 | — | `fixeForFin` | Fixe mensuel effectif | `fullPrime ? FIXE_MENSUEL × 30/nb30eRégime : FIXE_MENSUEL` |
 | — | `fixeCss` | Fixe abattu du CSS (jours sans solde) | `fixeForFin × (nb30eR − cssDays) / nb30eR` — **chaque jour de CSS retire un 30e du fixe** ; les congés (payés) n'abattent PAS le fixe |
 
-> **En juillet/août pour TAF\*_10_12** : le pilote est traité "temps plein" (pas de TAF) — FIXE et MGA basculent sur la base 30/30. La variable `tafOk` (dispo TAF) est `false` pour ces mois-là. ???Et si on utilise ma nouvelle défnition de Fixe???
+> **En juillet/août pour TAF\*_10_12** : le pilote est traité "temps plein" (pas de TAF) — FIXE et MGA basculent sur la base 30/30. La variable `tafOk` (dispo TAF) est `false` pour ces mois-là.
+>
+> **Nouvelle définition du Fixe (adoptée — cf `optiP_REGLES §2.1`)** : `fixe = fixe_base × coefFonction × coefEchelon × nb30e/30`, avec `nb30e = nb30eR(mois) − CSS` et `nb30eR(juil/août) = 30`. Le basculement temps plein **et** l'abattement CSS sont alors encodés dans `nb30e` → `fixeForFin` et `fixeCss` **fusionnent en une seule étape** (une variable de moins).
+
+**Convention de nommage des 30e** (à utiliser partout) :
+- `nb30eR` = 30e du **régime** pour le mois (TP 30 ; TAF réduit ; juil/août = 30 pour TAF\*_10_12). *(les primes A330/instruction utilisent ce nombre, non abattu.)*
+- `nb30e` = `nb30eR − CSS` → sert au **FIXE** (le CSS abat le fixe ; les congés payés, non).
+- `nb30eEff` = `max(0, nb30e − congés)` = `max(0, nb30eR − CSS − congés)` → sert au **MGA** et au **seuil HS**.
 
 ### 2b. Formules de paie
 
@@ -39,8 +46,8 @@
 | Heures de paie vol | `totalPv` | Heures valorisées (HCr + nuit) | HC × coefficients | `Σ(HCr_crew) + Σ(TSVnuit)/2` *(HCr proratisé sur le mois M pour les vols à cheval)* |
 | PV € | `pvEur` | Montant paie vol | PV × PVEI × KSP | `totalPv × PVEI × KSP` |
 | HC brut | `totalHc` | HC brut (pas HCr, pas proratisé) | — | `Σ(hc)` *(utilisé uniquement pour taux moyen HS ET pour le calcul de hsH)* |
-| FIXE | `fin.fixe` | Traitement fixe mensuel | — | `fixeForFin` |
-| MGA | `mga` | Minimum garanti d'activité (plancher sur PV+HS, hors fixe) | `85 × PVEI × (nb30eEff/30)` | `85 × (nb30eEff/30) × PVEI` *(abattu de 1/30 par jour de congé+CSS via nb30eEff)* |
+| FIXE | `fin.fixe` | Traitement fixe injecté dans le Total | — | `fixeCss` *(⚠ le panneau détail affiche `fixeForFin`, **non** abattu → écart affiché/Total dès que CSS > 0)* |
+| MGA | `mga` | Minimum garanti d'activité (plancher sur PV+HS, hors fixe) | `85 × PVEI × KSP × (nb30eEff/30)` | `85 × PVEI × KSP × (nb30eEff/30)` *(**KSP inclus** — cf `finance.ts:45` ; abattu de 1/30 par jour de congé+CSS via nb30eEff)* |
 | DIF | `fin.dif` | Complément jusqu'au MGA (top-up sur PV+HS) | `max(0, MGA − (PV€ + HS€))` | `max(0, mga − (finBase.pv + hsNew))` |
 | Seuil HS | `hsSeuil` | Seuil déclenchement HS | 75h × 30e/30 | `75 × (nb30eForFin/30)` |
 | HS (heures) | `hsH` | Heures supplémentaires | `max(0, totalHc − seuil75)` | `max(0, totalHc − hsSeuil)` | 
@@ -49,7 +56,7 @@
 | Taux moyen | `tauxMoyen` | Rémunération vol / HC brut | — | `pvEur / totalHc` *(fallback: PVEI×KSP si HC=0)* |
 | HS € | `fin.hs` | Montant heures supplémentaires | — | `hsH × (hsFixeRate + hsVolRate)` |
 | P (primes) | `fin.primes` | Total primes du mois | Bi-tronçon + fixes | `Σ(prime_bitroncon) + monthlyFixedPrimes` *(voir §2c)* |
-| **Total** | `fin.total` | Paie brute hors congés | — | `FIXE + PV€ + HS€ + DIF + P` |
+| **Total** | `fin.total` | Paie brute hors congés **et hors primes** | — | `fixeCss + PV€ + HS€ + DIF` *(⚠ les primes P ne sont **pas** dans `fin.total` — ajoutées au niveau du BRUT ; cf `finance.ts:48`)* |
 | Congés | `congeAmount` | Indemnité jours de congé | — | `congeDays × (cngPv + cngHs)` |
 | BRUT | `brut` | Total avec congés, indemnités | — | `fin.total + congeAmount` |
 
@@ -59,8 +66,8 @@
 |-------|-----------|------------|---------------------|
 | Prime bi-tronçon | `finBase.primes` | Par service ≥ 2 tronçons hors TLV/BEY | `count × 2,5 × PVEI` *(sans KSP)* |
 | Prime incitation | `primeIncitationUnit × incitCount` | 0–5 primes selon saisie | `primeIncitationUnit × incitCount` *(non boostée en juillet/août)* |
-| Prime A330 | `primeA330` | Prime avion A330 | `primeA330 × nb30e/30` |
-| Prime instruction | `primeInstruction` | Prime TRI/ICPL | `primeInstruction × nb30e/30` |
+| Prime A330 | `primeA330` | Prime avion A330 | `primeA330 × nb30eR/30` *(régime, **non** abattu CSS/congés)* |
+| Prime instruction | `primeInstruction` | Prime TRI/ICPL | `primeInstruction × nb30eR/30` *(régime, **non** abattu CSS/congés)* |
 | — | `a330InstrBoost` | Boost juillet/août TAF*_10_12 | `fullPrime ? 30/nb30eRégime : 1` | *inutile je suppose avec la modification* 
 | Prime mai | — | *(non implémentée)* | 0 |
 | Prime noël | — | *(non implémentée)* | 0 |
@@ -173,7 +180,16 @@
 | Prime Noël | ❌ non implémentée | Lot "AUTRE MODIFICATION" |
 | Recalcul IR/MF mensuel via EP4 | ⚠ lu en DB (`ir_mf_rates`) | Implémenté mais formule non vérifiée vs EP4 Python |
 | IT (Indemnité de vol de nuit) | ❌ non implémentée | Backlog AUTRE MODIFICATION |
-| MGA sans fullPrime (régime normal) | ✅ confirmé | Formule actuelle : `85×PVEI×(nb30eEff/30)` (hors fixe, abattu par congés/CSS) — cf optiP_DEF
+| MGA sans fullPrime (régime normal) | ✅ confirmé | Formule actuelle : `85×PVEI×KSP×(nb30eEff/30)` (hors fixe, abattu par congés/CSS) — cf optiP_DEF
+
+---
+
+### Audit doc (2026-07-01) — TODO restants
+
+- **C1** — `totalPv` (§2b) : intégrer la **proration EP4** (`rtHDV` / `nuitRatio`, cf `optiP_DEF_maj §1`) ; la note actuelle décrit encore l'ancienne proration temps-écoulé.
+- **C2** — `a330InstrBoost` (§2c) : probablement **redondant** si les primes utilisent `nb30eR` déjà month-effective (30 en juil/août) → confirmer puis supprimer.
+- **C3** — Taux A81 : **deux lookups** — `lookupTauxApp(rotation_code, tempsSej)` (§3c) vs `lookupTauxSej(zone, tSej)` (§5). Vérifier qu'ils donnent le même taux (matrice = zone × tranche de durée uniquement, cf `optiP_REGLES §2.2`).
+- **C4** — Annexe §8 : valeurs **2025 seulement** (fixe 2559,19 ; taux avion 2025), alors qu'optiP a le versionné 2025 + 2026 → aligner ou marquer "valeurs illustratives 2025".
 
 ---
 
@@ -208,7 +224,7 @@ Catégorie B | 0.85
 Catégorie C | 1
 
 ### Nombre de 30e par régime
-| Régime | `nb30e` (JAN-JUN + SEP-DEC) | `nb30e` (JUL-AUG) |
+| Régime | `nb30eR` (JAN-JUN + SEP-DEC) | `nb30eR` (JUL-AUG) |
 | TP | 30 | 30 |
 | TAF7_10_12 | 23 | 30 |
 | TAF7_12_12 | 23 | 23 |

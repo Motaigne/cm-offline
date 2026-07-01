@@ -13,10 +13,10 @@ type ActivityMeta = {
 };
 
 export const ACTIVITY_META: Record<ActivityKind, ActivityMeta> = {
-  flight:   { label: 'Vol',         color: '#2E9CDB', textColor: '#FFFFFF', order: 9 },  // bleu ciel (style Crew Mobile)
-  conge:    { label: 'Congés',      color: '#15803D', textColor: '#FFFFFF', order: 2 },  // vert foncé
+  flight:   { label: 'Vol',         color: '#417CA4', textColor: '#FFFFFF', order: 9 },  // bleu acier (corps, swatch Crew Mobile)
+  conge:    { label: 'Congés',      color: '#3E6637', textColor: '#FFFFFF', order: 2 },  // vert foncé (swatch Crew Mobile)
   conge_ss: { label: 'CSS',         color: '#0F766E', textColor: '#FFFFFF', order: 2.5 }, // teal foncé — Congés Sans Solde
-  off:      { label: 'DDA REPOS',   color: '#4ADE80', textColor: '#052E16', order: 3 },  // vert clair
+  off:      { label: 'DDA REPOS',   color: '#6AC752', textColor: '#052E16', order: 3 },  // vert (swatch Crew Mobile)
   sol:      { label: 'Réserve',     color: '#EC4899', textColor: '#FFFFFF', order: 4 },  // rose
   medical:  { label: 'Visite méd.', color: '#BE185D', textColor: '#FFFFFF', order: 5 },  // rose foncé
   sim:      { label: 'Simulateur',  color: '#A21CAF', textColor: '#FFFFFF', order: 6 },  // violet/magenta
