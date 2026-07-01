@@ -19,6 +19,7 @@ import {
 } from '@/lib/backup';
 import { useLocalStorageState } from '@/hooks/use-local-storage-state';
 import { useOnlineStatus } from '@/hooks/use-online';
+import { raceTimeout } from '@/lib/net';
 
 const TABS: { label: string; href: string; offlineDisabled?: boolean }[] = [
   { label: 'Profil',      href: '/profil'     },
@@ -96,6 +97,19 @@ const BUILD_ID = process.env.NEXT_PUBLIC_BUILD_ID ?? 'dev';
  *  queue et seront retentées). Évite que la modale bloquante hang à l'infini
  *  derrière un captif. Généreux pour couvrir une grosse queue sur 3G lente. */
 const PUSH_TIMEOUT_MS = 20000;
+
+/** BUILD_ID réellement DÉPLOYÉ (route /api/version, jamais cachée). Comparé au
+ *  BUILD_ID courant (baké dans le bundle) → détection de MAJ FIABLE, sans
+ *  dépendre du cycle SW (reg.update() peut ne pas capter/appliquer la nouvelle
+ *  version). null si offline / injoignable / erreur. */
+async function fetchDeployedBuildId(): Promise<string | null> {
+  try {
+    const res = await raceTimeout(fetch('/api/version', { cache: 'no-store' }), 5000, 'version');
+    if (!res.ok) return null;
+    const j = await res.json() as { buildId?: string };
+    return typeof j.buildId === 'string' ? j.buildId : null;
+  } catch { return null; }
+}
 
 async function waitForSWController(): Promise<boolean> {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return false;
@@ -477,60 +491,74 @@ export function NavBar() {
   // check tournait / téléchargeait, ni quelle version était en place.
   const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'installing' | 'ready'>('idle');
   const updateAvailable = updateState === 'ready';
-  const swRegRef = useRef<ServiceWorkerRegistration | null>(null);
   useEffect(() => {
     if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    let cancelled = false;
     const hadController = !!navigator.serviceWorker.controller;
     const onCtrlChange = () => { if (hadController) setUpdateState('ready'); };
     navigator.serviceWorker.addEventListener('controllerchange', onCtrlChange);
 
-    // Suit un worker en cours d'install jusqu'à ce qu'il soit prêt.
+    // Suit un worker en cours d'install jusqu'à ce qu'il soit prêt (feedback
+    // 'installing'). Signal complémentaire à la comparaison de version.
     const watchInstalling = (sw: ServiceWorker | null) => {
       if (!sw || !hadController) return; // pas de controller = 1re install, pas une MAJ
-      setUpdateState('installing');
+      setUpdateState(s => (s === 'ready' ? s : 'installing'));
       sw.addEventListener('statechange', () => {
         if (sw.state === 'installed') setUpdateState('ready');
-        // état 'activated' → géré par controllerchange (clientsClaim)
       });
     };
+
+    // Détection FIABLE, indépendante du SW : le build déployé (/api/version)
+    // diffère-t-il du build courant ? Si oui → 'ready' à coup sûr, sans
+    // attendre le bon vouloir de reg.update().
+    const checkVersion = () => {
+      if (!navigator.onLine) return;
+      void fetchDeployedBuildId().then(id => {
+        if (!cancelled && id && id !== BUILD_ID) setUpdateState('ready');
+      });
+    };
+    checkVersion();
 
     let intervalId: ReturnType<typeof setInterval> | null = null;
     let onFocus: (() => void) | null = null;
     void navigator.serviceWorker.getRegistration().then(reg => {
-      if (!reg) return;
-      swRegRef.current = reg;
+      if (!reg || cancelled) return;
       if (reg.installing) watchInstalling(reg.installing);
       else if (reg.waiting && hadController) setUpdateState('ready');
       reg.addEventListener('updatefound', () => watchInstalling(reg.installing));
-      // Poll régulier (15 min) + check au focus pour détecter rapidement les
-      // déploiements quand l'app reste ouverte longtemps.
-      intervalId = setInterval(() => { void reg.update().catch(() => {}); }, 15 * 60 * 1000);
-      onFocus = () => { void reg.update().catch(() => {}); };
+      // Poll (15 min) + focus : compare la version ET pousse reg.update().
+      intervalId = setInterval(() => { void reg.update().catch(() => {}); checkVersion(); }, 15 * 60 * 1000);
+      onFocus = () => { void reg.update().catch(() => {}); checkVersion(); };
       window.addEventListener('focus', onFocus);
     });
     return () => {
+      cancelled = true;
       navigator.serviceWorker.removeEventListener('controllerchange', onCtrlChange);
       if (intervalId) clearInterval(intervalId);
       if (onFocus) window.removeEventListener('focus', onFocus);
     };
   }, []);
 
-  /** Check manuel : tap sur la pastille de version. Si une MAJ est déjà prête →
-   *  ouvre la modale de rechargement. Sinon force un reg.update() et affiche
-   *  l'état (checking → installing si nouveau build, sinon retour à jour). */
+  /** Tap sur la pastille de version. Si une MAJ est prête → modale de reload
+   *  (handleReset : wipe caches + ré-inscription SW + reload = charge le build
+   *  déployé de façon fiable, Dexie préservé). Sinon vérifie la version déployée
+   *  via /api/version (fiable, hors SW) et bascule en 'ready' si différente. */
   async function checkForUpdate() {
-    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
     if (updateState === 'ready') { void handleReset(); return; }
     if (updateState === 'installing' || updateState === 'checking') return;
+    if (typeof navigator === 'undefined' || !navigator.onLine) return;
     setUpdateState('checking');
-    try {
-      const reg = swRegRef.current ?? await navigator.serviceWorker.getRegistration();
-      if (!reg) { setUpdateState('idle'); return; }
-      await reg.update();
-      // Si update() a trouvé un nouveau build, `updatefound` a déjà basculé en
-      // 'installing'. Sinon on repasse à 'idle' (= à jour) après un court délai.
-      setTimeout(() => setUpdateState(s => (s === 'checking' ? 'idle' : s)), 1500);
-    } catch { setUpdateState('idle'); }
+    const id = await fetchDeployedBuildId();
+    if (id && id !== BUILD_ID) {
+      setUpdateState('ready');
+      // Best-effort : demande au SW de précharger le nouveau build (le reload de
+      // handleReset l'appliquera de toute façon).
+      if ('serviceWorker' in navigator) {
+        void navigator.serviceWorker.getRegistration().then(r => r?.update().catch(() => {}));
+      }
+    } else {
+      setUpdateState('idle');
+    }
   }
 
   /** PUSH seul : envoie les opérations en attente (sync_queue Dexie) vers
