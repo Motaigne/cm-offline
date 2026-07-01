@@ -113,24 +113,15 @@ const serwist = new Serwist({
 
 serwist.addEventListeners();
 
-// ─── Purge anti-dérive-de-version à l'activate ──────────────────────────────
-// Un nouveau SW s'active à chaque nouveau build. À ce moment, l'HTML mis en
-// cache par `precachePage` (nav.tsx) dans `others`, et les payloads RSC dans
-// `rsc`, peuvent référencer des hashes de chunks d'un build ANTÉRIEUR. Une fois
-// ces vieux chunks expirés/évincés, ces refs sont mortes → écran blanc hors
-// ligne / captif. On vide donc `others` et `rsc` à chaque activate : les
-// coquilles de base restent servies par la précache serwist (atomique par
-// build), et NavBar re-remplit `others`/`rsc` avec du frais dès le retour en
-// ligne. `next-static-immutable` n'est PAS purgé (chunks immuables, jamais
-// stale, et couvrir les imports dynamiques hors manifeste).
-self.addEventListener('activate', event => {
-  event.waitUntil(
-    Promise.all([
-      caches.delete('others'),
-      caches.delete('rsc'),
-    ]).then(() => undefined),
-  );
-});
+// NOTE : PAS de purge de `others`/`rsc` à l'activate. On l'avait ajoutée pour
+// tuer la dérive de version (HTML caché référençant des hashes de chunks morts),
+// MAIS ça vidait les caches à chaque mise à jour du SW → fenêtre où une
+// navigation offline (avant que NavBar ait re-primé) tombait sur `/offline`
+// (« page indispo hors ligne » observé au test 2026-07-01, bascule 4G juste
+// après un recharge). Or la dérive de version ne peut plus causer d'écran blanc :
+// les chunks `/_next/static/*` sont désormais PERMANENTS (cache
+// `next-static-immutable`, jamais évincés/expirés), donc un vieil HTML caché
+// charge toujours ses chunks. Le purge est devenu redondant et risqué → retiré.
 
 // ─── Web Push (point A2) ────────────────────────────────────────────────
 // Le serveur envoie un payload JSON :
