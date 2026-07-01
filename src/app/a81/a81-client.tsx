@@ -6,6 +6,7 @@ import type { A81YearData, A81Row } from '@/app/actions/a81';
 import { loadAllA81Overrides } from '@/app/actions/a81';
 import { computeA81ForYearLocal } from '@/lib/a81-local';
 import { loadA81OverridesLocal, cacheA81Overrides } from '@/lib/local-db';
+import { raceTimeout } from '@/lib/net';
 import { enqueueA81UpsertOverride, enqueueA81Delete, enqueueA81Restore, enqueueA81SavePlafondExo, syncNow } from '@/lib/sync-service';
 
 // Cache module-level pour survivre aux remounts (notamment quand Next.js
@@ -167,9 +168,11 @@ export function A81Client({
       // préserve les ops pending et n'écrasera pas les modifs offline non sync.
       if (typeof navigator !== 'undefined' && navigator.onLine) {
         try {
-          const serverOverrides = await loadAllA81Overrides();
+          // Timeout : sans ça, un captif ferait hang le resync et le merge
+          // Dexie (lignes suivantes) ne s'exécuterait jamais.
+          const serverOverrides = await raceTimeout(loadAllA81Overrides(), 8_000, 'a81 overrides');
           await cacheA81Overrides(serverOverrides);
-        } catch { /* erreur réseau → on continue avec Dexie */ }
+        } catch { /* erreur réseau / timeout → on continue avec Dexie */ }
       }
       // Toujours lire Dexie : = état mergé (serveur + pending optimistic).
       const overrides = await loadA81OverridesLocal();
@@ -208,7 +211,7 @@ export function A81Client({
    *  rejouera). */
   async function tryPushNow() {
     if (typeof navigator !== 'undefined' && navigator.onLine) {
-      try { await syncNow(); } catch { /* offline ou erreur — on retry au prochain Sync */ }
+      try { await raceTimeout(syncNow(), 20_000, 'a81 push'); } catch { /* offline / timeout — on retry au prochain Sync */ }
     }
   }
 

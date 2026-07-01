@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { PVEI as PVEI_DEFAULT, KSP as KSP_DEFAULT } from '@/lib/finance';
 import { getRotationsForMonth } from '@/app/actions/search';
 import { cacheRotations, loadRotationsFromDB, getCachedMonths } from '@/lib/local-db';
+import { raceTimeout } from '@/lib/net';
 import { ReleasePublisher } from './release-publisher';
 import { computeArticle81, TAXI_TSEJ_ADJUST_H } from '@/lib/article81';
 import type { Article81Data } from '@/lib/article81';
@@ -124,7 +125,10 @@ export function CatalogueTable({
         setSigs(cached.map(rotToSig));
         setFromCache(true);
       } else if (navigator.onLine) {
-        const data = await getRotationsForMonth(m);
+        // Timeout : sans ça, cache vide + wifi captif = spinner bloqué à
+        // l'infini (le catch de repli ne s'exécute jamais). Sur timeout → catch
+        // → nouvelle tentative Dexie → "pas de cache" au lieu d'un hang.
+        const data = await raceTimeout(getRotationsForMonth(m), 10_000, 'catalogue getRotations');
         setSigs(data.map(rotToSig));
         void cacheRotations(data, m);
       } else {
