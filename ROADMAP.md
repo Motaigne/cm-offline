@@ -22,11 +22,11 @@ Toute nouvelle proposition doit cocher les 4 cases avant d'être codée.
 ## 🔴 Bloquants / risques connus
 
 - [ ] **Conflits multi-device** — modifications offline simultanées sur 2 appareils : actuellement le dernier qui Push gagne, pas de merge ni d'alerte. À spec.
-- [ ] **Wipe app bouton ne marche pas** (cause RLS, workaround SQL Studio). Origine session 2026-06-11 — vérifier si réglé par les migrations récentes.
+- [x] **Wipe app bouton ne marche pas** — mig 0043 `wipe_snapshots_for_month` (SECURITY DEFINER) le 2026-07-01. Cause : nullify `planning_item.pairing_instance_id` sous RLS user ne touchait que les items de l'admin → FK des autres users bloquait le DELETE. La RPC nullifie cross-user + supprime les `monthly_release` du mois (FK RESTRICT). À re-tester en réel.
 
 ## 🟠 Gantt & UX
 
-- [ ] **Investiguer "5 dates en trop" panneau Rotations Calendrier** — après scrape sept 2026-06-24 : DB = 320 sigs/1065 dates ✓, mais panneau affiche 130 rot/1070 dates (5 dates en trop). Origine probable : rescue d'orphelins `getRotationsForMonth` lignes 193-237 ajoute sigs de M-1 (août) référencées par planning_items spillover. À confirmer en regardant la console (`[getRotationsForMonth] N sig(s) orpheline(s) au snapshot rescued`).
+- [x] **"5 dates en trop" panneau Rotations Calendrier** — fix 2026-07-01 (`70cf729`) : hypothèse rescue confirmée au code. `RotationSignature.rescued: true` sur les sigs injectées hors snapshot, exclues de l'affichage/compteurs SearchPanel + Catalogue (cache Dexie complet conservé pour calendrier/EP4). ⚠ N'agit qu'après un re-Pull (long-press = force) du mois : le flag est posé au fetch serveur, les caches Dexie existants ne l'ont pas.
 - [ ] **Pager mois swipe horizontal façon iOS** (revert `6b2d9c7`). Specs détaillées dans `memory/project_session_20260618_ep4_stale.md` :
   - Pré-charge 4 mois adjacents (M → M+3)
   - Translate continu au doigt + snap final
@@ -34,13 +34,17 @@ Toute nouvelle proposition doit cocher les 4 cases avant d'être codée.
   - Flèches ‹ › = saut de 4 mois
   - Si perf trop lourde sur iPad → abandonner, garder chevrons seuls.
 - [ ] **Re-tester export/import planning** (disquette NavBar). Bug user signalé "il y a 3 jours" mais avant les gros refactos — peut-être déjà réglé.
+- [ ] **Perf Gantt : mémoïser les stats par scénario** — `computeStats` + primes + IR/MF/IT recalculés dans le render pour chaque scénario à CHAQUE state change (popover, sheet, drag start). Extraire la row scénario en composant mémoïsé ou `useMemo` par `(items, finBaseState, mois)`. Candidat n°1 fluidité iPad ; en profiter pour splitter `gantt-view.tsx` (3 877 lignes).
 
 ## 🟠 Offline-first
 
 - [x] **Pull différentiel par mois (skip si serveur inchangé)** — `ea33d48` (2026-06-23). Validé "tout semble fonctionner".
 - [x] **POSTs offline non-gated** — `1f0ab49` (2026-06-23). `useAuthGuard` background `getUser()` gaté.
-- [ ] **Audit `cache*` wipe-sur-timeout** sur les tables non encore traitées par `fdd1491` (profileVersions/AnnexeRows/A81Overrides/A81YearData OK ; lister les restantes).
-- [ ] **Juillet absent du sync lite** — non reproductible facilement. À creuser quand revu.
+- [x] **Audit `cache*` wipe-sur-timeout** — vérifié 2026-07-01 : `cacheTauxApp` garde `if (rows.length === 0) return` ; profileVersions/AnnexeRows/A81Overrides/A81YearData déjà OK (`fdd1491`) ; `cacheRotations` protégé par le sentinel `null` des callers. Rien de restant.
+- [ ] **Juillet absent du sync lite** — piste identifiée (audit 2026-07-01) : dans `buildSyncPlan`, un mois ≥ mois courant dont le seul snapshot est `is_fictive` est exclu de `liteFull` (pas d'auto-DL fictifs) ET absent de `planningOnly` (réservé aux mois < courant) → mois entièrement hors plan, vols posés inclus. + incohérence : `getAvailableMonths` dédupe en préférant le réel, mais `getRotationsForMonth` prend le snapshot le plus récent par `started_at` même fictif.
+- [ ] **Mois vidé côté serveur jamais purgé en local** — `handlePull` branche « mois légitimement vide » stampe sans appeler `cacheRotations([], m)` → un mois wipé serveur garde ses rotations Dexie indéfiniment (même en force pull).
+- [ ] **Mois courant calculé en UTC** — `toISOString().slice(0,7)` / `getUTC*` partout (nav, shells, buildSyncPlan) : entre 00h et 02h (été) Paris le 1er du mois, l'app considère M-1 comme courant (sync plan, protection « jamais skipper le mois courant », priming). Faire un helper `currentMonthParis()` unique.
+- [ ] **Push concurrent possible après timeout** — `handlePush` race 20s : au timeout, `syncing=false` mais le `syncNow` de fond continue ; un re-Push lance un 2e `syncNow` sur la même queue (adds idempotents, risque faible). Flag module-level « sync en cours ».
 - [ ] **Test wifi captif AF iPad réel** — le test ultime, jamais validé en conditions vol. Validé en simulation SIM travail uniquement.
 - [ ] **Précacher chunk pdfjs** (~2 Mo) côté SW pour permettre l'import EP4 sur 1er PDF cold-cold offline. Aujourd'hui : import = online-only, consultation = offline.
 
