@@ -468,6 +468,10 @@ export type Database = {
         Args: { p_target_month: string };
         Returns: number;
       };
+      wipe_snapshots_for_month: {
+        Args: { p_target_month: string };
+        Returns: Json;
+      };
     };
     CompositeTypes: Record<string, never>;
   };

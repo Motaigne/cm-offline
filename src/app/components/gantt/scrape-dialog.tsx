@@ -106,7 +106,7 @@ export function ScrapeDialog({
       if ('error' in r) {
         setWipeResult(`❌ ${r.error}`);
       } else {
-        setWipeResult(`✓ Wipe : ${r.deleted_snapshots} snapshots, ${r.deleted_sigs} sigs, ${r.deleted_instances} instances supprimés. Relance Analyse.`);
+        setWipeResult(`✓ Wipe : ${r.deleted_snapshots} snapshots, ${r.deleted_sigs} sigs, ${r.deleted_instances} instances supprimés, ${r.unlinked_items} vols user délinkés${r.deleted_releases > 0 ? `, ${r.deleted_releases} release(s)` : ''}. Relance Analyse.`);
         setPhase({ name: 'idle' });
       }
     } catch (err) {
