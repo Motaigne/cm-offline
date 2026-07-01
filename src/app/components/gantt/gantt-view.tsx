@@ -1893,6 +1893,19 @@ export function GanttView({
     setSheet({ mode: 'edit', scenarioId: scenario.id, scenarioName: scenario.name, date: item.start_date, item });
   }
 
+  /** Clic sur une cellule-jour. Si une ROTATION (vol) réelle couvre ce jour dans
+   *  ce scénario → ouvre directement son panneau d'édition (choix catégorie,
+   *  détail départ, HC…). Sinon → chooser d'ajout d'activité. Utile pour les
+   *  rotations à cheval qui partent le 31 à 23:20 (barre minuscule/hors écran). */
+  function openDay(scenario: Scenario, date: string) {
+    const flight = scenario.items.find(it =>
+      it.kind === 'flight' && !it._isSpillover && !it._rpcOnlySpillover
+      && it.start_date <= date && date <= it.end_date,
+    );
+    if (flight) openEdit(flight, scenario);
+    else openAdd(scenario.id, scenario.name, date);
+  }
+
   function handleKindChange(k: ActivityKind) {
     if (!sheet) return;
     setAddKind(k);
@@ -2503,7 +2516,7 @@ export function GanttView({
                         const ds = `${year}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
                         return (
                           <button key={d} className="h-full hover:bg-blue-50/30 dark:hover:bg-blue-900/10 transition-colors"
-                            onClick={() => openAdd(scenario.id, scenario.name, ds)} />
+                            onClick={() => openDay(scenario, ds)} />
                         );
                       })}
                     </div>
@@ -3221,13 +3234,20 @@ export function GanttView({
                     mt-auto pousse les boutons en bas quand la sheet est tall
                     (edit-flight depuis le haut de la ligne C). */}
                 {sheet.mode === 'edit' ? (
+                  // 3 tiers : Modifier activité (→ chooser d'activités) · Mettre
+                  // à jour · Supprimer. « Modifier activité » renvoie sur le
+                  // panneau de choix rotation/congés/… pour le même jour.
                   <div className="flex gap-2 mt-auto">
+                    <button onClick={() => openAdd(sheet.scenarioId, sheet.scenarioName, sheet.date)} disabled={isPending}
+                      className="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-600 px-2 py-2.5 text-[11px] font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 disabled:opacity-40 leading-tight">
+                      Modifier activité
+                    </button>
                     <button onClick={handleSubmit} disabled={isPending}
-                      className="flex-1 rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-zinc-700 disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900">
+                      className="flex-1 rounded-lg bg-zinc-900 px-2 py-2.5 text-[11px] font-semibold text-white hover:bg-zinc-700 disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900 leading-tight">
                       Mettre à jour
                     </button>
                     <button onClick={handleDelete} disabled={isPending}
-                      className="flex-1 rounded-lg bg-red-600 hover:bg-red-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">
+                      className="flex-1 rounded-lg bg-red-600 hover:bg-red-700 px-2 py-2.5 text-[11px] font-semibold text-white disabled:opacity-40 leading-tight">
                       Supprimer
                     </button>
                   </div>
