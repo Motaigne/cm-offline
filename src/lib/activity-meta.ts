@@ -13,7 +13,7 @@ type ActivityMeta = {
 };
 
 export const ACTIVITY_META: Record<ActivityKind, ActivityMeta> = {
-  flight:   { label: 'Vol',         color: '#3B82F6', textColor: '#FFFFFF', order: 9 },  // bleu
+  flight:   { label: 'Vol',         color: '#2E9CDB', textColor: '#FFFFFF', order: 9 },  // bleu ciel (style Crew Mobile)
   conge:    { label: 'Congés',      color: '#15803D', textColor: '#FFFFFF', order: 2 },  // vert foncé
   conge_ss: { label: 'CSS',         color: '#0F766E', textColor: '#FFFFFF', order: 2.5 }, // teal foncé — Congés Sans Solde
   off:      { label: 'DDA REPOS',   color: '#4ADE80', textColor: '#052E16', order: 3 },  // vert clair

@@ -533,7 +533,16 @@ function FinRow({ label, value, cls, bold }: { label: string; value: number; cls
 
 // ─── DraggableBar ────────────────────────────────────────────────────────────
 
-const REST_H = 6;
+const REST_H = 3;
+/** Couleur des lignes RPC / repos pré-courrier — fine ligne teal façon Crew
+ *  Mobile (au lieu de l'ancienne bande bleu clair épaisse). */
+const REST_COLOR = '#5EA0A8';
+
+/** Lettre affichée en haut-gauche de la barre vol selon la catégorie de bid :
+ *  D = DDA (vol/off), P = Vol P, E = Élabo/Suivi. */
+const BID_SHORT: Partial<Record<BidCategory, string>> = {
+  dda_vol: 'D', dda_off: 'D', vol_p: 'P', elabo_suivi: 'E',
+};
 /** Hauteur des flags cliquables (RPC/hard/vol) sous la barre. ~x1.2 de la
  *  bande de violation DDA (15px) pour une cible tactile plus confortable. */
 const FLAG_H = 18;
@@ -601,6 +610,15 @@ function DraggableBar({
   const label = item.kind === 'flight' && metaObj?.destination
     ? String(metaObj.destination)
     : actMeta.label;
+
+  // Lettre bid (D/P/E) + nb de jours ON de la rotation (jours calendaires
+  // couverts, incl. départ et arrivée : MEX 11→14 = 4 ON).
+  const bidShort = item.bid_category ? (BID_SHORT[item.bid_category] ?? '') : '';
+  const onDays = item.kind === 'flight'
+    ? Math.max(1, Math.round(
+        (new Date(item.end_date + 'T00:00:00Z').getTime()
+         - new Date(item.start_date + 'T00:00:00Z').getTime()) / 86_400_000) + 1)
+    : 0;
 
   const hcrCrew      = typeof metaObj?.hcr_crew      === 'number' ? metaObj.hcr_crew      as number : null;
   const prime        = typeof metaObj?.prime         === 'number' ? metaObj.prime         as number : 0;
@@ -785,8 +803,8 @@ function DraggableBar({
             width: `${restBeforeBar.width}%`,
             top: restTop,
             height: REST_H,
-            backgroundColor: '#93C5FD',
-            opacity: isDragSource ? 0.2 : 0.65,
+            backgroundColor: REST_COLOR,
+            opacity: isDragSource ? 0.3 : 0.9,
           }}
         />
       )}
@@ -820,8 +838,8 @@ function DraggableBar({
             width: `${seg.width}%`,
             top: restTop,
             height: REST_H,
-            backgroundColor: hasRpcConflict ? '#F59E0B' : '#93C5FD',
-            opacity: isDragSource ? 0.2 : 0.65,
+            backgroundColor: hasRpcConflict ? '#F59E0B' : REST_COLOR,
+            opacity: isDragSource ? 0.3 : 0.9,
           }}
         />
       ))}
@@ -835,7 +853,7 @@ function DraggableBar({
             top: restTop,
             height: REST_H,
             backgroundImage:
-              'repeating-linear-gradient(90deg,#93C5FD 0,#93C5FD 4px,transparent 4px,transparent 8px)',
+              `repeating-linear-gradient(90deg,${REST_COLOR} 0,${REST_COLOR} 4px,transparent 4px,transparent 8px)`,
             opacity: isDragSource ? 0.15 : 0.5,
           }}
         />
@@ -930,19 +948,29 @@ function DraggableBar({
               aria-hidden
             />
           )}
-          <div className="flex flex-col min-w-0 flex-1 gap-px">
-            <span className="text-[11px] font-semibold truncate leading-none">{label}</span>
-            {euroVal !== null && (
-              <span className="text-[10px] font-mono leading-none opacity-95">
-                {Math.round(euroVal)}€{isProrated ? '*' : ''}
-              </span>
-            )}
-            {hcrDisplay !== null && (
-              <span className="text-[9px] leading-none opacity-60">
-                {hcrDisplay.toFixed(2)}h{prime > 0 ? ` +${prime}P` : ''}
-              </span>
-            )}
-          </div>
+          {item.kind === 'flight' ? (
+            // Layout 3 lignes (style Crew Mobile) :
+            //  1 (petit)  : D/P/E à gauche · «x ON» à droite
+            //  2 (grand)  : code vol centré (MEX / LAX-PPT-LAX)
+            //  3 (petit)  : PV€ / HCr h centrés
+            <div className="flex flex-col min-w-0 flex-1 w-full leading-none">
+              <div className="flex items-center justify-between text-[7px] font-semibold opacity-80">
+                <span>{bidShort}</span>
+                <span>{onDays} ON</span>
+              </div>
+              <div className="text-[16px] font-bold text-center truncate leading-tight">{label}</div>
+              <div className="text-[7px] font-mono text-center opacity-90 truncate">
+                {euroVal !== null ? `${Math.round(euroVal)}€${isProrated ? '*' : ''}` : ''}
+                {euroVal !== null && hcrDisplay !== null ? ' / ' : ''}
+                {hcrDisplay !== null ? `${hcrDisplay.toFixed(1)}h` : ''}
+                {prime > 0 ? ` +${prime}P` : ''}
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col min-w-0 flex-1 gap-px">
+              <span className="text-[11px] font-semibold truncate leading-none">{label}</span>
+            </div>
+          )}
         </div>
       )}
     </>
