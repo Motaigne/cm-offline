@@ -624,9 +624,6 @@ export function NavBar() {
       setTimeout(() => setSyncStatus(''), 3000);
       return;
     }
-    // Fail-open comme handlePush : pas de blocage sur hasRealConnectivity (sonde
-    // faillible → Pull refusé en silence sur vrai WiFi). Pull a déjà des timeouts
-    // par mois (withTimeout 10s) + bouton Annuler, donc pas de hang infini captif.
     setSyncing(true);
     syncCancelRef.current = false;
     // Reset des erreurs capturées : on n'affiche que celles de la session en cours.
@@ -636,6 +633,24 @@ export function NavBar() {
     };
     try {
       setSyncStatus('pull');
+      // Sonde de liaison iPad ↔ serveur AVANT le Pull (opération lourde :
+      // 1 RPC diff + N hydratations de mois). Inutile de lancer des dizaines de
+      // requêtes qui vont hang derrière un captif. La sonde est fiable (200
+      // HTTPS = serveur joint) et l'échec est VISIBLE — pas de rouge muet comme
+      // l'ancien bug : message explicite dans le panneau debug.
+      setDlProgress('vérification connexion…');
+      if (!(await hasRealConnectivity())) {
+        collectedErrors.push({
+          label: 'pull',
+          kind: 'timeout',
+          msg: 'Serveur injoignable (réseau restreint / wifi captif ?) — Pull annulé. Réessaie sur un vrai réseau.',
+        });
+        persistSyncErrors(collectedErrors);
+        setSyncStatus('err');
+        setTimeout(() => setSyncStatus(''), 4000);
+        return; // le finally remet syncing=false + rafraîchit le compteur
+      }
+      setDlProgress('');
       // Cache profil + annexe + A81 versionnés + taux_app en parallèle
       // (légers, < 50KB chacun). taux_app indispensable pour EP4 offline
       // (`loadEp4DetailLocal` retourne null sans, → tableau champ/valeur
