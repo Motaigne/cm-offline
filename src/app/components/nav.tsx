@@ -88,6 +88,10 @@ function buildSyncPlan(availableMonths: AvailableMonth[], mode: SyncMode, persoM
   return { full: liteFull, planningOnly: liteOnly };
 }
 
+/** Identifiant du build réellement chargé (inliné au build, cf. next.config).
+ *  Affiché dans la pastille de version NavBar. */
+const BUILD_ID = process.env.NEXT_PUBLIC_BUILD_ID ?? 'dev';
+
 async function waitForSWController(): Promise<boolean> {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return false;
   if (navigator.serviceWorker.controller) return true;
@@ -453,20 +457,41 @@ export function NavBar() {
   // déjà un controller au chargement, ça signifie qu'une nouvelle version est
   // active mais que le bundle JS en mémoire est l'ancien → on propose un
   // reload via un bandeau (l'utilisateur n'a plus besoin de "Vider cache").
-  const [updateAvailable, setUpdateAvailable] = useState(false);
+  // Cycle de mise à jour du SW, rendu explicite pour l'utilisateur :
+  //   idle       → à jour (ou 1re install) ; on affiche le BUILD_ID courant
+  //   checking   → reg.update() en cours (a-t-on un build plus récent ?)
+  //   installing → un nouveau SW télécharge sa précache (atomique : si on kill
+  //                maintenant, l'install s'annule et l'ancienne version reste)
+  //   ready      → nouveau SW installé + actif : recharger pour l'appliquer
+  // Avant, seul `ready` (point bleu corbeille) était visible → aucune idée si un
+  // check tournait / téléchargeait, ni quelle version était en place.
+  const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'installing' | 'ready'>('idle');
+  const updateAvailable = updateState === 'ready';
+  const swRegRef = useRef<ServiceWorkerRegistration | null>(null);
   useEffect(() => {
     if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
     const hadController = !!navigator.serviceWorker.controller;
-    const onCtrlChange = () => { if (hadController) setUpdateAvailable(true); };
+    const onCtrlChange = () => { if (hadController) setUpdateState('ready'); };
     navigator.serviceWorker.addEventListener('controllerchange', onCtrlChange);
+
+    // Suit un worker en cours d'install jusqu'à ce qu'il soit prêt.
+    const watchInstalling = (sw: ServiceWorker | null) => {
+      if (!sw || !hadController) return; // pas de controller = 1re install, pas une MAJ
+      setUpdateState('installing');
+      sw.addEventListener('statechange', () => {
+        if (sw.state === 'installed') setUpdateState('ready');
+        // état 'activated' → géré par controllerchange (clientsClaim)
+      });
+    };
 
     let intervalId: ReturnType<typeof setInterval> | null = null;
     let onFocus: (() => void) | null = null;
     void navigator.serviceWorker.getRegistration().then(reg => {
       if (!reg) return;
-      // SW déjà en waiting au moment où le listener s'installe (cas où la
-      // détection a eu lieu avant le mount).
-      if (reg.waiting && hadController) setUpdateAvailable(true);
+      swRegRef.current = reg;
+      if (reg.installing) watchInstalling(reg.installing);
+      else if (reg.waiting && hadController) setUpdateState('ready');
+      reg.addEventListener('updatefound', () => watchInstalling(reg.installing));
       // Poll régulier (15 min) + check au focus pour détecter rapidement les
       // déploiements quand l'app reste ouverte longtemps.
       intervalId = setInterval(() => { void reg.update().catch(() => {}); }, 15 * 60 * 1000);
@@ -479,6 +504,24 @@ export function NavBar() {
       if (onFocus) window.removeEventListener('focus', onFocus);
     };
   }, []);
+
+  /** Check manuel : tap sur la pastille de version. Si une MAJ est déjà prête →
+   *  ouvre la modale de rechargement. Sinon force un reg.update() et affiche
+   *  l'état (checking → installing si nouveau build, sinon retour à jour). */
+  async function checkForUpdate() {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    if (updateState === 'ready') { void handleReset(); return; }
+    if (updateState === 'installing' || updateState === 'checking') return;
+    setUpdateState('checking');
+    try {
+      const reg = swRegRef.current ?? await navigator.serviceWorker.getRegistration();
+      if (!reg) { setUpdateState('idle'); return; }
+      await reg.update();
+      // Si update() a trouvé un nouveau build, `updatefound` a déjà basculé en
+      // 'installing'. Sinon on repasse à 'idle' (= à jour) après un court délai.
+      setTimeout(() => setUpdateState(s => (s === 'checking' ? 'idle' : s)), 1500);
+    } catch { setUpdateState('idle'); }
+  }
 
   /** PUSH seul : envoie les opérations en attente (sync_queue Dexie) vers
    *  Supabase. Rapide (1 batch). Bouton visible uniquement si pendingCount>0. */
@@ -925,6 +968,36 @@ export function NavBar() {
               </svg>
             </span>
           )}
+          {/* Pastille de version + cycle de MAJ. Tap = vérifier maintenant
+              (ou recharger si une MAJ est prête). Couleur = état :
+              zinc/emerald à jour · zinc spinner check · ambre install · bleu prêt. */}
+          <button
+            onClick={checkForUpdate}
+            title={
+              updateState === 'ready'      ? `Nouvelle version prête — recharger (installé : ${BUILD_ID})`
+              : updateState === 'installing' ? 'Mise à jour en téléchargement… ne pas kill l\'app'
+              : updateState === 'checking'   ? 'Vérification des mises à jour…'
+              : `Version ${BUILD_ID} — appuyer pour vérifier les mises à jour`
+            }
+            className="px-1.5 h-8 flex items-center gap-1 rounded hover:bg-zinc-800 transition-colors flex-shrink-0"
+          >
+            {(updateState === 'checking' || updateState === 'installing') && (
+              <span className={`inline-block w-2.5 h-2.5 border-2 rounded-full animate-spin ${
+                updateState === 'installing'
+                  ? 'border-amber-500/40 border-t-amber-400'
+                  : 'border-zinc-600 border-t-zinc-300'}`} />
+            )}
+            <span className={`font-mono text-[9px] leading-none tabular-nums ${
+              updateState === 'ready'      ? 'text-blue-400 font-semibold'
+              : updateState === 'installing' ? 'text-amber-400'
+              : updateState === 'checking'   ? 'text-zinc-300'
+              : precacheReady ? 'text-emerald-400/70' : 'text-zinc-500'}`}>
+              {updateState === 'ready'      ? 'MAJ ↻'
+              : updateState === 'installing' ? 'MAJ…'
+              : updateState === 'checking'   ? '…'
+              : BUILD_ID}
+            </span>
+          </button>
           {/* PUSH — visible uniquement s'il y a des modifs locales en queue.
               Cloud-upload : envoie les changements locaux vers Supabase. */}
           {pendingCount > 0 && (

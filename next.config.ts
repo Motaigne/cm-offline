@@ -1,4 +1,5 @@
 import type { NextConfig } from 'next';
+import { execSync } from 'node:child_process';
 import withSerwistInit from '@serwist/next';
 
 // Revision unique par build : invalide automatiquement `/` et `/login` à chaque
@@ -6,6 +7,15 @@ import withSerwistInit from '@serwist/next';
 // hashes des chunks JS associés (sinon : HTML cached → réfs vers chunks
 // disparus → écran blanc en cas de captif post-déploiement).
 const SHELL_REV = String(Date.now());
+
+// Identifiant de build lisible = sha git court + date/heure du build. Exposé au
+// client via NEXT_PUBLIC_BUILD_ID (inliné dans le bundle → reflète la version
+// réellement chargée sur l'appareil). Sert à l'indicateur de version NavBar :
+// on sait d'un coup d'œil quel build tourne sur l'iPad et si un déploiement est
+// bien celui en place. Fallback 'dev' si git indispo (CI shallow, etc.).
+let gitSha = 'dev';
+try { gitSha = execSync('git rev-parse --short HEAD').toString().trim() || 'dev'; } catch { /* pas de git */ }
+const BUILD_ID = `${gitSha}·${new Date().toISOString().slice(5, 16).replace('T', ' ')}`;
 
 const withSerwist = withSerwistInit({
   swSrc: 'src/app/sw.ts',
@@ -23,6 +33,7 @@ const withSerwist = withSerwistInit({
 });
 
 const nextConfig: NextConfig = {
+  env: { NEXT_PUBLIC_BUILD_ID: BUILD_ID },
   turbopack: {},
   experimental: {
     serverActions: {
