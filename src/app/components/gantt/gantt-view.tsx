@@ -421,7 +421,8 @@ function computeStats(
   const finBase = monthlyFinancialsP(totalHcr, totalHc, totalPrime, totalTsvNuit, { pvei, ksp, fixe: fixeCss, nb30e: nb30eEff });
   // PRIME = bi-tronçon (sommée par vol via finBase.primes) + primes mensuelles
   // fixes (incit + A330 + instruction + Mai + Noël). monthlyFixedPrimes est calculé
-  // en amont avec proration régime + boost 100% en juillet/août pour TAF*_10_12.
+  // en amont ; A330/instruction déjà proratisées month-effective (30/30 en
+  // juillet/août pour TAF*_10_12) via finBaseState — plus de boost séparé.
   const primesTotal = finBase.primes + monthlyFixedPrimes;
   const congeAmount = congeDays * (cngPv + cngHs);
   // BRUT : plancher MGA déjà appliqué via DIF dans finBase.total → addition simple.
@@ -1296,10 +1297,16 @@ export function GanttView({
       const nb30eFb   = fullPrime ? 30 : nb30eBase;
       const fixeFb    = fullPrime ? fixeTPProp : fixeRegimeProp;
       const mgaFb     = 85 * pveiProp * kspProp * (nb30eFb / 30);
+      // Primes A330/instruction : proratisées month-effective (× 30/nb30e en
+      // juillet/août TAF*_10_12), pour être homogènes avec la branche annexe
+      // ci-dessus (qui passe déjà nb30e=30) → plus aucun boost à appliquer aval.
+      const primeFullFactor = fullPrime && nb30eBase > 0 ? 30 / nb30eBase : 1;
       return {
         pvei: pveiProp, ksp: kspProp, fixe: fixeFb, fixeTP: fixeTPProp,
         smmg: fixeFb + mgaFb,
-        primeIncitationUnit, primeA330, primeInstruction,
+        primeIncitationUnit,
+        primeA330: primeA330 * primeFullFactor,
+        primeInstruction: primeInstruction * primeFullFactor,
       };
     }
     return null;
@@ -2345,12 +2352,10 @@ export function GanttView({
               const primeNoel = computePrimeNoel(
                 scenario.items, instancesById, year, mo, finBaseState?.pvei ?? PVEI,
               );
-              // En juillet/août pour TAF*_10_12, A330 + Instruction passent à 100%
-              // (× 30/nb30e pour annuler la proration appliquée en amont).
-              const nb30eRegime = REGIME_NB30E[effRegime] ?? NB_30E;
-              const a330InstrBoost = isFullPrimeMonth(effRegime, mo) && nb30eRegime > 0 ? 30 / nb30eRegime : 1;
               // Éléments de paie versionnés selon le mois courant (rechargés à
               // chaque changeMonth). Fallback aux constantes legacy si null.
+              // A330/instruction sont déjà proratisées month-effective dans
+              // finBaseState (30/30 en juil/août TAF*_10_12) → aucun boost ici.
               const pIncit  = finBaseState?.primeIncitationUnit ?? primeIncitationUnit;
               const pA330   = finBaseState?.primeA330           ?? primeA330;
               const pInstr  = finBaseState?.primeInstruction    ?? primeInstruction;
@@ -2359,7 +2364,7 @@ export function GanttView({
               const primeIrgav = irgavCount * 5 * pvForIrgav;
               const monthlyFixedPrimes =
                 pIncit * incitCount
-                + (pA330 + pInstr) * a330InstrBoost
+                + (pA330 + pInstr)
                 + primeIrgav
                 + primeMai + primeNoel;
               const cumulBeforeForScenario = a81CumulBeforeState[scenario.name] ?? 0;
@@ -2465,9 +2470,7 @@ export function GanttView({
                         const kspEff    = finBaseState?.ksp  ?? KSP;
                         const pvHcrEur  = stats.totalHcr * pveiEff * kspEff;
                         const pvNuitEur = (stats.totalTsvNuit / 2) * pveiEff * kspEff;
-                        const nb30eReg2 = REGIME_NB30E[effRegime] ?? NB_30E;
                         const bitroncon = stats.totalPrime * 2.5 * pveiEff;
-                        const boost     = isFullPrimeMonth(effRegime, mo) && nb30eReg2 > 0 ? 30 / nb30eReg2 : 1;
                         setDetailPanel({
                           name: scenario.name, rect,
                           viewportH: window.visualViewport?.height ?? window.innerHeight,
@@ -2483,8 +2486,8 @@ export function GanttView({
                           pveiEff, kspEff, nb30eEff: stats.nb30eEff,
                           totalPrime: stats.totalPrime, bitronconEur: bitroncon,
                           incitation: incitCount * (finBaseState?.primeIncitationUnit ?? primeIncitationUnit),
-                          a330: (finBaseState?.primeA330 ?? primeA330) * boost,
-                          instruction: (finBaseState?.primeInstruction ?? primeInstruction) * boost,
+                          a330: finBaseState?.primeA330 ?? primeA330,
+                          instruction: finBaseState?.primeInstruction ?? primeInstruction,
                           irgav: irgavCount * 5 * (finBaseState?.pvei ?? PVEI),
                           primeMai, primeNoel,
                           primesTotal: stats.fin.primes,
