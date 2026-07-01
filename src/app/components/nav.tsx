@@ -190,6 +190,30 @@ async function verifyPrecache(urls: string[]): Promise<boolean> {
   } catch { return false; }
 }
 
+/** Connectivité RÉELLE vers notre origine — pas juste `navigator.onLine`.
+ *  Sur wifi captif (330 / hôtel / 4G AF), `navigator.onLine === true` mais les
+ *  requêtes vers notre serveur HTTPS hang ou échouent (TLS bloqué par le
+ *  portail). On sonde `/manifest.webmanifest` avec cache-buster + no-store pour
+ *  forcer un vrai aller-retour réseau (sans passer par le cache SW), borné par
+ *  un timeout court. Derrière captif → abort/reject → false. En vrai online →
+ *  JSON du manifest → true. Sert à NE PAS lancer le priming/Sync derrière un
+ *  captif (sinon fetch qui hang, pollution de cache, UX figée). */
+async function hasRealConnectivity(timeoutMs = 2500): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return false;
+  try {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    const res = await fetch(`/manifest.webmanifest?probe=${Date.now()}`, {
+      method: 'GET', cache: 'no-store', signal: ac.signal, credentials: 'omit',
+    });
+    clearTimeout(timer);
+    if (!res.ok) return false;
+    // Un portail captif qui renverrait 200 renverrait du HTML → on refuse.
+    const ct = res.headers.get('content-type') ?? '';
+    return ct.includes('json') || ct.includes('manifest');
+  } catch { return false; }
+}
+
 /** Wrap une promesse avec un timeout — résout à `fallback` si dépassé.
  *  Évite que Sync ne se bloque indéfiniment sur un fetch qui hang
  *  (wifi instable, server action lente, etc.). */
@@ -335,7 +359,12 @@ export function NavBar() {
     void (async () => {
       const ready = await waitForSWController();
       setSwReady(ready);
-      if (ready && navigator.onLine) {
+      // Garde captif : on ne prime QUE si on a une connectivité réelle. Derrière
+      // le wifi 330 (navigator.onLine=true mais serveur injoignable), un
+      // precachePage lancerait des fetch qui hang / peuvent polluer le cache.
+      // On tombe alors dans la branche "vérif seule" comme si on était offline.
+      const reallyOnline = ready && await hasRealConnectivity();
+      if (ready && reallyOnline) {
         const currentMonth = localStorage.getItem('cm-selected-month')
           ?? new Date().toISOString().slice(0, 7);
         const targets: string[] = [...PAGES, '/offline'];
@@ -345,7 +374,7 @@ export function NavBar() {
         await Promise.all(targets.map(url => precachePage(url)));
         const ok = await verifyPrecache(targets);
         setPrecacheReady(ok);
-      } else if (ready && !navigator.onLine) {
+      } else if (ready && !reallyOnline) {
         // Pas de réseau : on vérifie quand même l'état actuel — peut-être que
         // tout est déjà précaché d'un boot précédent.
         const currentMonth = localStorage.getItem('cm-selected-month')
@@ -459,6 +488,13 @@ export function NavBar() {
       setTimeout(() => setSyncStatus(''), 3000);
       return;
     }
+    // Garde captif : navigator.onLine peut être true derrière le wifi 330 alors
+    // que le serveur est injoignable → on évite un Sync qui hang en timeouts.
+    if (!(await hasRealConnectivity())) {
+      setSyncStatus('offline');
+      setTimeout(() => setSyncStatus(''), 3000);
+      return;
+    }
     setSyncing(true);
     // Collecte des erreurs par op pour affichage in-app (dropdown debug).
     const collectedErrors: Array<{ label: string; kind: 'timeout' | 'reject'; msg: string }> = [];
@@ -503,6 +539,12 @@ export function NavBar() {
    *  (déclenché par long-press du bouton Pull). */
   async function handlePull(opts?: { force?: boolean }) {
     if (!navigator.onLine) {
+      setSyncStatus('offline');
+      setTimeout(() => setSyncStatus(''), 3000);
+      return;
+    }
+    // Garde captif : cf. handlePush — pas de Pull derrière un portail captif.
+    if (!(await hasRealConnectivity())) {
       setSyncStatus('offline');
       setTimeout(() => setSyncStatus(''), 3000);
       return;
