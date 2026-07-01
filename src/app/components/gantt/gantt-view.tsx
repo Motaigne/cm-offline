@@ -543,9 +543,10 @@ type FlagPopoverData = {
   key: string;
   title: string;
   message: string;
-  danger: boolean;   // true = rouge (interdit / conflit), false = ambre (avertissement)
-  left: number;      // coords viewport (centre horizontal du flag)
-  top: number;       // coords viewport (juste sous le flag)
+  danger: boolean;     // true = rouge (interdit / conflit), false = ambre (avertissement)
+  left: number;        // coords viewport (centre horizontal du flag)
+  anchorTop: number;   // coords viewport : haut du flag (pour ouvrir vers le haut)
+  anchorBottom: number;// coords viewport : bas du flag (pour ouvrir vers le bas)
 };
 
 function DraggableBar({
@@ -752,7 +753,7 @@ function DraggableBar({
           const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
           onFlagClick?.({
             key: `${item.id}-${key}`, title, message, danger,
-            left: r.left + r.width / 2, top: r.bottom + 6,
+            left: r.left + r.width / 2, anchorTop: r.top, anchorBottom: r.bottom,
           });
         }}
         title={message}
@@ -1473,8 +1474,9 @@ export function GanttView({
      *  Le popover affiche en plus la `realRule` qui explique pourquoi c'est OK. */
     afOnly: boolean;
     realRule?: string;
-    left: number;  // viewport coords (centre horizontal du bandeau)
-    top:  number;  // viewport coords (juste sous le bandeau)
+    left: number;         // viewport coords (centre horizontal du bandeau)
+    anchorTop: number;    // viewport coords : haut du bandeau (ouverture vers le haut)
+    anchorBottom: number; // viewport coords : bas du bandeau (ouverture vers le bas)
   } | null>(null);
 
   // Popover d'un flag RPC/hard/vol (déclenché au clic sur un flag sous la barre).
@@ -2550,7 +2552,8 @@ export function GanttView({
                               afOnly,
                               realRule: v.real_rule_label,
                               left: rect.left + rect.width / 2,
-                              top:  rect.bottom + 6,
+                              anchorTop: rect.top,
+                              anchorBottom: rect.bottom,
                             });
                           }}
                           title={afOnly
@@ -3458,6 +3461,12 @@ export function GanttView({
         const vw = window.innerWidth;
         const rawLeft = violationPopover.left - W / 2;
         const left = Math.max(8, Math.min(rawLeft, vw - W - 8));
+        // Bascule vers le HAUT si l'ouverture vers le bas déborde (ligne C).
+        const EST_H = 220; // popover DDA peut être plus haut (bouton report)
+        const openUp = violationPopover.anchorBottom + EST_H > window.innerHeight;
+        const vPos = openUp
+          ? { bottom: window.innerHeight - violationPopover.anchorTop + 6 }
+          : { top: violationPopover.anchorBottom + 6 };
         return (
           <>
             <div className="fixed inset-0 z-[45]" onClick={() => setViolationPopover(null)} />
@@ -3468,7 +3477,7 @@ export function GanttView({
                   ? 'border-emerald-300 dark:border-emerald-800/60'
                   : 'border-red-300 dark:border-red-800/60'
               }`}
-              style={{ left, top: violationPopover.top, width: W }}
+              style={{ left, ...vPos, width: W }}
               onClick={e => e.stopPropagation()}
             >
               <div className="flex items-start gap-2">
@@ -3546,6 +3555,13 @@ export function GanttView({
         const vw = window.innerWidth;
         const left = Math.max(8, Math.min(flagPopover.left - W / 2, vw - W - 8));
         const red = flagPopover.danger;
+        // Bascule vers le HAUT si l'ouverture vers le bas déborde de l'écran
+        // (cas ligne C, flag près du bas). Sinon vers le bas.
+        const EST_H = 150;
+        const openUp = flagPopover.anchorBottom + EST_H > window.innerHeight;
+        const vPos = openUp
+          ? { bottom: window.innerHeight - flagPopover.anchorTop + 6 }
+          : { top: flagPopover.anchorBottom + 6 };
         return (
           <>
             <div className="fixed inset-0 z-[45]" onClick={() => setFlagPopover(null)} />
@@ -3554,7 +3570,7 @@ export function GanttView({
               className={`fixed z-[50] bg-white dark:bg-zinc-900 border rounded-xl shadow-2xl p-3 space-y-2 ${
                 red ? 'border-red-300 dark:border-red-800/60' : 'border-amber-300 dark:border-amber-800/60'
               }`}
-              style={{ left, top: flagPopover.top, width: W }}
+              style={{ left, ...vPos, width: W }}
               onClick={e => e.stopPropagation()}
             >
               <div className="flex items-start gap-2">
