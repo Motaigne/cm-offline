@@ -52,6 +52,14 @@ function rotToSig(s: Awaited<ReturnType<typeof getRotationsForMonth>>[0]): Sig {
   };
 }
 
+/** Sigs affichables au catalogue : exclut les sigs rescued (hors snapshot du
+ *  mois — spillover M-1, vol d'un ancien snapshot). Elles restent en cache
+ *  Dexie pour le calendrier/EP4 offline mais ne sont pas des rotations
+ *  proposables et gonflent les compteurs. */
+function catalogSigs(sigs: Awaited<ReturnType<typeof getRotationsForMonth>>): Sig[] {
+  return sigs.filter(s => !s.rescued).map(rotToSig);
+}
+
 function fmtTime(t: string | null): string {
   if (!t) return '—';
   return t.slice(0, 5);
@@ -122,14 +130,16 @@ export function CatalogueTable({
       // IDB d'abord (offline-first) — réseau seulement si IDB vide
       const cached = await loadRotationsFromDB(m);
       if (cached.length > 0) {
-        setSigs(cached.map(rotToSig));
+        setSigs(catalogSigs(cached));
         setFromCache(true);
       } else if (navigator.onLine) {
         // Timeout : sans ça, cache vide + wifi captif = spinner bloqué à
         // l'infini (le catch de repli ne s'exécute jamais). Sur timeout → catch
         // → nouvelle tentative Dexie → "pas de cache" au lieu d'un hang.
         const data = await raceTimeout(getRotationsForMonth(m), 10_000, 'catalogue getRotations');
-        setSigs(data.map(rotToSig));
+        setSigs(catalogSigs(data));
+        // Cache la liste COMPLÈTE (rescued incluses) : le calendrier/EP4
+        // offline en a besoin — seul l'affichage catalogue les exclut.
         void cacheRotations(data, m);
       } else {
         setNoCache(true); setSigs([]);
@@ -137,7 +147,7 @@ export function CatalogueTable({
       }
     } catch {
       const cached = await loadRotationsFromDB(m);
-      if (cached.length > 0) { setSigs(cached.map(rotToSig)); setFromCache(true); }
+      if (cached.length > 0) { setSigs(catalogSigs(cached)); setFromCache(true); }
       else { setNoCache(true); setSigs([]); }
     } finally { setLoading(false); }
   }

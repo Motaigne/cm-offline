@@ -506,6 +506,10 @@ export function SearchPanel({
     if (!data) return [];
     const list: RotationSignature[] = [];
     for (const s of data) {
+      // Sigs rescued = hors snapshot courant (spillover M-1, vol d'un ancien
+      // snapshot). Présentes en cache pour le calendrier/EP4, mais pas des
+      // rotations proposables ici — et elles faussent le compteur de dates.
+      if (s.rescued) continue;
       if (query && !s.rotation_code.toLowerCase().includes(query.toLowerCase())) continue;
       if (!matchesFamily(s.aircraft_code, families)) continue;
       if (onExact !== null && s.nb_on_days !== onExact) continue;

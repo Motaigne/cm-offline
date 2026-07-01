@@ -86,6 +86,12 @@ export type RotationSignature = {
   missing_rate_escales: string[];
   /** True si la signature appartient à un snapshot fictif (projection admin). */
   is_fictive?: boolean;
+  /** True si la sig N'appartient PAS au snapshot courant du mois : injectée par
+   *  le rescue (référencée par un planning_item de M ou M-1 — spillover, vol
+   *  importé d'un snapshot précédent). Nécessaire au calendrier/EP4 offline,
+   *  mais à EXCLURE des listes et compteurs du catalogue/panneau Rotations
+   *  (sinon : « 5 dates en trop », les instances de M-1 gonflent le décompte). */
+  rescued?: boolean;
   /** Payload pairing brut renvoyé par CrewBidd. Embarqué dans la signature pour
    *  permettre le calcul EP4 et le panneau Metadata complets en offline-first.
    *  ~1–5 KB JSON / sig. Null si signature pre-mig 0031 sans capture. */
@@ -182,6 +188,9 @@ export async function getRotationsForMonth(
   const { data: sigs } = await sigsQuery;
 
   let allSigs = sigs ?? [];
+  // Ids des sigs injectées par le rescue ci-dessous (hors snapshot courant) —
+  // reportés en `rescued: true` sur les RotationSignature produites.
+  const rescuedIds = new Set<string>();
 
   // Mode full : ajouter aussi les sigs "orphelines au snapshot" — référencées
   // par un planning_item.pairing_instance_id du mois M (et M-1 pour spillover)
@@ -229,6 +238,7 @@ export async function getRotationsForMonth(
             .in('id', missingSigIds);
           if (orphanSigs?.length) {
             allSigs = [...allSigs, ...orphanSigs];
+            for (const s of orphanSigs) rescuedIds.add(s.id);
             console.warn(`[getRotationsForMonth] ${orphanSigs.length} sig(s) orpheline(s) au snapshot rescued pour ${month}:`, orphanSigs.map(s => s.id).slice(0, 5));
           }
         }
@@ -300,6 +310,7 @@ export async function getRotationsForMonth(
       mf_eur:               irMf?.mf_eur ?? 0,
       missing_rate_escales: irMf?.missingRateEscales ?? [],
       is_fictive:           isFictive,
+      ...(rescuedIds.has(s.id) ? { rescued: true } : {}),
     });
   }
   for (const inst of instances) {
@@ -382,6 +393,9 @@ export async function getRotationsForMonth(
       s.prime.toFixed(2),
       s.nb_on_days,
       s.aircraft_code,
+      // Une sig rescued (hors snapshot) ne doit jamais fusionner avec une sig
+      // du snapshot — ses instances gonfleraient les compteurs du catalogue.
+      s.rescued ? 'rescued' : '',
     ].join('|');
   }
 
