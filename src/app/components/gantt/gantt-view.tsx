@@ -741,7 +741,7 @@ function DraggableBar({
   // `danger` : rouge (interdit/conflit) vs ambre (avertissement).
   const renderFlag = (
     zone: { left: number; width: number } | undefined,
-    key: string, title: string, message: string, danger: boolean, icon: string,
+    key: string, title: string, message: string, danger: boolean,
   ) => {
     if (!zone) return null;
     return (
@@ -757,10 +757,10 @@ function DraggableBar({
         }}
         title={message}
         className={[
-          'absolute z-[15] rounded-sm cursor-pointer flex items-center justify-center border leading-none font-bold',
+          'absolute z-[15] rounded-sm cursor-pointer border',
           danger
-            ? 'bg-red-500/45 border-red-600 text-red-800 dark:text-red-100 hover:bg-red-500/65'
-            : 'bg-amber-400/50 border-amber-600 text-amber-800 dark:text-amber-100 hover:bg-amber-400/70',
+            ? 'bg-red-500/50 border-red-600 hover:bg-red-500/70'
+            : 'bg-amber-400/55 border-amber-600 hover:bg-amber-400/75',
         ].join(' ')}
         style={{
           left: `${zone.left}%`,
@@ -768,11 +768,8 @@ function DraggableBar({
           minWidth: 20,
           top: `calc(50% + ${BAR_H / 2 + 3}px)`,
           height: FLAG_H,
-          fontSize: 12,
         }}
-      >
-        {icon}
-      </button>
+      />
     );
   };
 
@@ -880,19 +877,19 @@ function DraggableBar({
         restAfterFlightBars[0], 'flight',
         'RPC sur vol — interdit',
         "Le RPC de ce vol chevauche un autre vol. Un RPC ne peut pas chevaucher un vol : il peut mordre sur le repos pré-courrier qui le précède, mais jamais sur le vol lui-même.",
-        true, '⛔',
+        true,
       )}
       {hasRpcConflict && restAfterSegments.length > 0 && renderFlag(
         restAfterSegments[0], 'rpc',
         'RPC ↔ congé / TAF',
         "Le RPC couvre un jour entier de congé/TAF. Active le mode Chevauchement pour reporter le RPC après le congé, ou retire le congé.",
-        false, '⚠',
+        false,
       )}
       {hasHardConflict && renderFlag(
         restAfterHardBars[0] ?? restBeforeHardBars[0], 'hard',
         'RPC / repos ↔ activité sol',
         "Le RPC ou le repos pré-courrier chevauche une activité sol / médicale / sim / instruction. Vol autorisé, mais à signaler.",
-        true, '⚠',
+        true,
       )}
 
       {/* Main bar — masquée si _rpcOnlySpillover (corps en M-1, seule la
@@ -2563,8 +2560,9 @@ export function GanttView({
                           style={{
                             left:   `${clip.left}%`,
                             width:  `${clip.width}%`,
-                            top:    `calc(50% + ${REST_H / 2 + 4}px)`,
-                            height: 15,
+                            // Même niveau que les flags RPC/hard/vol : sous la barre.
+                            top:    `calc(50% + ${BAR_H / 2 + 3}px)`,
+                            height: FLAG_H,
                           }}
                         />
                       );
