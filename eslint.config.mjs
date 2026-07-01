@@ -1,6 +1,7 @@
 import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
+import reactHooks from "eslint-plugin-react-hooks";
 
 const eslintConfig = defineConfig([
   ...nextVitals,
@@ -16,11 +17,17 @@ const eslintConfig = defineConfig([
     "public/sw.js",
     "public/sw.js.map",
     "public/workbox-*.js",
+    // Projets de référence copiés pour consultation — pas du code optiP.
+    "sources/**",
   ]),
   {
     // Pattern courant ici : `const { foo: _foo, ...rest } = obj` pour drop
     // une prop dans un destructure. Le préfixe `_` signale l'intention de
     // ne pas utiliser la variable — ESLint doit le respecter.
+    // En flat config, une rule référencée dans un objet doit avoir son plugin
+    // déclaré dans le MÊME objet — sans ce `plugins`, ESLint 9 refuse de
+    // démarrer ("could not find plugin react-hooks").
+    plugins: { "react-hooks": reactHooks },
     rules: {
       "@typescript-eslint/no-unused-vars": ["warn", {
         argsIgnorePattern: "^_",

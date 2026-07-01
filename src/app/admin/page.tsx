@@ -63,7 +63,7 @@ export default async function AdminPage() {
             <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Debug</h2>
             <p className="text-xs text-zinc-400 mt-0.5">
               Eruda : console JS overlay pour inspecter network/IndexedDB sur
-              iPad PWA sans Mac. Persisté localStorage de l'instance.
+              iPad PWA sans Mac. Persisté localStorage de l&apos;instance.
             </p>
           </div>
           <ErudaToggle />
