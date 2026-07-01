@@ -877,7 +877,7 @@ function DraggableBar({
       {hasFlightConflict && renderFlag(
         restAfterFlightBars[0], 'flight',
         'RPC sur vol — interdit',
-        "Le RPC de ce vol chevauche un autre vol. Un RPC ne peut pas chevaucher un vol : il peut mordre sur le repos pré-courrier qui le précède, mais jamais sur le vol lui-même.",
+        'Le RPC chevauche un autre vol',
         true,
       )}
       {hasRpcConflict && restAfterSegments.length > 0 && renderFlag(

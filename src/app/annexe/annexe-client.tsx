@@ -568,9 +568,9 @@ function RotationZonesCard({
         />
       }
     >
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
         <table className="w-full text-xs border-collapse">
-          <thead>
+          <thead className="sticky top-0 z-10 bg-zinc-50 dark:bg-zinc-800">
             <tr className="bg-zinc-50 dark:bg-zinc-800/60">
               <th className="px-3 py-1.5 text-left text-[10px] font-medium text-zinc-400 uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">ROT</th>
               <th className="px-3 py-1.5 text-left text-[10px] font-medium text-zinc-400 uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700">Zone</th>
@@ -860,8 +860,8 @@ function IrMfRatesCard({ table, canEdit }: { table: AnnexeRow; canEdit: boolean 
         </div>
       )}
 
-      {/* Tableau */}
-      <div className="overflow-x-auto max-h-[480px] overflow-y-auto">
+      {/* Tableau — hauteur réduite pour n'afficher que ~12 escales (scroll interne). */}
+      <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
         <table className="w-full text-xs">
           <thead className="sticky top-0 bg-zinc-50 dark:bg-zinc-800/90 z-10">
             <tr>
