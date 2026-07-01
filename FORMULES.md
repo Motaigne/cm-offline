@@ -68,7 +68,7 @@
 | Prime incitation | `primeIncitationUnit × incitCount` | 0–5 primes selon saisie | `primeIncitationUnit × incitCount` *(non boostée en juillet/août)* |
 | Prime A330 | `primeA330` | Prime avion A330 | `primeA330 × nb30eR/30` *(régime, **non** abattu CSS/congés)* |
 | Prime instruction | `primeInstruction` | Prime TRI/ICPL | `primeInstruction × nb30eR/30` *(régime, **non** abattu CSS/congés)* |
-| — | `a330InstrBoost` | Boost juillet/août TAF*_10_12 | `fullPrime ? 30/nb30eRégime : 1` | **Nécessaire** (`gantt-view.tsx:2345`) : `primeA330`/`primeInstruction` arrivent déjà proratisées au régime **de base** (23) ; le boost annule cette proration → temps plein 30/30 en juil/août. *(Deviendrait inutile si les primes étaient calculées sur `nb30eR` month-effective à la source — refacto possible.)* 
+| — | ~~`a330InstrBoost`~~ | *supprimé (refacto C2)* | — | Les primes A330/instruction sont désormais proratisées **month-effective à la source** (`finBaseState` : `nb30e = fullPrime ? 30 : nb30eR`), branche annexe **et** fallback → plus de boost aval. A éliminé au passage un **double-boost** en juil/août sur la branche annexe (surpaie A330/instruction). | 
 | Prime mai | — | *(non implémentée)* | 0 |
 | Prime noël | — | *(non implémentée)* | 0 |
 
@@ -191,7 +191,7 @@
 Le **code était correct** sur les 4 points ; seule la doc était à jour ↓.
 
 - **C1** ✅ `totalPv` (§2b) : note réécrite (proration EP4 `rtHDV`/`nuitRatio`, fallback temps-écoulé — `gantt-view.tsx:327`).
-- **C2** ✅ `a330InstrBoost` (§2c) : **confirmé nécessaire** (primes pré-proratisées au régime de base) — note corrigée. Refacto possible pour le supprimer (primes sur `nb30eR` month-effective à la source).
+- **C2** ✅ `a330InstrBoost` **supprimé** (refacto) : primes A330/instruction proratisées month-effective dans `finBaseState` ; branche fallback alignée ; boosts dupliqués (calcul + panneau détail) retirés. **Fix bonus** : double-boost juil/août sur la branche annexe (surpaie A330/instruction) éliminé. `tsc --noEmit` OK, lint sans nouvelle erreur.
 - **C3** ✅ Taux A81 (§5) : documenté — `lookupTauxSej` (zone, table `article_81`) fait foi ; `lookupTauxApp` (rot_code, table `taux_app` souvent vide en prod) est secondaire.
 - **C4** ✅ Annexe §8 : marquée "valeurs illustratives 2025" ; source = annexe versionnée (`optiP_REGLES §2.7`).
 
