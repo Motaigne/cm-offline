@@ -548,6 +548,12 @@ const BID_SHORT: Partial<Record<BidCategory, string>> = {
  *  swatch "Bandeau supérieur du Ghant"). Le corps de la barre utilise la couleur
  *  vol de ACTIVITY_META (bleu acier plus foncé). */
 const FLIGHT_HEADER_COLOR = '#4691D3';
+
+/** Retire le préfixe "{N}ON " du code rotation ("5ON SCL" → "SCL") : le nombre
+ *  de ON est déjà affiché dans le bandeau supérieur. */
+function stripOnPrefix(code: string): string {
+  return code.replace(/^\d+\s*ON\s+/i, '');
+}
 /** Hauteur des flags cliquables (RPC/hard/vol) sous la barre. ~x1.2 de la
  *  bande de violation DDA (15px) pour une cible tactile plus confortable. */
 const FLAG_H = 18;
@@ -960,13 +966,13 @@ function DraggableBar({
             <>
               <div
                 className="absolute top-0 left-0 right-0 flex items-center justify-between px-1.5 pointer-events-none z-[1] text-white"
-                style={{ height: 15, backgroundColor: FLIGHT_HEADER_COLOR, fontSize: 8, lineHeight: 1 }}
+                style={{ height: 15, backgroundColor: FLIGHT_HEADER_COLOR, fontSize: 9, lineHeight: 1 }}
               >
                 <span className="font-bold">{bidShort}</span>
                 <span className="font-semibold">{onDays} ON</span>
               </div>
               <div className="absolute inset-0 flex flex-col items-center justify-center leading-none px-1" style={{ paddingTop: 15 }}>
-                <div className="text-[16px] font-bold text-center truncate leading-tight w-full">{label}</div>
+                <div className="text-[16px] font-bold text-center truncate leading-tight w-full">{stripOnPrefix(label)}</div>
                 <div className="text-[7px] font-mono text-center opacity-90 truncate w-full">
                   {euroVal !== null ? `${Math.round(euroVal)}€${isProrated ? '*' : ''}` : ''}
                   {euroVal !== null && hcrDisplay !== null ? ' / ' : ''}
@@ -994,7 +1000,7 @@ function BarPreview({ item, span }: { item: CalendarItem; span: number }) {
     ? item.meta as Record<string, unknown>
     : null;
   const label = item.kind === 'flight' && metaObj?.destination
-    ? String(metaObj.destination)
+    ? stripOnPrefix(String(metaObj.destination))
     : meta.label;
   return (
     <div

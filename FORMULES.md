@@ -43,7 +43,7 @@
 
 | Terme EP4 | Mon terme | Définition | Formule EP4 | Formule implémentée |
 |-----------|-----------|------------|-------------|---------------------|
-| Heures de paie vol | `totalPv` | Heures valorisées (HCr + nuit) | HC × coefficients | `Σ(HCr_crew) + Σ(TSVnuit)/2` *(HCr proratisé sur le mois M pour les vols à cheval)* |
+| Heures de paie vol | `totalPv` | Heures valorisées (HCr + nuit) | HC × coefficients | `Σ(HCr_crew × rtHDV) + Σ(TSVnuit × nuitRatio)/2` *(vols à cheval : **proration EP4** par heures de vol des tronçons — `rtHDV` pour HCr/HC, `nuitRatio` pour la nuit ; `= 1` si non à cheval ; fallback temps-écoulé `prorateForMonth` si raw_detail absent — cf `gantt-view.tsx`)* |
 | PV € | `pvEur` | Montant paie vol | PV × PVEI × KSP | `totalPv × PVEI × KSP` |
 | HC brut | `totalHc` | HC brut (pas HCr, pas proratisé) | — | `Σ(hc)` *(utilisé uniquement pour taux moyen HS ET pour le calcul de hsH)* |
 | FIXE | `fin.fixe` | Traitement fixe injecté dans le Total | — | `fixeCss` *(⚠ le panneau détail affiche `fixeForFin`, **non** abattu → écart affiché/Total dès que CSS > 0)* |
@@ -68,7 +68,7 @@
 | Prime incitation | `primeIncitationUnit × incitCount` | 0–5 primes selon saisie | `primeIncitationUnit × incitCount` *(non boostée en juillet/août)* |
 | Prime A330 | `primeA330` | Prime avion A330 | `primeA330 × nb30eR/30` *(régime, **non** abattu CSS/congés)* |
 | Prime instruction | `primeInstruction` | Prime TRI/ICPL | `primeInstruction × nb30eR/30` *(régime, **non** abattu CSS/congés)* |
-| — | `a330InstrBoost` | Boost juillet/août TAF*_10_12 | `fullPrime ? 30/nb30eRégime : 1` | *inutile je suppose avec la modification* 
+| — | `a330InstrBoost` | Boost juillet/août TAF*_10_12 | `fullPrime ? 30/nb30eRégime : 1` | **Nécessaire** (`gantt-view.tsx:2345`) : `primeA330`/`primeInstruction` arrivent déjà proratisées au régime **de base** (23) ; le boost annule cette proration → temps plein 30/30 en juil/août. *(Deviendrait inutile si les primes étaient calculées sur `nb30eR` month-effective à la source — refacto possible.)* 
 | Prime mai | — | *(non implémentée)* | 0 |
 | Prime noël | — | *(non implémentée)* | 0 |
 
@@ -153,6 +153,8 @@
 
 > Le montant Article 81 est proratisé sur le mois M pour les vols à cheval (`prorateForMonth`).  
 > Le calcul utilise le `tSej` de la signature (déjà calculé par le scraper).
+>
+> **Deux lookups du taux** (à garder cohérents) : `lookupTauxSej(zone, tSej)` — table `article_81`, matrice **zone × tranche de durée**, **source de vérité** (cf `optiP_REGLES §2.2`) — vs `lookupTauxApp(rot_code, tempsSej)` — table `taux_app` indexée par rotation, **souvent non seedée en prod** → retombe alors sur la zone. Le lookup **par zone fait foi**.
 
 ---
 
@@ -184,16 +186,20 @@
 
 ---
 
-### Audit doc (2026-07-01) — TODO restants
+### Audit doc (2026-07-01) — traité
 
-- **C1** — `totalPv` (§2b) : intégrer la **proration EP4** (`rtHDV` / `nuitRatio`, cf `optiP_DEF_maj §1`) ; la note actuelle décrit encore l'ancienne proration temps-écoulé.
-- **C2** — `a330InstrBoost` (§2c) : probablement **redondant** si les primes utilisent `nb30eR` déjà month-effective (30 en juil/août) → confirmer puis supprimer.
-- **C3** — Taux A81 : **deux lookups** — `lookupTauxApp(rotation_code, tempsSej)` (§3c) vs `lookupTauxSej(zone, tSej)` (§5). Vérifier qu'ils donnent le même taux (matrice = zone × tranche de durée uniquement, cf `optiP_REGLES §2.2`).
-- **C4** — Annexe §8 : valeurs **2025 seulement** (fixe 2559,19 ; taux avion 2025), alors qu'optiP a le versionné 2025 + 2026 → aligner ou marquer "valeurs illustratives 2025".
+Le **code était correct** sur les 4 points ; seule la doc était à jour ↓.
+
+- **C1** ✅ `totalPv` (§2b) : note réécrite (proration EP4 `rtHDV`/`nuitRatio`, fallback temps-écoulé — `gantt-view.tsx:327`).
+- **C2** ✅ `a330InstrBoost` (§2c) : **confirmé nécessaire** (primes pré-proratisées au régime de base) — note corrigée. Refacto possible pour le supprimer (primes sur `nb30eR` month-effective à la source).
+- **C3** ✅ Taux A81 (§5) : documenté — `lookupTauxSej` (zone, table `article_81`) fait foi ; `lookupTauxApp` (rot_code, table `taux_app` souvent vide en prod) est secondaire.
+- **C4** ✅ Annexe §8 : marquée "valeurs illustratives 2025" ; source = annexe versionnée (`optiP_REGLES §2.7`).
 
 ---
 
 ## 8. ANNEXE :
+
+> ⚠ Valeurs **illustratives 2025** (fixe 2559,19 ; taux avion 2025). optiP utilise l'**annexe versionnée** (2025 **+** 2026, cf `optiP_REGLES §2.7`) — ces tables ne sont qu'un repère.
 
 ### Taux avion (ou "Taux horaire de base des primes de vol")
 AVION | Primes de vol
