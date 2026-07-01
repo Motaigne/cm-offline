@@ -534,11 +534,25 @@ function FinRow({ label, value, cls, bold }: { label: string; value: number; cls
 // ─── DraggableBar ────────────────────────────────────────────────────────────
 
 const REST_H = 6;
+/** Hauteur des flags cliquables (RPC/hard/vol) sous la barre. ~x1.2 de la
+ *  bande de violation DDA (15px) pour une cible tactile plus confortable. */
+const FLAG_H = 18;
+
+/** Payload d'un flag cliqué → popover de détail (cf. flagPopover dans GanttView). */
+type FlagPopoverData = {
+  key: string;
+  title: string;
+  message: string;
+  danger: boolean;   // true = rouge (interdit / conflit), false = ambre (avertissement)
+  left: number;      // coords viewport (centre horizontal du flag)
+  top: number;       // coords viewport (juste sous le flag)
+};
 
 function DraggableBar({
   item, clip, dim, year, mo, onEdit, isDragSource,
   scenarioItems, rpcChevauchement, isFictive = false,
   pvei = PVEI, ksp = KSP, hasMep = false, prorationRatio = null,
+  onFlagClick,
 }: {
   item: CalendarItem;
   clip: { start: number; end: number };
@@ -566,6 +580,8 @@ function DraggableBar({
   /** Ratios de proration mensuelle EP4 (rtHDV pour HCr, nuitRatio pour la nuit)
    *  pour ce vol. null → fallback proration temps-écoulé. */
   prorationRatio?: { rtHDV: number; nuitRatio: number } | null;
+  /** Clic sur un flag (RPC/hard/vol) → ouvre le popover de détail côté parent. */
+  onFlagClick?: (f: FlagPopoverData) => void;
 }) {
   const readOnly = !!item._isSpillover;
   // RPC-only spillover : vol dont le corps est en M-1 et dont la queue RPC
@@ -720,6 +736,46 @@ function DraggableBar({
 
   const restTop = `calc(50% - ${REST_H / 2}px)`;
 
+  // Flag cliquable positionné SOUS la barre (plus facile à taper qu'au-dessus),
+  // sur la zone de conflit. Tap → popover de détail côté parent (onFlagClick).
+  // `danger` : rouge (interdit/conflit) vs ambre (avertissement).
+  const renderFlag = (
+    zone: { left: number; width: number } | undefined,
+    key: string, title: string, message: string, danger: boolean, icon: string,
+  ) => {
+    if (!zone) return null;
+    return (
+      <button
+        type="button"
+        onClick={e => {
+          e.stopPropagation();
+          const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+          onFlagClick?.({
+            key: `${item.id}-${key}`, title, message, danger,
+            left: r.left + r.width / 2, top: r.bottom + 6,
+          });
+        }}
+        title={message}
+        className={[
+          'absolute z-[15] rounded-sm cursor-pointer flex items-center justify-center border leading-none font-bold',
+          danger
+            ? 'bg-red-500/45 border-red-600 text-red-800 dark:text-red-100 hover:bg-red-500/65'
+            : 'bg-amber-400/50 border-amber-600 text-amber-800 dark:text-amber-100 hover:bg-amber-400/70',
+        ].join(' ')}
+        style={{
+          left: `${zone.left}%`,
+          width: `${zone.width}%`,
+          minWidth: 20,
+          top: `calc(50% + ${BAR_H / 2 + 3}px)`,
+          height: FLAG_H,
+          fontSize: 12,
+        }}
+      >
+        {icon}
+      </button>
+    );
+  };
+
   return (
     <>
       {/* Pre-repos bar */}
@@ -818,41 +874,25 @@ function DraggableBar({
           }}
         />
       ))}
-      {hasFlightConflict && restAfterFlightBars.length > 0 && (
-        <span
-          className="absolute pointer-events-none z-[14] text-red-600 text-[11px] font-bold leading-none"
-          title="INTERDIT : le RPC chevauche un vol. Un RPC ne peut pas chevaucher un vol (uniquement le repos pré-courrier qui le précède)."
-          style={{
-            left: `calc(${restAfterFlightBars[0].left}% - 2px)`,
-            top: `calc(50% - ${REST_H / 2 + 8}px)`,
-          }}
-        >
-          ⛔
-        </span>
+      {/* Flags cliquables SOUS la barre (RPC↔vol interdit / RPC↔congé / hard
+          blocker). Tap → popover de détail. Positionnés sur la zone de conflit. */}
+      {hasFlightConflict && renderFlag(
+        restAfterFlightBars[0], 'flight',
+        'RPC sur vol — interdit',
+        "Le RPC de ce vol chevauche un autre vol. Un RPC ne peut pas chevaucher un vol : il peut mordre sur le repos pré-courrier qui le précède, mais jamais sur le vol lui-même.",
+        true, '⛔',
       )}
-      {hasRpcConflict && restAfterSegments.length > 0 && (
-        <span
-          className="absolute pointer-events-none z-[12] text-amber-500 text-[10px] font-bold leading-none"
-          title="RPC en conflit avec un congé/TAF (jour entier). Active Chevauchement pour reporter le RPC, ou retire le congé."
-          style={{
-            left: `calc(${restAfterSegments[0].left}% - 2px)`,
-            top: `calc(50% - ${REST_H / 2 + 8}px)`,
-          }}
-        >
-          ⚠
-        </span>
+      {hasRpcConflict && restAfterSegments.length > 0 && renderFlag(
+        restAfterSegments[0], 'rpc',
+        'RPC ↔ congé / TAF',
+        "Le RPC couvre un jour entier de congé/TAF. Active le mode Chevauchement pour reporter le RPC après le congé, ou retire le congé.",
+        false, '⚠',
       )}
-      {hasHardConflict && (restAfterHardBars.length > 0 || restBeforeHardBars.length > 0) && (
-        <span
-          className="absolute pointer-events-none z-[13] text-red-600 text-[10px] font-bold leading-none"
-          title="Le RPC ou le repos pré-courrier chevauche une activité sol/médicale/sim/instruction. Vol autorisé, mais à signaler."
-          style={{
-            left: `calc(${(restAfterHardBars[0] ?? restBeforeHardBars[0]).left}% - 2px)`,
-            top: `calc(50% - ${REST_H / 2 + 8}px)`,
-          }}
-        >
-          ⚠
-        </span>
+      {hasHardConflict && renderFlag(
+        restAfterHardBars[0] ?? restBeforeHardBars[0], 'hard',
+        'RPC / repos ↔ activité sol',
+        "Le RPC ou le repos pré-courrier chevauche une activité sol / médicale / sim / instruction. Vol autorisé, mais à signaler.",
+        true, '⚠',
       )}
 
       {/* Main bar — masquée si _rpcOnlySpillover (corps en M-1, seule la
@@ -1439,6 +1479,9 @@ export function GanttView({
     left: number;  // viewport coords (centre horizontal du bandeau)
     top:  number;  // viewport coords (juste sous le bandeau)
   } | null>(null);
+
+  // Popover d'un flag RPC/hard/vol (déclenché au clic sur un flag sous la barre).
+  const [flagPopover, setFlagPopover] = useState<FlagPopoverData | null>(null);
 
   // Compteur prime d'incitation (0-5), persistance localStorage par mois.
   const [incitCount, setIncitCount] = useLocalStorageState<number>(
@@ -2470,6 +2513,7 @@ export function GanttView({
                           ksp={finBaseState?.ksp ?? KSP}
                           hasMep={hasMep}
                           prorationRatio={ep4Proration.get(item.id) ?? null}
+                          onFlagClick={setFlagPopover}
                         />
                       );
                     })}
@@ -3492,6 +3536,44 @@ export function GanttView({
                   ↩ Reporter RPC à la fin des CONGES
                 </button>
               )}
+            </div>
+          </>
+        );
+      })()}
+
+      {/* Popover flag RPC/hard/vol — affiché au clic sur un flag sous la barre.
+          Centré horizontalement sous le flag. */}
+      {flagPopover && (() => {
+        const W = 230;
+        const vw = window.innerWidth;
+        const left = Math.max(8, Math.min(flagPopover.left - W / 2, vw - W - 8));
+        const red = flagPopover.danger;
+        return (
+          <>
+            <div className="fixed inset-0 z-[45]" onClick={() => setFlagPopover(null)} />
+            <div
+              role="dialog"
+              className={`fixed z-[50] bg-white dark:bg-zinc-900 border rounded-xl shadow-2xl p-3 space-y-2 ${
+                red ? 'border-red-300 dark:border-red-800/60' : 'border-amber-300 dark:border-amber-800/60'
+              }`}
+              style={{ left, top: flagPopover.top, width: W }}
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-start gap-2">
+                <span className={`text-base leading-none flex-shrink-0 ${red ? 'text-red-500 dark:text-red-400' : 'text-amber-500 dark:text-amber-400'}`}>
+                  {red ? '⛔' : '⚠'}
+                </span>
+                <div className={`flex-1 min-w-0 text-[11px] font-bold uppercase tracking-wide ${red ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                  {flagPopover.title}
+                </div>
+                <button
+                  onClick={() => setFlagPopover(null)}
+                  className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-lg leading-none flex-shrink-0"
+                >×</button>
+              </div>
+              <p className="text-[11px] text-zinc-600 dark:text-zinc-300 leading-snug">
+                {flagPopover.message}
+              </p>
             </div>
           </>
         );
