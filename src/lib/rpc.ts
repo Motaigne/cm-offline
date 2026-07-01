@@ -43,6 +43,11 @@ export type EffectiveRpc = {
    *  blocker (sol/medical/autre 8h-18h Paris, sim/instr jour entier).
    *  Rendues en rouge par l'UI avec une icône d'alerte. */
   hardConflict: RpcSegment[];
+  /** Portions du RPC qui chevauchent le VOL d'une autre rotation
+   *  ([block-off, block-on]). INTERDIT : un RPC peut mordre sur le repos
+   *  pré-courrier du vol suivant, mais jamais sur le vol lui-même. Rendu rouge
+   *  + alerte "interdit" par l'UI. */
+  flightConflict: RpcSegment[];
 };
 
 // Soft blockers : RPC peut les chevaucher (pause/resume en mode ON, flag en
@@ -133,6 +138,31 @@ function intersectSegmentsWithWindows(
   return out.sort((a, b) => a.startMs - b.startMs);
 }
 
+/** Fenêtre "vol" d'une rotation = [block-off (depart_at), block-on (arrivee_at)].
+ *  C'est ce qu'un RPC ne doit JAMAIS chevaucher (il peut mordre le repos
+ *  pré-courrier [scheduled_begin_activity_at, depart_at[ qui précède, pas le vol).
+ *  Retourne null si l'item n'est pas un vol ou n'a pas de timestamps valides. */
+function flightWindow(item: CalendarItem): RpcSegment | null {
+  if (item.kind !== 'flight') return null;
+  const meta = (item.meta && typeof item.meta === 'object' && !Array.isArray(item.meta))
+    ? item.meta as Record<string, unknown> : null;
+  const dep = typeof meta?.depart_at  === 'string' ? new Date(meta.depart_at).getTime()  : NaN;
+  const arr = typeof meta?.arrivee_at === 'string' ? new Date(meta.arrivee_at).getTime() : NaN;
+  if (!Number.isFinite(dep) || !Number.isFinite(arr) || arr <= dep) return null;
+  return { startMs: dep, endMs: arr };
+}
+
+/** Collecte les fenêtres "vol" de tous les vols (pour détecter les zones où le
+ *  RPC chevauche un vol — interdit). */
+function collectFlightWindows(items: CalendarItem[]): RpcSegment[] {
+  const out: RpcSegment[] = [];
+  for (const it of items) {
+    const w = flightWindow(it);
+    if (w) out.push(w);
+  }
+  return out.sort((a, b) => a.startMs - b.startMs);
+}
+
 /** Décompose les items congé/TAF en jours individuels (un objet par 24h).
  *  Trié par startMs. Utilise les dates UTC pour rester cohérent avec dayFrac
  *  du gantt (qui utilise les accesseurs UTC). */
@@ -168,7 +198,7 @@ export function computeEffectiveRpc(
 ): EffectiveRpc {
   const empty: EffectiveRpc = {
     segments: [], endMs: 0,
-    hasConflict: false, pauseIntervals: [], hardConflict: [],
+    hasConflict: false, pauseIntervals: [], hardConflict: [], flightConflict: [],
   };
   if (flight.kind !== 'flight') return empty;
   const meta = (flight.meta && typeof flight.meta === 'object' && !Array.isArray(flight.meta))
@@ -189,6 +219,7 @@ export function computeEffectiveRpc(
 
   const others        = items.filter(it => it.id !== flight.id);
   const hardWindows   = collectHardBlockerWindows(others);
+  const flightWindows = collectFlightWindows(others);
   const origEnd       = arrivee + restMs;
 
   // Itère : pour chaque jour entier de congé/TAF couvert par le RPC (de plus
@@ -226,6 +257,7 @@ export function computeEffectiveRpc(
       hasConflict: pausedDays.length > 0,
       pauseIntervals: [],
       hardConflict: intersectSegmentsWithWindows(segments, hardWindows),
+      flightConflict: intersectSegmentsWithWindows(segments, flightWindows),
     };
   }
 
@@ -240,6 +272,7 @@ export function computeEffectiveRpc(
       hasConflict: false,
       pauseIntervals: [],
       hardConflict: intersectSegmentsWithWindows(segments, hardWindows),
+      flightConflict: intersectSegmentsWithWindows(segments, flightWindows),
     };
   }
 
@@ -267,5 +300,6 @@ export function computeEffectiveRpc(
     hasConflict: true,
     pauseIntervals,
     hardConflict: intersectSegmentsWithWindows(segments, hardWindows),
+    flightConflict: intersectSegmentsWithWindows(segments, flightWindows),
   };
 }

@@ -617,8 +617,11 @@ function DraggableBar({
   const restAfterSegments: { left: number; width: number }[] = [];
   const restAfterPauses:   { left: number; width: number }[] = [];
   const restAfterHardBars: { left: number; width: number }[] = [];
+  // Portions du RPC qui chevauchent le VOL d'une autre rotation (INTERDIT).
+  const restAfterFlightBars: { left: number; width: number }[] = [];
   let hasRpcConflict = false;
   let hasHardConflict = false;
+  let hasFlightConflict = false;
 
   // Helper utilisé pour convertir un intervalle UTC ms en barre relative au mois.
   const segToBar = (startMs: number, endMs: number): { left: number; width: number } | null => {
@@ -687,8 +690,13 @@ function DraggableBar({
       const bar = segToBar(hc.startMs, hc.endMs);
       if (bar) restAfterHardBars.push(bar);
     }
+    for (const fc of eff.flightConflict) {
+      const bar = segToBar(fc.startMs, fc.endMs);
+      if (bar) restAfterFlightBars.push(bar);
+    }
     hasRpcConflict  = eff.hasConflict && !rpcChevauchement;
     hasHardConflict = eff.hardConflict.length > 0 || restBeforeHardBars.length > 0;
+    hasFlightConflict = eff.flightConflict.length > 0;
   } else if ((item.kind === 'sol' || item.kind === 'medical' || item.kind === 'autre')) {
     // 8h-18h Paris : fenêtre temporelle au sein du jour (au lieu du jour entier).
     const w = hardBlockerWindow(item);
@@ -793,6 +801,35 @@ function DraggableBar({
           }}
         />
       ))}
+      {/* Overlay ROUGE VIF sur la portion du RPC qui chevauche le VOL d'une
+          autre rotation. INTERDIT : un RPC ne peut pas chevaucher un vol
+          (seulement le repos pré-courrier qui le précède). */}
+      {restAfterFlightBars.map((seg, i) => (
+        <div
+          key={`rest-flight-${i}`}
+          className="absolute pointer-events-none z-[13] rounded-sm"
+          style={{
+            left: `${seg.left}%`,
+            width: `${seg.width}%`,
+            top: restTop,
+            height: REST_H,
+            backgroundColor: '#B91C1C',
+            opacity: isDragSource ? 0.35 : 0.95,
+          }}
+        />
+      ))}
+      {hasFlightConflict && restAfterFlightBars.length > 0 && (
+        <span
+          className="absolute pointer-events-none z-[14] text-red-600 text-[11px] font-bold leading-none"
+          title="INTERDIT : le RPC chevauche un vol. Un RPC ne peut pas chevaucher un vol (uniquement le repos pré-courrier qui le précède)."
+          style={{
+            left: `calc(${restAfterFlightBars[0].left}% - 2px)`,
+            top: `calc(50% - ${REST_H / 2 + 8}px)`,
+          }}
+        >
+          ⛔
+        </span>
+      )}
       {hasRpcConflict && restAfterSegments.length > 0 && (
         <span
           className="absolute pointer-events-none z-[12] text-amber-500 text-[10px] font-bold leading-none"
