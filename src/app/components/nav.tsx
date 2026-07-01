@@ -92,6 +92,11 @@ function buildSyncPlan(availableMonths: AvailableMonth[], mode: SyncMode, persoM
  *  Affiché dans la pastille de version NavBar. */
 const BUILD_ID = process.env.NEXT_PUBLIC_BUILD_ID ?? 'dev';
 
+/** Timeout global du Push : au-delà, on abandonne l'attente (les ops restent en
+ *  queue et seront retentées). Évite que la modale bloquante hang à l'infini
+ *  derrière un captif. Généreux pour couvrir une grosse queue sur 3G lente. */
+const PUSH_TIMEOUT_MS = 20000;
+
 async function waitForSWController(): Promise<boolean> {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return false;
   if (navigator.serviceWorker.controller) return true;
@@ -546,22 +551,52 @@ export function NavBar() {
     const collectedErrors: Array<{ label: string; kind: 'timeout' | 'reject'; msg: string }> = [];
     try {
       setSyncStatus('push');
-      await syncNow({
-        onOpError: (op, e) => {
-          collectedErrors.push({
-            label: `${op.op}#${op.id ?? '?'}`,
-            kind: 'reject',
-            msg: String((e as Error)?.message ?? e),
-          });
-        },
-      });
-      setPendingCount(0);
-      setSyncStatus('ok');
-      persistSyncErrors(collectedErrors);
-      setTimeout(() => { setSyncStatus(''); router.refresh(); }, 1200);
+      // Timeout global : syncNow n'a aucun timeout interne → derrière un vrai
+      // captif (navigator.onLine=true mais serveur injoignable), la modale
+      // bloquante hangerait à l'infini. On borne à PUSH_TIMEOUT_MS. Les ops non
+      // envoyées restent en queue (retry au prochain Push). On distingue
+      // proprement ok / échec op / timeout (Promise.race, pas withTimeout qui
+      // confond reject et timeout).
+      const outcome = await Promise.race([
+        syncNow({
+          onOpError: (op, e) => {
+            collectedErrors.push({
+              label: `${op.op}#${op.id ?? '?'}`,
+              kind: 'reject',
+              msg: String((e as Error)?.message ?? e),
+            });
+          },
+        }).then(() => ({ kind: 'ok' as const }))
+          .catch((e: unknown) => ({ kind: 'fail' as const, err: e })),
+        new Promise<{ kind: 'timeout' }>(res =>
+          setTimeout(() => res({ kind: 'timeout' as const }), PUSH_TIMEOUT_MS)),
+      ]);
+
+      if (outcome.kind === 'ok') {
+        setPendingCount(0);
+        setSyncStatus('ok');
+        persistSyncErrors(collectedErrors);
+        setTimeout(() => { setSyncStatus(''); router.refresh(); }, 1200);
+      } else if (outcome.kind === 'timeout') {
+        collectedErrors.push({
+          label: 'push',
+          kind: 'timeout',
+          msg: `Sync interrompue après ${PUSH_TIMEOUT_MS / 1000}s (réseau lent ou restreint). Tes modifs restent en attente — réessaie plus tard.`,
+        });
+        persistSyncErrors(collectedErrors);
+        setSyncStatus('err');
+        setTimeout(() => setSyncStatus(''), 4000);
+      } else {
+        // Au moins une op a échoué — détails déjà captés via onOpError.
+        if (collectedErrors.length === 0) {
+          collectedErrors.push({ label: 'syncNow', kind: 'reject', msg: String((outcome.err as Error)?.message ?? outcome.err) });
+        }
+        persistSyncErrors(collectedErrors);
+        setSyncStatus('err');
+        setTimeout(() => setSyncStatus(''), 3000);
+      }
     } catch (e) {
-      // syncNow throw uniquement si au moins 1 op a échoué — l'erreur a déjà
-      // été captée via onOpError. On garde la trace au cas où.
+      // Filet ultime (la race catch déjà les rejets de syncNow).
       if (collectedErrors.length === 0) {
         collectedErrors.push({ label: 'syncNow', kind: 'reject', msg: String((e as Error)?.message ?? e) });
       }
