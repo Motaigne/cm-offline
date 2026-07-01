@@ -1489,7 +1489,7 @@ export function GanttView({
     totalHc: number; seuil75: number; hsH: number; hsEur: number;
     hsFixeRate: number; hsVolRate: number;
     // PV+HS / MGA / DIFF — pveiEff, kspEff & nb30eEff servent à afficher la formule MGA
-    fixeForFin: number; totalNew: number; mga: number; diff: number;
+    fixeCss: number; totalNew: number; mga: number; diff: number;
     pveiEff: number; kspEff: number; nb30eEff: number;
     // Primes (déjà ventilées) + congés + IR/MF
     totalPrime: number; bitronconEur: number;
@@ -2481,7 +2481,7 @@ export function GanttView({
                           totalHc: stats.totalHc, seuil75: stats.hsSeuil,
                           hsH: stats.hsH, hsEur: stats.fin.hs,
                           hsFixeRate: stats.hsFixeRate, hsVolRate: stats.hsVolRate,
-                          fixeForFin: stats.fin.fixe, // déjà abattu du CSS (cf computeStats)
+                          fixeCss: stats.fin.fixe, // déjà abattu du CSS (cf computeStats)
                           totalNew: stats.fin.total, mga: stats.fin.mga, diff: stats.fin.diff,
                           pveiEff, kspEff, nb30eEff: stats.nb30eEff,
                           totalPrime: stats.totalPrime, bitronconEur: bitroncon,
@@ -3680,7 +3680,7 @@ export function GanttView({
             <div className="space-y-1.5 mb-2 font-mono text-[9px]">
               <div className="flex items-baseline justify-between">
                 <span className="text-zinc-500">FIXE</span>
-                <span className="text-zinc-700 dark:text-zinc-200 font-semibold">{Math.round(detailPanel.fixeForFin)}</span>
+                <span className="text-zinc-700 dark:text-zinc-200 font-semibold">{Math.round(detailPanel.fixeCss)}</span>
               </div>
 
               <div>
@@ -3845,8 +3845,8 @@ export function GanttView({
                 : `BRUT = FIXE + MGA + cg + P + IR/MF${itSuffix}`;
               const pvHs         = detailPanel.pvEur + detailPanel.hsEur;
               const breakdown    = diffPos
-                ? `${Math.round(detailPanel.fixeForFin)} + ${Math.round(pvHs)} + ${Math.round(detailPanel.congeAmount)} + ${Math.round(detailPanel.primesTotal)} + ${Math.round(irMfEur)}${itValSuffix}`
-                : `${Math.round(detailPanel.fixeForFin)} + ${Math.round(detailPanel.mga)} + ${Math.round(detailPanel.congeAmount)} + ${Math.round(detailPanel.primesTotal)} + ${Math.round(irMfEur)}${itValSuffix}`;
+                ? `${Math.round(detailPanel.fixeCss)} + ${Math.round(pvHs)} + ${Math.round(detailPanel.congeAmount)} + ${Math.round(detailPanel.primesTotal)} + ${Math.round(irMfEur)}${itValSuffix}`
+                : `${Math.round(detailPanel.fixeCss)} + ${Math.round(detailPanel.mga)} + ${Math.round(detailPanel.congeAmount)} + ${Math.round(detailPanel.primesTotal)} + ${Math.round(irMfEur)}${itValSuffix}`;
               return (
                 <div className="font-mono text-[9px]">
                   <div className="flex items-baseline justify-between">
