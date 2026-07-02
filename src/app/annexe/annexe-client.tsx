@@ -671,6 +671,214 @@ function RotationZonesCard({
   );
 }
 
+// ── Cibles mensuelles élabo (monthly_targets) ─────────────────────────────────
+// eHS = écart au seuil HS recherché par l'élabo, en intervalle [min ; max].
+// HC = heures créditées cibles pour un plein temps sans absence.
+// Valeurs recopiées à la main depuis Crew Mobile, pour le profil actif.
+type MonthlyTarget = { month: string; ehs_min: number; ehs_max: number; hc: number };
+type MonthlyTargetsData = { version?: string; targets: MonthlyTarget[] };
+
+function fmtMonthFr(month: string): string {
+  const [y, m] = month.split('-').map(Number);
+  if (!y || !m) return month;
+  return `${MONTH_NAMES_FR[m - 1]} ${y}`;
+}
+
+function MonthlyTargetRow({
+  target, canEdit, busy, onSave, onRemove,
+}: {
+  target: MonthlyTarget;
+  canEdit: boolean;
+  busy: boolean;
+  onSave: (next: MonthlyTarget) => void;
+  onRemove: () => void;
+}) {
+  const [draft, setDraft] = useState({ ehs_min: String(target.ehs_min), ehs_max: String(target.ehs_max), hc: String(target.hc) });
+
+  function commit() {
+    const ehsMin = parseFloat(draft.ehs_min.replace(',', '.'));
+    const ehsMax = parseFloat(draft.ehs_max.replace(',', '.'));
+    const hc = parseFloat(draft.hc.replace(',', '.'));
+    if ([ehsMin, ehsMax, hc].some(isNaN)) {
+      setDraft({ ehs_min: String(target.ehs_min), ehs_max: String(target.ehs_max), hc: String(target.hc) });
+      return;
+    }
+    if (ehsMin === target.ehs_min && ehsMax === target.ehs_max && hc === target.hc) return;
+    onSave({ month: target.month, ehs_min: ehsMin, ehs_max: ehsMax, hc });
+  }
+
+  const inputCls = 'w-14 px-1.5 py-0.5 rounded border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 font-mono text-xs text-center';
+
+  return (
+    <tr>
+      <td className="px-3 py-1 text-zinc-700 dark:text-zinc-200 whitespace-nowrap">{fmtMonthFr(target.month)}</td>
+      {canEdit ? (
+        <>
+          <td className="px-2 py-1 text-center">
+            <input value={draft.ehs_min} onChange={e => setDraft(d => ({ ...d, ehs_min: e.target.value }))} onBlur={commit} disabled={busy} className={inputCls} inputMode="decimal" />
+          </td>
+          <td className="px-2 py-1 text-center">
+            <input value={draft.ehs_max} onChange={e => setDraft(d => ({ ...d, ehs_max: e.target.value }))} onBlur={commit} disabled={busy} className={inputCls} inputMode="decimal" />
+          </td>
+          <td className="px-2 py-1 text-center">
+            <input value={draft.hc} onChange={e => setDraft(d => ({ ...d, hc: e.target.value }))} onBlur={commit} disabled={busy} className={inputCls} inputMode="decimal" />
+          </td>
+          <td className="px-1 text-center">
+            <button onClick={onRemove} disabled={busy} className="text-zinc-300 hover:text-red-500 text-base leading-none w-6 h-6" title="Supprimer">×</button>
+          </td>
+        </>
+      ) : (
+        <>
+          <td className="px-2 py-1 text-center font-mono text-zinc-700 dark:text-zinc-300">{target.ehs_min}</td>
+          <td className="px-2 py-1 text-center font-mono text-zinc-700 dark:text-zinc-300">{target.ehs_max}</td>
+          <td className="px-2 py-1 text-center font-mono text-zinc-700 dark:text-zinc-300">{target.hc}</td>
+        </>
+      )}
+    </tr>
+  );
+}
+
+function MonthlyTargetsCard({ table, canEdit }: { table: AnnexeRow; canEdit: boolean }) {
+  const router = useRouter();
+  const [, start] = useTransition();
+  const [busy, setBusy] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [newMonth, setNewMonth] = useState('');
+  const [newEhsMin, setNewEhsMin] = useState('');
+  const [newEhsMax, setNewEhsMax] = useState('');
+  const [newHc, setNewHc] = useState('');
+  const [err, setErr] = useState('');
+
+  const data = (table.data as MonthlyTargetsData) ?? { targets: [] };
+  const rows = Array.isArray(data.targets) ? data.targets : [];
+  const sorted = [...rows].sort((a, b) => a.month.localeCompare(b.month));
+
+  async function persist(next: MonthlyTarget[]): Promise<boolean> {
+    setBusy(true);
+    const payload: MonthlyTargetsData = {
+      version: new Date().toISOString().slice(0, 10),
+      targets: next,
+    };
+    const res = await saveAnnexeTable(table.slug, payload as unknown as Json, table.valid_from);
+    setBusy(false);
+    if (res.error) { setErr(res.error); return false; }
+    return true;
+  }
+
+  function addRow() {
+    if (!/^\d{4}-\d{2}$/.test(newMonth)) { setErr('Mois requis (YYYY-MM)'); return; }
+    if (rows.some(r => r.month === newMonth)) { setErr(`${fmtMonthFr(newMonth)} existe déjà`); return; }
+    const ehsMin = parseFloat(newEhsMin.replace(',', '.'));
+    const ehsMax = parseFloat(newEhsMax.replace(',', '.'));
+    const hc = parseFloat(newHc.replace(',', '.'));
+    if ([ehsMin, ehsMax, hc].some(isNaN)) { setErr('eHS min/max et HC requis'); return; }
+    setErr('');
+    start(async () => {
+      const ok = await persist([...rows, { month: newMonth, ehs_min: ehsMin, ehs_max: ehsMax, hc }]);
+      if (ok) { setNewMonth(''); setNewEhsMin(''); setNewEhsMax(''); setNewHc(''); setAdding(false); router.refresh(); }
+    });
+  }
+
+  function saveRow(next: MonthlyTarget) {
+    start(async () => {
+      const ok = await persist(rows.map(r => r.month === next.month ? next : r));
+      if (ok) router.refresh();
+    });
+  }
+
+  function removeRow(month: string) {
+    if (!confirm(`Supprimer la cible de ${fmtMonthFr(month)} ?`)) return;
+    start(async () => {
+      const ok = await persist(rows.filter(r => r.month !== month));
+      if (ok) router.refresh();
+    });
+  }
+
+  const addInputCls = 'w-16 px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 font-mono text-xs';
+
+  return (
+    <Card title={`Cibles mensuelles élabo (${rows.length})`} table={table} canEdit={canEdit}>
+      <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
+        <table className="w-full text-xs border-collapse">
+          <thead className="sticky top-0 z-10 bg-zinc-50 dark:bg-zinc-800">
+            <tr className="bg-zinc-50 dark:bg-zinc-800/60">
+              <th className="px-3 py-1.5 text-left text-[10px] font-medium text-zinc-400 uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">Mois</th>
+              <th className="px-2 py-1.5 text-center text-[10px] font-medium text-zinc-400 uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">eHS min</th>
+              <th className="px-2 py-1.5 text-center text-[10px] font-medium text-zinc-400 uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">eHS max</th>
+              <th className="px-2 py-1.5 text-center text-[10px] font-medium text-zinc-400 uppercase tracking-wide whitespace-nowrap border-b border-zinc-200 dark:border-zinc-700">HC</th>
+              {canEdit && <th className="w-8 border-b border-zinc-200 dark:border-zinc-700"></th>}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+            {sorted.map(t => (
+              <MonthlyTargetRow
+                key={t.month}
+                target={t}
+                canEdit={canEdit}
+                busy={busy}
+                onSave={saveRow}
+                onRemove={() => removeRow(t.month)}
+              />
+            ))}
+            {sorted.length === 0 && (
+              <tr>
+                <td colSpan={canEdit ? 5 : 4} className="px-3 py-4 text-center text-[10px] text-zinc-400 italic">
+                  Aucune cible saisie
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {canEdit && (
+        <div className="px-3 py-2 border-t border-zinc-100 dark:border-zinc-800 flex flex-wrap items-center gap-2">
+          {!adding ? (
+            <button
+              onClick={() => { setAdding(true); setErr(''); }}
+              className="text-[10px] px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200"
+            >
+              + Ajouter
+            </button>
+          ) : (
+            <>
+              <input
+                type="month"
+                value={newMonth}
+                onChange={e => setNewMonth(e.target.value)}
+                autoFocus
+                className="font-mono text-xs px-2 py-1 rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900"
+              />
+              <input placeholder="eHS min" value={newEhsMin} onChange={e => setNewEhsMin(e.target.value)} className={addInputCls} inputMode="decimal" />
+              <input placeholder="eHS max" value={newEhsMax} onChange={e => setNewEhsMax(e.target.value)} className={addInputCls} inputMode="decimal" />
+              <input placeholder="HC" value={newHc} onChange={e => setNewHc(e.target.value)} className={addInputCls} inputMode="decimal" />
+              <button
+                onClick={addRow}
+                disabled={busy || !newMonth}
+                className="px-3 py-1 rounded bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 text-[10px] font-semibold disabled:opacity-40"
+              >
+                {busy ? '…' : 'Ajouter'}
+              </button>
+              <button
+                onClick={() => { setAdding(false); setErr(''); }}
+                className="px-3 py-1 rounded border border-zinc-200 dark:border-zinc-700 text-[10px] text-zinc-500 hover:text-zinc-700"
+              >
+                Annuler
+              </button>
+              {err && <span className="text-[10px] text-red-500 ml-1">{err}</span>}
+            </>
+          )}
+          {data.version && (
+            <span className="ml-auto text-[10px] text-zinc-400">v{data.version}</span>
+          )}
+        </div>
+      )}
+      <p className="px-3 py-1.5 text-[10px] text-zinc-400 border-t border-zinc-100 dark:border-zinc-800">
+        Cibles publiées sur Crew Mobile (profil actif). <strong>eHS</strong> = écart au seuil HS recherché par l&apos;élabo [min ; max] · <strong>HC</strong> = heures créditées cibles plein temps sans absence. Congés/TAF abaissent le seuil HS : la cible réelle est corrigée par le score du Gantt.
+      </p>
+    </Card>
+  );
+}
+
 // ── Définitions ───────────────────────────────────────────────────────────────
 type DefinitionRow = { terme: string; definition: string; formule: string; is_header?: boolean };
 
@@ -1029,7 +1237,7 @@ function DdaRulesCard({ table, canEdit }: { table: AnnexeRow; canEdit: boolean }
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────────
-const KNOWN = ['cat_anciennete', 'coef_classe', 'taux_avion', 'prime_incitation', 'prime_incitation_330', 'traitement_base', 'prorata', 'prime_instruction', 'article_81', 'definitions', 'ir_mf_rates', 'dda_rules', 'vol_p_rules', 'rotation_zones'];
+const KNOWN = ['cat_anciennete', 'coef_classe', 'taux_avion', 'prime_incitation', 'prime_incitation_330', 'traitement_base', 'prorata', 'prime_instruction', 'article_81', 'definitions', 'ir_mf_rates', 'dda_rules', 'vol_p_rules', 'rotation_zones', 'monthly_targets'];
 
 const VERSIONED_SLUGS = new Set(['taux_avion', 'prime_incitation', 'traitement_base', 'prime_instruction']);
 
@@ -1062,6 +1270,7 @@ export function AnnexeClient({ rows, canEdit }: { rows: AnnexeRow[]; canEdit: bo
   const definitions = latest('definitions');
   const irMfLatest  = latest('ir_mf_rates');
   const rotZones    = latest('rotation_zones');
+  const monthlyTgt  = latest('monthly_targets');
 
   // Zones dispo pour le dropdown : on les prend du tableau Article 81 (source
   // canonique des libellés/codes zones), en retirant FRA (base, jamais une
@@ -1115,6 +1324,9 @@ export function AnnexeClient({ rows, canEdit }: { rows: AnnexeRow[]; canEdit: bo
 
       {/* 6b. Zones par rotation (mapping ROT → zone A81) */}
       {rotZones && <RotationZonesCard table={rotZones} canEdit={canEdit} availableZones={rotZonesAvailable} />}
+
+      {/* 6c. Cibles mensuelles élabo (eHS / HC) — score d'optimisation */}
+      {monthlyTgt && <MonthlyTargetsCard table={monthlyTgt} canEdit={canEdit} />}
 
       {/* 7. IR / MF — toujours visible (même si la ligne DB manque) */}
       <IrMfRatesCard

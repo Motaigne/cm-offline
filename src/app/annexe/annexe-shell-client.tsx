@@ -30,6 +30,7 @@ const SLUG_NAMES: Record<string, string> = {
   dda_rules:             'Règles DDA',
   vol_p_rules:           'Règles Vol P',
   definitions:           'Définitions',
+  monthly_targets:       'Cibles mensuelles élabo (eHS / HC)',
 };
 
 type AnnexeClientRow = {

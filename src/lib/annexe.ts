@@ -57,6 +57,29 @@ export function getAnnexeDataFromRows(rows: AnnexeRow[], month: string): Partial
   };
 }
 
+// ── Cibles mensuelles élabo (slug `monthly_targets`, mig 0044) ────────────────
+// Cibles publiées sur Crew Mobile par mois, saisies à la main dans /annexe.
+// eHS = écart au seuil HS recherché [min ; max] ; HC = heures créditées cibles
+// plein temps sans absence. Congés/TAF abaissent le seuil HS : la cible réelle
+// pour un scénario donné doit être corrigée du régime et des absences.
+export interface MonthlyTarget { month: string; ehs_min: number; ehs_max: number; hc: number; }
+export interface MonthlyTargetsData { version?: string; targets: MonthlyTarget[]; }
+
+/**
+ * Cible élabo pour un mois (`YYYY-MM`), depuis les rows annexe (Dexie ou
+ * serveur). Version applicable = valid_from <= 1er du mois, la plus récente.
+ * `null` si aucune cible saisie pour ce mois.
+ */
+export function getMonthlyTargetFromRows(rows: AnnexeRow[], month: string): MonthlyTarget | null {
+  const cutoff = /^\d{4}-\d{2}$/.test(month) ? `${month}-01` : month;
+  const candidates = rows
+    .filter(r => r.slug === 'monthly_targets' && r.valid_from <= cutoff)
+    .sort((a, b) => b.valid_from.localeCompare(a.valid_from));
+  const data = candidates[0]?.data as MonthlyTargetsData | undefined;
+  if (!data || !Array.isArray(data.targets)) return null;
+  return data.targets.find(t => t.month === month.slice(0, 7)) ?? null;
+}
+
 // Coefficient catégorie pour PVEI (CCT AF)
 // Catégorie A = 0.70, B = 0.85, C = 1.00
 const CAT_PVEI: Record<string, number> = { A: 0.70, B: 0.85, C: 1.00 };
