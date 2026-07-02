@@ -20,11 +20,12 @@ import type { CalendarItem } from '@/app/page';
 import type { RotationSignature, RotationInstance } from '@/app/actions/search';
 import type { Json } from '@/types/supabase';
 import { enqueueDelete, enqueueAdd, enqueueMetaUpdate } from './sync-service';
+import { ACTIVITY_META } from '@/lib/activity-meta';
 
 export interface RepairChange {
-  kind: 'relinked' | 'updated' | 'orphaned';
+  kind: 'relinked' | 'updated' | 'orphaned' | 'overlap';
   scenario: string;     // A / B / C
-  destination: string;  // code rotation
+  destination: string;  // code rotation (ou description du chevauchement)
   date: string;         // start_date du vol
 }
 export interface RepairSummary {
@@ -143,6 +144,51 @@ export async function reconcilePlanning(months: string[]): Promise<RepairSummary
       await enqueueDelete(it.id);
       await enqueueAdd(newItem, it.draft_id);
       changes.push({ kind: 'relinked', scenario, destination: dest, date: it.start_date });
+    }
+  }
+
+  // ── Détection de chevauchements (passe séparée, post-réparations) ──────────
+  // L'invariant « pas deux items qui se chevauchent dans un scénario » n'est
+  // garanti qu'à l'ajout/drag LOCAL (hasOverlap ne voit que l'état de
+  // l'appareil). En offline-first multi-appareils — ou avec des items posés
+  // avant un correctif (ex. congé de 10 j hérité du max DDA) — deux items
+  // peuvent se recouvrir ; le bloc dessiné par-dessus MASQUE l'autre, et les
+  // compteurs (congés, prorata, max ON) partent en vrille sans que rien ne soit
+  // visible. On signale seulement (pas d'auto-fix : l'utilisateur choisit
+  // lequel est le bon). Passe indépendante du cache rotations — tourne aussi
+  // pour un mois sans rotations cachées.
+  for (const month of months) {
+    const drafts = await db.drafts.where('target_month').equals(month).toArray();
+    if (drafts.length === 0) continue;
+    const draftName = new Map(drafts.map(d => [d.id, d.name] as const));
+    const monthItems = await db.items.where('draft_id').anyOf(drafts.map(d => d.id)).toArray() as StoredItem[];
+    const byDraft = new Map<string, StoredItem[]>();
+    for (const it of monthItems) {
+      const arr = byDraft.get(it.draft_id) ?? [];
+      arr.push(it);
+      byDraft.set(it.draft_id, arr);
+    }
+    for (const [draftId, draftItems] of byDraft) {
+      const scenario = draftName.get(draftId) ?? '?';
+      const sorted = [...draftItems].sort((a, b) => a.start_date.localeCompare(b.start_date));
+      for (let i = 0; i < sorted.length; i++) {
+        for (let j = i + 1; j < sorted.length; j++) {
+          const a = sorted[i], b = sorted[j];
+          if (b.start_date > a.end_date) break; // triés : plus aucun overlap possible avec a
+          const label = (it: StoredItem) => {
+            const m = (it.meta && typeof it.meta === 'object' && !Array.isArray(it.meta))
+              ? it.meta as Record<string, unknown> : null;
+            const dest = typeof m?.destination === 'string' ? m.destination as string : null;
+            return `${ACTIVITY_META[it.kind]?.label ?? it.kind}${dest ? ` ${dest}` : ''} ${it.start_date.slice(5)}→${it.end_date.slice(5)}`;
+          };
+          changes.push({
+            kind: 'overlap',
+            scenario,
+            destination: `${label(a)} ⚠ ${label(b)}`,
+            date: b.start_date,
+          });
+        }
+      }
     }
   }
 

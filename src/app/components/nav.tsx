@@ -1396,6 +1396,9 @@ export function NavBar() {
               { label: 'relié(s) au catalogue', cls: 'text-emerald-600 dark:text-emerald-400', items: c.filter(x => x.kind === 'relinked') },
               { label: 'actualisé(s)',           cls: 'text-blue-600 dark:text-blue-400',       items: c.filter(x => x.kind === 'updated') },
               { label: 'sans rotation en base',  cls: 'text-amber-600 dark:text-amber-400',     items: c.filter(x => x.kind === 'orphaned') },
+              // Chevauchements : deux items qui se recouvrent (le bloc du dessus
+              // masque l'autre, compteurs faussés) — à corriger manuellement.
+              { label: 'en CHEVAUCHEMENT — à corriger (un bloc en masque un autre)', cls: 'text-red-600 dark:text-red-400', items: c.filter(x => x.kind === 'overlap') },
             ];
             return (
               <>
