@@ -34,7 +34,7 @@ import {
 import { getRotationsForMonth } from '@/app/actions/search';
 import { getCurrentUserScrapeRights } from '@/app/actions/auth';
 import { computeA81CumulBeforeLocal } from '@/lib/a81-local';
-import { computeFullProfile, getAnnexeDataFromRows, type AnnexeData, type AnnexeRow } from '@/lib/annexe';
+import { computeFullProfile, getAnnexeDataFromRows, getMonthlyTargetFromRows, type AnnexeData, type AnnexeRow, type MonthlyTarget } from '@/lib/annexe';
 import type { ProfileVersion } from '@/app/actions/profile-version';
 import { computeMonthlyIrMfFromLocalCache } from '@/lib/ir-mf-local';
 import { computeMonthProrationLocal, type MonthProration } from '@/lib/ep4-local';
@@ -1473,7 +1473,11 @@ export function GanttView({
     });
   }, [searchOpen, searchScenario]);
   const [scrapeOpen, setScrapeOpen] = useState(false);
-  const [_isAdmin,   setIsAdmin]    = useState(false);
+  // Seed depuis le cache localStorage (même clé que les shells annexe/catalogue/
+  // comparatif) pour rester correct offline ; revalidé par l'effect ci-dessous.
+  const [isAdmin,    setIsAdmin]    = useState(
+    () => typeof window !== 'undefined' && localStorage.getItem('cm-is-admin') === '1',
+  );
   const [canScrape,  setCanScrape]  = useState(false);
 
   // Panneau détail paie (flyout fixe à droite du label)
@@ -1507,6 +1511,10 @@ export function GanttView({
     itPerActivite: number;             // (Voiture) 2 × km × ind/km
     // BRUT
     brut: number;
+    // Score optimisation — position vs seuil HS, cible élabo (annexe
+    // monthly_targets), A81. Rempli à l'ouverture du panneau uniquement.
+    monthTarget: MonthlyTarget | null;
+    totalA81: number; cumulJours: number; plafondJours: number;
   };
   const [detailPanel, setDetailPanel] = useState<DetailPanel | null>(null);
 
@@ -1563,8 +1571,12 @@ export function GanttView({
 
   useEffect(() => {
     void getCurrentUserScrapeRights()
-      .then(r => { setIsAdmin(r.is_admin); setCanScrape(r.is_admin || r.is_scraper); })
-      .catch(() => { setIsAdmin(false); setCanScrape(false); });
+      .then(r => {
+        setIsAdmin(r.is_admin);
+        setCanScrape(r.is_admin || r.is_scraper);
+        try { localStorage.setItem('cm-is-admin', r.is_admin ? '1' : '0'); } catch { /* quota/private mode */ }
+      })
+      .catch(() => { setCanScrape(false); /* offline/captif : on garde le seed localStorage pour isAdmin */ });
   }, []);
 
   function changeIncit(n: number) {
@@ -2500,6 +2512,10 @@ export function GanttView({
                           itNbActivites: nbActivites,
                           itPerActivite: 2 * effVoitureKmAller * effVoitureIndKm,
                           brut: stats.brut,
+                          monthTarget: getMonthlyTargetFromRows(annexeRows, currentMonth),
+                          totalA81: stats.totalA81,
+                          cumulJours: stats.cumulJoursRunning,
+                          plafondJours: stats.plafondJours,
                         });
                       }}
                       className={`mt-1 flex-shrink-0 text-[9px] font-mono select-none px-2 py-0.5 rounded transition-colors ${isDetailOpen ? 'bg-zinc-700 text-white' : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-300 hover:bg-zinc-300 dark:hover:bg-zinc-600'}`}
@@ -3855,6 +3871,54 @@ export function GanttView({
                   <div className="flex items-baseline justify-between mt-0.5">
                     <span className="text-[8px] text-zinc-400 pl-2">{breakdown}</span>
                     <span className="text-emerald-700 dark:text-emerald-300 font-bold text-[10px]">{Math.round(detailPanel.brut)}</span>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* OPTIMISATION — position vs seuil HS, cible élabo, A81.
+                Visible admin uniquement (feature en rodage — masquage d'affichage,
+                pas de la sécurité : les stats sous-jacentes sont celles du user). */}
+            {isAdmin && (() => {
+              // eHS réel = écart des heures créditées au seuil HS effectif du mois
+              // (le seuil est déjà corrigé congés/CSS via nb30eEff). La cible élabo
+              // s'exprime dans le même référentiel → comparaison directe.
+              const eHs = detailPanel.totalHc - detailPanel.seuil75;
+              const t = detailPanel.monthTarget;
+              const sousMga = detailPanel.diff < 0;
+              const position = sousMga
+                ? { cls: 'text-red-500', txt: `sous MGA (DIFF ${Math.round(detailPanel.diff)}) — voler plus ne rapporte rien` }
+                : eHs < 0
+                  ? { cls: 'text-amber-500', txt: `zone morte — heures au taux normal (seuil à +${(-eHs).toFixed(1)}h)` }
+                  : { cls: 'text-emerald-500', txt: `+${eHs.toFixed(1)}h au-dessus du seuil → HS majorées` };
+              const cible = !t ? null
+                : eHs < t.ehs_min
+                  ? { cls: 'text-sky-500', txt: `sous cible de ${(t.ehs_min - eHs).toFixed(1)}h → vol élabo probable` }
+                  : eHs <= t.ehs_max
+                    ? { cls: 'text-emerald-500', txt: 'dans la cible — pas de vol ajouté a priori' }
+                    : { cls: 'text-amber-500', txt: `au-dessus de la cible (+${(eHs - t.ehs_max).toFixed(1)}h)` };
+              const plafondAtteint = detailPanel.cumulJours >= detailPanel.plafondJours;
+              return (
+                <div className="space-y-0.5 font-mono text-[9px] border-t border-zinc-200 dark:border-zinc-700 mt-1.5 pt-1.5">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-violet-500 font-bold uppercase">Optimisation</span>
+                    <span className="text-zinc-500">eHS = {detailPanel.totalHc.toFixed(1)} − {detailPanel.seuil75.toFixed(1)} = <span className="font-semibold text-zinc-700 dark:text-zinc-200">{eHs >= 0 ? '+' : ''}{eHs.toFixed(1)}h</span></span>
+                  </div>
+                  <div className={`text-[8px] pl-2 ${position.cls}`}>{position.txt}</div>
+                  {t && cible ? (
+                    <div className="text-[8px] pl-2">
+                      <span className="text-zinc-400">cible élabo [{t.ehs_min} ; {t.ehs_max}] · HC {t.hc} → </span>
+                      <span className={cible.cls}>{cible.txt}</span>
+                    </div>
+                  ) : (
+                    <div className="text-[8px] pl-2 text-zinc-400 italic">cible élabo non saisie pour ce mois (→ /annexe)</div>
+                  )}
+                  <div className="text-[8px] pl-2 flex justify-between gap-2">
+                    <span className="text-zinc-400">
+                      A81 cumul <span className={plafondAtteint ? 'text-amber-500 font-bold' : 'text-emerald-600 dark:text-emerald-400'}>{detailPanel.cumulJours.toFixed(1)}/{detailPanel.plafondJours}j</span>
+                      {plafondAtteint && ' PLAFOND'}
+                    </span>
+                    {detailPanel.totalA81 > 0 && <span className="text-zinc-400">mois {Math.round(detailPanel.totalA81)} €</span>}
                   </div>
                 </div>
               );
