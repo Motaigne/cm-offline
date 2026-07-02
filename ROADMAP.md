@@ -67,6 +67,16 @@ Toute nouvelle proposition doit cocher les 4 cases avant d'être codée.
 - [ ] **SAB="TP" par leg dans calculs MEP** : info présente côté PDF (`r.sab`) et calendrier (`leg.dead_head`), affichée mais pas encore utilisée dans les calculs côté Gantt/EP4.
 - [ ] **Unifier les 2 sources rot→zone** : `src/lib/scraper/zone-lookup.ts` (TS hardcoded, utilisée au scrape + server actions) vs `annexe.rotation_zones` (DB user-éditable, utilisée par a81-local + override loadRotationsFromDB). Le client est OK depuis `882d2c5`, mais le scrape continue de figer `sig.zone` depuis le hardcoded. Idéal : faire que `getZone()` charge depuis la table annexe au démarrage du scrape. Risque : annexe pas toujours à jour côté serveur au moment du scrape.
 
+## 🟠 Optimisation paie (scénario A — brut/net + A81)
+
+Cadre complet dans `iCloud_optiP\optiP_REGLES.md` (Partie 1). Décision UX : score léger dans le Gantt, analyse lourde dans un futur onglet `/optimisation`.
+
+- [x] **Étape 0 — cible mensuelle élabo en annexe** — mig 0044 `monthly_targets` (appliquée prod 2026-07-02) : par mois → eHS min/max + HC. Card édition dans `/annexe`, helper `getMonthlyTargetFromRows()` (annexe.ts), hydratation Dexie automatique (slug miroir comme le reste).
+- [x] **Étape 0bis — RPC dérivé de la DB** — vérifié 2026-07-02 : déjà le cas partout (`computeEffectiveRpc` = `scheduled_end_activity_at`/`rest_after_h` ; `rpcDaysOf` = `arrivee_at` + `rest_after_h`). L'heuristique n'existait que dans le doc rédacteur (§2.6bis annoté).
+- [x] **Étape 1 — bloc « Optimisation » panneau Détail Gantt** — 2026-07-02 : eHS réel (HCr − seuil eff.), position (sous MGA / zone morte / HS majorées), verdict vs cible élabo (vol élabo probable / dans la cible / au-dessus), A81 cumul vs plafond + € mois. Rempli à l'ouverture du panneau uniquement (zéro coût render). À valider visuellement sur iPad.
+- [ ] **Étape 2 — onglet `/optimisation` (vue annuelle + moteur)** : tableau 12 mois (cibles, consommation plafond A81, seuils), **« mois idéal » selon les objectifs** (demande user), puis moteur de suggestion : énumération placements leviers (DDA vol/repos, Vol P, congés budget 45j prorata régime — seule contrainte retenue, quotas journaliers non modélisables) filtrée par le validateur dispersion, classée par score. Web worker si lourd. Congés = s'adapter, budget annuel comme borne.
+- [ ] **Formaliser les 2 techniques** (optiP_REGLES §1.4) en heuristiques : bloquer période tendue (congés+DDA repos, jamais TAF7) + chargement frontière de mois (DDA vol le 30/31 → heures sur M+1, 1 mois/2).
+
 ## 🟡 Petits chantiers
 
 - [ ] **Bandeau MEP** : confirmer que `sig.dead_head` matche la sémantique "rotation contient au moins un leg MEP". Si user voit des faux positifs/négatifs, raffiner sur `raw_detail.pairings[*].flightDuties[*].activities[*].dead_head`.
